@@ -794,6 +794,116 @@ class RetirementPlanner:
         return self.calculate_taxes(year, ti, scenario)
 
     # ------------------------------------------------------------------
+    # IRMAA — Income-Related Monthly Adjustment Amount (Medicare surcharges)
+    # ------------------------------------------------------------------
+    # 2024 MFJ thresholds and per-person surcharges (monthly).
+    # Current-year premiums are based on MAGI from 2 years prior.
+    _IRMAA_PART_B_TIERS: List[Tuple[float, float]] = [
+        (206_000, 0.0),
+        (258_000, 70.0),
+        (322_000, 175.0),
+        (386_000, 380.0),
+        (750_000, 484.0),
+        (float('inf'), 587.0),
+    ]
+    _IRMAA_PART_D_TIERS: List[Tuple[float, float]] = [
+        (206_000, 0.0),
+        (258_000, 10.0),
+        (322_000, 26.0),
+        (386_000, 43.0),
+        (750_000, 60.0),
+        (float('inf'), 77.0),
+    ]
+
+    def calculate_irmaa(self, magi_2_years_ago: float, age: int) -> float:
+        """Calculate annual IRMAA Medicare surcharges for a couple.
+
+        Uses 2024 MFJ tiers.  Returns the total annual surcharge for
+        two people (both Part B + Part D).  Returns 0 if age < 65.
+        """
+        if age < 65:
+            return 0.0
+
+        # Part B surcharge per person
+        part_b = 0.0
+        for threshold, surcharge in self._IRMAA_PART_B_TIERS:
+            if magi_2_years_ago <= threshold:
+                part_b = surcharge
+                break
+
+        # Part D surcharge per person
+        part_d = 0.0
+        for threshold, surcharge in self._IRMAA_PART_D_TIERS:
+            if magi_2_years_ago <= threshold:
+                part_d = surcharge
+                break
+
+        per_person_monthly = part_b + part_d
+        # x2 for couple, x12 for annual
+        return per_person_monthly * 2 * 12
+
+    # ------------------------------------------------------------------
+    # Social Security taxation
+    # ------------------------------------------------------------------
+    def calculate_ss_taxable(self, ss_benefits: float,
+                             other_income: float) -> float:
+        """Calculate the taxable portion of Social Security benefits.
+
+        Uses 2024 MFJ thresholds:
+          - provisional_income = other_income + 50% of SS benefits
+          - provisional_income <= $32K  -> $0 taxable
+          - provisional_income <= $44K  -> lesser of 50% of SS or
+                                           50% of (provisional - $32K)
+          - provisional_income >  $44K  -> lesser of 85% of SS or
+                                           $6K + 85% of (provisional - $44K)
+
+        Args:
+            ss_benefits: Annual Social Security benefits received.
+            other_income: All other income (wages, interest, etc.)
+                          -- does NOT include SS itself.
+        """
+        if ss_benefits <= 0:
+            return 0.0
+
+        provisional = other_income + 0.5 * ss_benefits
+
+        lower_threshold = 32_000.0
+        upper_threshold = 44_000.0
+
+        if provisional <= lower_threshold:
+            return 0.0
+
+        if provisional <= upper_threshold:
+            # Tier 2: lesser of 50% of SS or 50% of (provisional - $32K)
+            return min(0.5 * ss_benefits,
+                       0.5 * (provisional - lower_threshold))
+
+        # Tier 3: lesser of 85% of SS or $6K + 85% of (provisional - $44K)
+        tier2_amount = 0.5 * (upper_threshold - lower_threshold)  # $6,000
+        tier3_calc = tier2_amount + 0.85 * (provisional - upper_threshold)
+        return min(0.85 * ss_benefits, tier3_calc)
+
+    # ------------------------------------------------------------------
+    # NIIT -- Net Investment Income Tax
+    # ------------------------------------------------------------------
+    def calculate_niit(self, investment_income: float, magi: float) -> float:
+        """Calculate Net Investment Income Tax (3.8% surtax).
+
+        Applies to net investment income when MAGI exceeds $250K (MFJ).
+        Investment income includes capital gains, dividends, and interest.
+        """
+        niit_threshold = 250_000.0
+        niit_rate = 0.038
+
+        if magi <= niit_threshold or investment_income <= 0:
+            return 0.0
+
+        # Tax on lesser of net investment income or excess MAGI over threshold
+        excess_magi = magi - niit_threshold
+        taxable_investment = min(investment_income, excess_magi)
+        return taxable_investment * niit_rate
+
+    # ------------------------------------------------------------------
     # Social Security
     # ------------------------------------------------------------------
     def calculate_social_security(self, year: int, person: Person) -> float:
@@ -863,6 +973,9 @@ class RetirementPlanner:
         rates = self.scenario.economic.get_rate(scenario_name)
         withdrawal_engine = WithdrawalEngine(self.accounts, cost_basis)
 
+        # Track MAGI by year for IRMAA 2-year lookback
+        magi_history: Dict[int, float] = {}
+
         max_year = (self.scenario.primary.birth_date.year
                     + self.scenario.primary.longevity_age + 1)
 
@@ -931,6 +1044,16 @@ class RetirementPlanner:
             expense_data = self.calculate_annual_expenses(year, scenario_name)
             annual_expenses = expense_data["total"]
 
+            # --- Step 4b: IRMAA Medicare surcharges (age >= 65) ---
+            older_age = max(primary_age, spouse_age)
+            irmaa_amount = 0.0
+            if older_age >= 65:
+                # 2-year lookback: use MAGI from 2 years prior
+                lookback_year = year - 2
+                magi_2yr_ago = magi_history.get(lookback_year, 0.0)
+                irmaa_amount = self.calculate_irmaa(magi_2yr_ago, older_age)
+                annual_expenses += irmaa_amount
+
             # --- Step 5: Withdrawals (tax-efficient order) ---
             shortfall = withdrawal_engine.calculate_withdrawal_needed(
                 year, annual_expenses, annual_income, ss_income,
@@ -943,7 +1066,12 @@ class RetirementPlanner:
                 )
 
             # --- Step 6: Build TaxableIncome from all sources ---
-            ordinary = annual_income  # W-2 wages + SS (simplified: full SS taxable)
+            # Calculate SS taxable portion (uses income BEFORE SS was added)
+            non_ss_income = income_data["total"]  # wages + other non-SS income
+            taxable_ss = self.calculate_ss_taxable(ss_income, non_ss_income)
+
+            # Ordinary income = non-SS wages/withdrawals + taxable SS portion
+            ordinary = non_ss_income
             capital_gains = 0.0
             tax_free = 0.0
             for w in withdrawals:
@@ -953,6 +1081,7 @@ class RetirementPlanner:
                     capital_gains += w.capital_gain
                 elif w.tax_treatment == "tax_free":
                     tax_free += w.amount
+            ordinary += taxable_ss  # Only the taxable portion of SS
 
             total = ordinary + capital_gains + tax_free
             taxable_income = TaxableIncome(
@@ -964,7 +1093,17 @@ class RetirementPlanner:
 
             # --- Step 7: Taxes ---
             taxes = self.calculate_taxes(year, taxable_income, scenario_name)
+
+            # --- Step 7b: NIIT (Net Investment Income Tax) ---
+            investment_income = capital_gains
+            magi = ordinary + capital_gains  # MAGI approximation
+            niit = self.calculate_niit(investment_income, magi)
+            taxes += niit
+
             total_taxes += taxes
+
+            # Record this year's MAGI for future IRMAA lookback
+            magi_history[year] = magi
 
             # --- Step 8: Windfalls ---
             for windfall in self.scenario.windfalls:
