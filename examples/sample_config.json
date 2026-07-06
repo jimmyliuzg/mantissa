@@ -126,7 +126,57 @@
       "monthly_amount": 5000,
       "start_date": "2024-01-01",
       "end_date": "2080-01-01",
-      "category": "general"
+      "category": "general",
+      "is_must_spend": true
+    },
+    {
+      "id": "travel",
+      "name": "Travel & Vacations",
+      "monthly_amount": 800,
+      "start_date": "2024-01-01",
+      "end_date": "2080-01-01",
+      "category": "discretionary",
+      "is_must_spend": false,
+      "min_reduction": 0.7,
+      "_comment": "Can cut 70% in stress scenarios — vacations are flexible"
+    },
+    {
+      "id": "hobbies",
+      "name": "Hobbies & Recreation",
+      "monthly_amount": 400,
+      "start_date": "2024-01-01",
+      "end_date": "2080-01-01",
+      "category": "discretionary",
+      "is_must_spend": false,
+      "min_reduction": 0.5,
+      "_comment": "Can cut 50% in stress scenarios"
+    },
+    {
+      "id": "healthcare",
+      "name": "Healthcare & Medical",
+      "monthly_amount": 1000,
+      "start_date": "2024-01-01",
+      "end_date": "2080-01-01",
+      "category": "medical",
+      "is_must_spend": true,
+      "_comment": "Base healthcare — age events will increase this at 65"
+    }
+  ],
+
+  "age_events": [
+    {
+      "trigger_age": 65,
+      "expense_id": "healthcare",
+      "new_monthly_amount": 2500,
+      "duration_years": -1,
+      "_comment": "Healthcare costs jump at 65 — Medicare gaps, supplemental insurance"
+    },
+    {
+      "trigger_age": 75,
+      "expense_id": "healthcare",
+      "new_monthly_amount": 4000,
+      "duration_years": -1,
+      "_comment": "Long-term care and increased medical needs at 75+"
     }
   ],
   
