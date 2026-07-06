@@ -6,11 +6,20 @@ from datetime import datetime
 import math
 import random
 
+from enum import Enum
 from .models import (
     Scenario, Person, Account, IncomeStream, Expense,
     Mortgage, Windfall, HousingEvent, RothConversion,
-    EconomicAssumptions, SocialSecurity
+    EconomicAssumptions, SocialSecurity, AgeEvent
 )
+
+
+class WithdrawalStrategy(Enum):
+    """Withdrawal strategy options for stress scenarios."""
+    fixed = "fixed"
+    floor_ceiling = "floor_ceiling"
+    percent_of_portfolio = "percent_of_portfolio"
+    dynamic = "dynamic"
 
 
 class RetirementPlanner:
@@ -143,12 +152,22 @@ class RetirementPlanner:
             "by_source": income_by_source,
         }
     
-    def calculate_annual_expenses(self, year: int, scenario: str = "mean") -> Dict:
-        """Calculate total expenses for a year."""
+    def calculate_annual_expenses(self, year: int, scenario: str = "mean",
+                                  stress_level: float = 0.0) -> Dict:
+        """Calculate total expenses for a year.
+
+        Args:
+            year: Calendar year.
+            scenario: Economic scenario ("mean", "optimistic", "pessimistic").
+            stress_level: 0.0 = normal, 1.0 = max stress. When > 0,
+                          discretionary expenses (is_must_spend=False) are
+                          reduced by up to their min_reduction * stress_level.
+        """
         rates = self.scenario.economic.get_rate(scenario)
         total_expenses = 0
         expenses_by_category = {}
-        
+        expense_mods = self.calculate_age_events(year)
+
         for expense in self.scenario.expenses:
             if expense.is_one_time:
                 if expense.one_time_date and expense.one_time_date.year == year:
@@ -160,22 +179,76 @@ class RetirementPlanner:
                     inflation_rate = rates.get("general_inflation", 0.025)
                     if expense.category == "medical":
                         inflation_rate = rates.get("medical_inflation", 0.033)
-                    
-                    amount = expense.monthly_amount * 12 * (1 + inflation_rate) ** years_active
+
+                    monthly = expense.monthly_amount
+                    # Apply age-event overrides
+                    if expense.id in expense_mods:
+                        monthly = expense_mods[expense.id]
+
+                    amount = monthly * 12 * (1 + inflation_rate) ** years_active
+
+                    # Apply stress reduction for discretionary expenses
+                    if stress_level > 0 and not expense.is_must_spend:
+                        reduction = expense.min_reduction * stress_level
+                        amount *= (1.0 - reduction)
+
                     total_expenses += amount
                     expenses_by_category[expense.name] = amount
-        
+
         # Add mortgage payments
         for mortgage in self.scenario.mortgages:
             if mortgage.start_date.year <= year <= mortgage.end_date.year:
                 amount = mortgage.monthly_payment * 12
                 total_expenses += amount
                 expenses_by_category[f"Mortgage - {mortgage.name}"] = amount
-        
+
         return {
             "total": total_expenses,
             "by_category": expenses_by_category,
         }
+
+    def calculate_stress_expenses(self, year: int, stress_level: float = 0.0,
+                                  scenario: str = "mean") -> Dict:
+        """Calculate expenses under a stress scenario.
+
+        Discretionary expenses (is_must_spend=False) are reduced
+        proportionally by ``min_reduction * stress_level``.
+        """
+        return self.calculate_annual_expenses(year, scenario, stress_level)
+
+    def calculate_age_events(self, year: int) -> Dict[str, float]:
+        """Return modified monthly amounts triggered by age events.
+
+        Only events whose trigger_age has been reached (and whose duration
+        has not expired) are applied.  Returns a dict of
+        ``{expense_id: new_monthly_amount}``.
+        """
+        primary_age = year - self.scenario.primary.birth_date.year
+        spouse_age = year - self.scenario.spouse.birth_date.year
+        younger_age = min(primary_age, spouse_age)
+
+        mods: Dict[str, float] = {}
+        for event in self.scenario.age_events:
+            if younger_age < event.trigger_age:
+                continue
+
+            # Check duration expiry
+            if event.duration_years > 0:
+                years_since_trigger = younger_age - event.trigger_age
+                if years_since_trigger >= event.duration_years:
+                    continue
+
+            # Find the base expense to get its current monthly amount
+            if event.new_monthly_amount is not None:
+                mods[event.expense_id] = event.new_monthly_amount
+            else:
+                # Keep current — look up base amount
+                for exp in self.scenario.expenses:
+                    if exp.id == event.expense_id:
+                        mods[event.expense_id] = exp.monthly_amount
+                        break
+
+        return mods
     
     def calculate_taxes(self, year: int, income: float, scenario: str = "mean") -> float:
         """Simplified federal + state tax calculation."""
