@@ -261,6 +261,10 @@ class Scenario:
     age_events: List[AgeEvent] = field(default_factory=list)
     social_security: SocialSecurity = field(default_factory=SocialSecurity)
     glidepath: Optional[GlidepathConfig] = None
+    withdrawal_strategy: str = "fixed"  # fixed, guardrails, dynamic, percent_of_portfolio, floor_ceiling
+    withdrawal_rate: float = 0.04       # For percent-of-portfolio strategy
+    guardrail_floor_pct: float = 0.90   # 90% of base spending floor
+    guardrail_ceiling_pct: float = 1.10  # 110% of base spending ceiling
     legacy_goal: float = 2_000_000
     state: str = "CA"
     
