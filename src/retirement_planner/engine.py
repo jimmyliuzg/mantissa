@@ -18,6 +18,7 @@ from .models import (
     Scenario, Person, Account, IncomeStream, Expense,
     Mortgage, Windfall, HousingEvent, RothConversion,
     EconomicAssumptions, SocialSecurity, AgeEvent, TaxableIncome,
+    AssetAllocation, GlidepathConfig,
 )
 
 
@@ -424,6 +425,9 @@ class RetirementPlanner:
         self.scenario = scenario
         self.accounts = {a.id: a for a in scenario.accounts}
         self.start_year = datetime.now().year
+        # When set by MonteCarloEngine for historical simulations, the planner
+        # uses this list of sequential returns instead of random gaussian draws.
+        self._historical_return_override: Optional[List[float]] = None
     @classmethod
     def from_config(cls, config_path: str) -> 'RetirementPlanner':
         """Load planner from JSON config file."""
@@ -606,6 +610,104 @@ class RetirementPlanner:
         )
         
         return cls(scenario)
+
+    # ------------------------------------------------------------------
+    # Equity glidepath / asset allocation
+    # ------------------------------------------------------------------
+    def get_equity_allocation(self, age: int) -> AssetAllocation:
+        """Return age-appropriate asset allocation based on glidepath.
+
+        When no glidepath is configured, returns 100% equity (backward
+        compatible with existing behavior).
+
+        The bond tent widens the bond allocation around retirement:
+        - Within [retirement - pre, retirement + post]: use tent_equity_pct
+        - After the tent: gradually ramp back to normal glidepath
+        """
+        gp = self.scenario.glidepath
+        if gp is None:
+            return AssetAllocation(equity_pct=1.0, bond_pct=0.0)
+
+        # --- Normal glidepath interpolation ---
+        normal_eq = self._interpolate_glidepath(gp.equity_by_age, age)
+
+        # --- Bond tent adjustment ---
+        ret_age = (self.scenario.primary.retirement_date.year
+                   - self.scenario.primary.birth_date.year)
+        tent_start = ret_age - gp.pre_retirement_years
+        tent_end = ret_age + gp.post_retirement_years
+
+        if age < tent_start:
+            # Before tent: normal glidepath
+            equity = normal_eq
+        elif age <= tent_end:
+            # During tent: use tent_equity_pct
+            equity = gp.tent_equity_pct
+        else:
+            # After tent: ramp back from tent_equity_pct to normal
+            years_past_tent = age - tent_end
+            if years_past_tent >= gp.tent_ramp_years:
+                equity = normal_eq
+            else:
+                # Linear interpolation from tent value to glidepath value
+                t = years_past_tent / gp.tent_ramp_years
+                equity = gp.tent_equity_pct + t * (normal_eq - gp.tent_equity_pct)
+
+        equity = max(0.0, min(1.0, equity))
+        bond = 1.0 - equity
+        return AssetAllocation(equity_pct=equity, bond_pct=bond)
+
+    @staticmethod
+    def _interpolate_glidepath(
+        equity_by_age: Dict[int, float],
+        age: int,
+    ) -> float:
+        """Linearly interpolate equity percentage between age anchors."""
+        if not equity_by_age:
+            return 1.0
+
+        ages = sorted(equity_by_age.keys())
+
+        # Clamp to range
+        if age <= ages[0]:
+            return equity_by_age[ages[0]]
+        if age >= ages[-1]:
+            return equity_by_age[ages[-1]]
+
+        # Find bracketing ages
+        for i in range(len(ages) - 1):
+            if ages[i] <= age <= ages[i + 1]:
+                a0, a1 = ages[i], ages[i + 1]
+                e0, e1 = equity_by_age[a0], equity_by_age[a1]
+                t = (age - a0) / (a1 - a0) if a1 != a0 else 0
+                return e0 + t * (e1 - e0)
+
+        return equity_by_age[ages[-1]]
+
+    def get_growth_rate_for_allocation(
+        self,
+        account: Account,
+        allocation: AssetAllocation,
+    ) -> float:
+        """Compute net growth rate for an account given an allocation.
+
+        Returns: equity_rate * equity_pct + bond_rate * bond_pct,
+        minus the account's expense ratio.
+
+        Bond rate: general_inflation + 0.01 (real bond return ≈ 1%
+        above inflation).
+        Equity rate: account.growth_rate (the real equity return).
+        """
+        rates = self.scenario.economic.get_rate("mean")
+        inflation = rates["general_inflation"]
+
+        bond_rate = inflation + 0.01  # Real bond return
+        equity_rate = account.growth_rate  # Real equity return
+
+        gross_rate = (equity_rate * allocation.equity_pct
+                      + bond_rate * allocation.bond_pct)
+        net_rate = gross_rate - account.expense_ratio
+        return net_rate
 
     def get_account_balance(self, account_id: str, year: int,
                             scenario: str = "mean") -> float:
@@ -1124,6 +1226,9 @@ class RetirementPlanner:
         # Track MAGI by year for IRMAA 2-year lookback
         magi_history: Dict[int, float] = {}
 
+        # Historical return sequence index (for sequential replay)
+        _hist_idx = 0
+
         max_year = (self.scenario.primary.birth_date.year
                     + self.scenario.primary.longevity_age + 1)
 
@@ -1151,9 +1256,26 @@ class RetirementPlanner:
                 elif account.growth_rate == 0:
                     base_rate = 0
                 else:
-                    base_rate = account.growth_rate
+                    # Use equity glidepath if configured
+                    allocation = self.get_equity_allocation(primary_age)
+                    # Account-level override
+                    if account.equity_pct is not None:
+                        bond_pct = 1.0 - account.equity_pct
+                        allocation = AssetAllocation(
+                            equity_pct=account.equity_pct,
+                            bond_pct=bond_pct,
+                        )
+                    base_rate = self.get_growth_rate_for_allocation(
+                        account, allocation
+                    )
 
-                if return_volatility > 0:
+                # Determine the actual return rate for this year
+                if (self._historical_return_override is not None
+                        and _hist_idx < len(self._historical_return_override)
+                        and account.account_type not in ("real_estate",)):
+                    # Use pre-computed historical return sequence
+                    actual_rate = self._historical_return_override[_hist_idx]
+                elif return_volatility > 0:
                     actual_rate = random.gauss(base_rate, return_volatility)
                 else:
                     actual_rate = base_rate
@@ -1165,6 +1287,10 @@ class RetirementPlanner:
                 if account.tax_treatment == "taxable":
                     current_basis = cost_basis.get_basis(account_id, 0.0)
                     cost_basis.set_basis(account_id, current_basis + growth)
+
+            # Advance historical return index (one position per simulated year)
+            if self._historical_return_override is not None:
+                _hist_idx += 1
 
             # --- Step 2: Employee contributions + employer match ---
             primary_retired = self._is_retired(year, self.scenario.primary)
