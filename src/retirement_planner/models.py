@@ -69,6 +69,16 @@ class Expense:
     one_time_date: Optional[date] = None
     category: str = "general"
     is_must_spend: bool = True
+    min_reduction: float = 0.0  # Maximum % reduction in stress scenarios (0-1)
+
+@dataclass
+class AgeEvent:
+    """Age-triggered expense modification."""
+    trigger_age: int
+    expense_id: str  # Which expense to modify
+    new_monthly_amount: Optional[float] = None  # None = keep current
+    duration_years: int = -1  # -1 = permanent
+
 
 
 @dataclass
@@ -193,6 +203,7 @@ class Scenario:
     windfalls: List[Windfall] = field(default_factory=list)
     housing_events: List[HousingEvent] = field(default_factory=list)
     roth_conversions: List[RothConversion] = field(default_factory=list)
+    age_events: List[AgeEvent] = field(default_factory=list)
     social_security: SocialSecurity = field(default_factory=SocialSecurity)
     legacy_goal: float = 2_000_000
     state: str = "CA"
