@@ -323,6 +323,13 @@ class WithdrawalEngine:
 # ---------------------------------------------------------------------------
 # Tax calculation with income-type awareness
 # ---------------------------------------------------------------------------
+def _indexed_brackets(brackets, factor):
+    """Return a new bracket list with limits scaled by *factor*."""
+    if factor == 1.0:
+        return brackets
+    return [(limit * factor, rate) for limit, rate in brackets]
+
+
 def _bracket_tax(taxable_income: float, brackets: List[Tuple[float, float]]) -> float:
     """Compute tax from a list of (upper_limit, rate) brackets."""
     tax = 0.0
@@ -368,6 +375,38 @@ _CA_BRACKETS: List[Tuple[float, float]] = [
     (2_732_666, 0.133),
     (float('inf'), 0.143),
 ]
+
+
+# ---------------------------------------------------------------------------
+# ACA (Affordable Care Act) subsidy constants — 2024 base year
+# ---------------------------------------------------------------------------
+_FPL_BASE_FAMILY_OF_4 = 31_200      # 2024 Federal Poverty Level for family of 4
+_FPL_PER_ADDITIONAL_PERSON = 5_380  # Additional per person beyond 4
+
+# Applicable percentage of household income used to calculate
+# the "expected contribution" toward the second-lowest silver plan.
+_ACA_APPLICABLE_PERCENTAGES: List[Tuple[float, float]] = [
+    (1.33, 0.021),
+    (1.50, 0.030),
+    (2.00, 0.040),
+    (2.50, 0.063),
+    (3.00, 0.081),
+    (4.00, 0.097),
+]
+_ACA_FPL_CLIFF_RATIO = 4.0  # No subsidy above 400% FPL (2024 baseline)
+
+# Second-lowest silver plan monthly premiums (2024 approximations)
+_ACA_SILVER_PREMIUMS: Dict[str, Dict[int, float]] = {
+    "CA": {1: 800, 2: 1600, 3: 1800, 4: 2000, 5: 2200},
+    "_default": {1: 800, 2: 1600, 3: 1800, 4: 2000, 5: 2200},
+}
+
+# ---------------------------------------------------------------------------
+# Federal estate tax constants — 2024 base year
+# ---------------------------------------------------------------------------
+_ESTATE_TAX_RATE = 0.40
+_ESTATE_EXEMPTION_SINGLE = 13_610_000   # $13.61M per person (2024)
+_ESTATE_EXEMPTION_MFJ = 27_220_000      # $27.22M combined (2024)
 
 
 # ---------------------------------------------------------------------------
@@ -732,25 +771,40 @@ class RetirementPlanner:
         year: int,
         income: "TaxableIncome",
         scenario: str = "mean",
+        inflation_rate: float = 0.0,
+        years_from_base: int = 0,
     ) -> float:
         """Calculate federal + CA state taxes using income-type breakdown.
 
+        Bracket limits and the standard deduction are indexed to inflation
+        using ``(1 + inflation_rate) ** years_from_base``.
+
         Args:
-            year: Calendar year (reserved for future bracket inflation).
+            year: Calendar year.
             income: TaxableIncome object with ordinary, capital_gains,
                     and tax_free fields populated.
             scenario: Economic scenario (reserved for future use).
+            inflation_rate: Annual inflation rate for bracket indexing.
+            years_from_base: Years since the 2024 base year.
 
         Returns:
             Total tax liability (federal + state).
         """
-        # Standard deduction
-        standard_deduction = 29_200
+        # Index factor for bracket inflation
+        idx = (1.0 + inflation_rate) ** years_from_base
+
+        # Standard deduction (indexed)
+        standard_deduction = 29_200 * idx
+
+        # Indexed brackets
+        fed_brackets = _indexed_brackets(_FEDERAL_BRACKETS, idx)
+        ltcg_brackets = _indexed_brackets(_LTCG_BRACKETS, idx)
+        ca_brackets = _indexed_brackets(_CA_BRACKETS, idx)
 
         # ---- Federal ordinary income tax ----
         # Apply standard deduction against ordinary income first
         ordinary_after_deduction = max(0.0, income.ordinary - standard_deduction)
-        federal_ordinary = _bracket_tax(ordinary_after_deduction, _FEDERAL_BRACKETS)
+        federal_ordinary = _bracket_tax(ordinary_after_deduction, fed_brackets)
 
         # ---- Federal long-term capital gains tax ----
         # LTCG stacks on top of ordinary income for bracket determination
@@ -760,7 +814,7 @@ class RetirementPlanner:
             remaining_ordinary = ordinary_after_deduction
             ltcg_tax = 0.0
             prev_threshold = 0.0
-            for bracket_top, rate in _LTCG_BRACKETS:
+            for bracket_top, rate in ltcg_brackets:
                 if ltcg_taxable <= 0:
                     break
                 # How much of this LTCG bracket is available
@@ -781,7 +835,7 @@ class RetirementPlanner:
         # ---- California state tax (all ordinary — CA taxes LTCG as ordinary) ----
         ca_total = income.ordinary + income.capital_gains
         ca_taxable = max(0.0, ca_total - standard_deduction)
-        ca_tax = _bracket_tax(ca_taxable, _CA_BRACKETS)
+        ca_tax = _bracket_tax(ca_taxable, ca_brackets)
 
         return federal_tax + ca_tax
 
@@ -904,6 +958,97 @@ class RetirementPlanner:
         return taxable_investment * niit_rate
 
     # ------------------------------------------------------------------
+    # ACA (Affordable Care Act) subsidies — pre-Medicare (age < 65)
+    # ------------------------------------------------------------------
+    def calculate_aca_subsidy(
+        self,
+        income: float,
+        family_size: int = 2,
+        state: str = "CA",
+    ) -> float:
+        """Calculate annual ACA premium subsidy for pre-Medicare retirees.
+
+        The subsidy equals the second-lowest silver plan premium minus
+        the household's expected contribution (income × applicable
+        percentage based on FPL tier).  No subsidy is available above
+        400% FPL (ACA cliff, 2024 rules).
+
+        Args:
+            income: Household MAGI (modified adjusted gross income).
+            family_size: Number of people in the household.
+            state: Two-letter state code for silver plan premium lookup.
+
+        Returns:
+            Annual subsidy (>= 0).  Returns 0 when income exceeds the
+            400% FPL cliff.
+        """
+        # Compute Federal Poverty Level for this family size
+        additional = family_size - 4
+        fpl = _FPL_BASE_FAMILY_OF_4 + _FPL_PER_ADDITIONAL_PERSON * additional
+
+        # FPL ratio
+        fpl_ratio = income / fpl if fpl > 0 else 0.0
+
+        # Cliff check — no subsidy above 400% FPL
+        if fpl_ratio >= _ACA_FPL_CLIFF_RATIO:
+            return 0.0
+
+        # Find applicable percentage from tier table
+        applicable_pct = 0.0
+        for upper, pct in _ACA_APPLICABLE_PERCENTAGES:
+            if fpl_ratio <= upper:
+                applicable_pct = pct
+                break
+
+        expected_contribution = income * applicable_pct
+
+        # Silver plan premium (monthly → annual)
+        premiums = _ACA_SILVER_PREMIUMS.get(
+            state, _ACA_SILVER_PREMIUMS["_default"])
+        capped_size = min(family_size, 5)
+        monthly_premium = premiums.get(capped_size, premiums[5])
+        annual_premium = monthly_premium * 12
+
+        subsidy = max(0.0, annual_premium - expected_contribution)
+        return subsidy
+
+    # ------------------------------------------------------------------
+    # Federal estate tax
+    # ------------------------------------------------------------------
+    def calculate_estate_tax(
+        self,
+        net_worth: float,
+        filing_status: str = "MFJ",
+        inflation_rate: float = 0.0,
+        years_from_base: int = 0,
+    ) -> float:
+        """Calculate federal estate tax due at end of life.
+
+        The exemption is indexed to inflation.  Tax is 40% on the
+        excess above the exemption.
+
+        Args:
+            net_worth: Total estate value at time of death.
+            filing_status: ``'MFJ'`` for married filing jointly, else single.
+            inflation_rate: Annual inflation rate for exemption indexing.
+            years_from_base: Years since the 2024 base year.
+
+        Returns:
+            Federal estate tax owed.
+        """
+        idx = (1.0 + inflation_rate) ** years_from_base
+        if filing_status == "MFJ":
+            exemption = _ESTATE_EXEMPTION_MFJ * idx
+        else:
+            exemption = _ESTATE_EXEMPTION_SINGLE * idx
+
+        if net_worth <= exemption:
+            return 0.0
+
+        excess = net_worth - exemption
+        return excess * _ESTATE_TAX_RATE
+
+    # ------------------------------------------------------------------
     # Social Security
     # ------------------------------------------------------------------
     def calculate_social_security(self, year: int, person: Person) -> float:
@@ -954,6 +1099,8 @@ class RetirementPlanner:
         total_taxes = 0.0
         total_ss = 0.0
         total_contributions = 0.0
+        total_aca_subsidy = 0.0
+        total_estate_tax = 0.0
         peak_nw = 0.0
         out_of_savings_year = None
 
@@ -971,6 +1118,7 @@ class RetirementPlanner:
                 cost_basis.set_basis(account_id, account.balance)
 
         rates = self.scenario.economic.get_rate(scenario_name)
+        inflation_rate = rates["general_inflation"]
         withdrawal_engine = WithdrawalEngine(self.accounts, cost_basis)
 
         # Track MAGI by year for IRMAA 2-year lookback
@@ -982,6 +1130,8 @@ class RetirementPlanner:
         for year in range(self.start_year, max_year):
             primary_age = year - self.scenario.primary.birth_date.year
             spouse_age = year - self.scenario.spouse.birth_date.year
+            younger_age = min(primary_age, spouse_age)
+            years_from_base = year - self.start_year
 
             if (primary_age > self.scenario.primary.longevity_age
                     and spouse_age > self.scenario.spouse.longevity_age):
@@ -1054,6 +1204,14 @@ class RetirementPlanner:
                 irmaa_amount = self.calculate_irmaa(magi_2yr_ago, older_age)
                 annual_expenses += irmaa_amount
 
+            # --- Step 4c: ACA subsidy (pre-Medicare, age < 65) ---
+            if younger_age < 65:
+                family_size = 2  # Primary + spouse
+                aca_subsidy = self.calculate_aca_subsidy(
+                    annual_income, family_size, self.scenario.state)
+                annual_expenses = max(0.0, annual_expenses - aca_subsidy)
+                total_aca_subsidy += aca_subsidy
+
             # --- Step 5: Withdrawals (tax-efficient order) ---
             shortfall = withdrawal_engine.calculate_withdrawal_needed(
                 year, annual_expenses, annual_income, ss_income,
@@ -1092,7 +1250,10 @@ class RetirementPlanner:
             )
 
             # --- Step 7: Taxes ---
-            taxes = self.calculate_taxes(year, taxable_income, scenario_name)
+            taxes = self.calculate_taxes(
+                year, taxable_income, scenario_name,
+                inflation_rate=inflation_rate,
+                years_from_base=years_from_base)
 
             # --- Step 7b: NIIT (Net Investment Income Tax) ---
             investment_income = capital_gains
@@ -1128,13 +1289,24 @@ class RetirementPlanner:
             if net_worth <= 0 and out_of_savings_year is None:
                 out_of_savings_year = year
 
+            # --- Step 10: Estate tax (at end of life) ---
+            if (younger_age >= self.scenario.primary.longevity_age
+                    and total_estate_tax == 0.0):
+                total_estate_tax = self.calculate_estate_tax(
+                    net_worth, "MFJ", inflation_rate, years_from_base)
+
         final_nw = sum(balances.values())
-        success = (final_nw > self.scenario.legacy_goal
+        # Net of estate tax for success calculation
+        final_nw_after_estate = final_nw - total_estate_tax
+        success = (final_nw_after_estate > self.scenario.legacy_goal
                    and out_of_savings_year is None)
 
         return {
             "success": success,
             "final_net_worth": final_nw,
+            "final_net_worth_after_estate_tax": final_nw_after_estate,
+            "estate_tax": total_estate_tax,
+            "aca_subsidy": total_aca_subsidy,
             "peak_net_worth": peak_nw,
             "lifetime_taxes": total_taxes,
             "lifetime_ss": total_ss,
@@ -1153,12 +1325,18 @@ class RetirementPlanner:
             if account.tax_treatment == "taxable":
                 cost_basis.set_basis(account_id, account.balance)
 
+        rates = self.scenario.economic.get_rate(scenario_name)
+        inflation_rate = rates["general_inflation"]
+        total_estate_tax = 0.0
+
         max_year = (self.scenario.primary.birth_date.year
                     + self.scenario.primary.longevity_age + 1)
 
         for year in range(self.start_year, max_year):
             primary_age = year - self.scenario.primary.birth_date.year
             spouse_age = year - self.scenario.spouse.birth_date.year
+            younger_age = min(primary_age, spouse_age)
+            years_from_base = year - self.start_year
 
             if (primary_age > self.scenario.primary.longevity_age
                     and spouse_age > self.scenario.spouse.longevity_age):
@@ -1166,6 +1344,13 @@ class RetirementPlanner:
 
             income = self.calculate_annual_income(year, scenario_name)
             expenses = self.calculate_annual_expenses(year, scenario_name)
+
+            # ACA subsidy (pre-Medicare, age < 65)
+            aca_subsidy = 0.0
+            if younger_age < 65:
+                family_size = 2  # Primary + spouse
+                aca_subsidy = self.calculate_aca_subsidy(
+                    income["total"], family_size, self.scenario.state)
 
             # Build TaxableIncome (simplified — all income as ordinary
             # for deterministic projection; real sim handles this properly)
@@ -1175,8 +1360,18 @@ class RetirementPlanner:
                 tax_free=0.0,
                 total=income["total"],
             )
-            taxes = self.calculate_taxes(year, ti, scenario_name)
+            taxes = self.calculate_taxes(
+                year, ti, scenario_name,
+                inflation_rate=inflation_rate,
+                years_from_base=years_from_base)
             net_worth = self.calculate_net_worth(year, scenario_name)
+
+            # Estate tax (at end of life, applied once)
+            if (younger_age >= self.scenario.primary.longevity_age
+                    and total_estate_tax == 0.0):
+                total_estate_tax = self.calculate_estate_tax(
+                    net_worth["net_worth"], "MFJ",
+                    inflation_rate, years_from_base)
 
             projections.append({
                 "year": year,
@@ -1185,9 +1380,11 @@ class RetirementPlanner:
                 "income": income["total"],
                 "income_by_source": income["by_source"],
                 "expenses": expenses["total"],
+                "aca_subsidy": aca_subsidy,
                 "expenses_by_category": expenses["by_category"],
                 "taxes": taxes,
-                "net_cash_flow": income["total"] - expenses["total"] - taxes,
+                "estate_tax": total_estate_tax if younger_age >= self.scenario.primary.longevity_age else 0.0,
+                "net_cash_flow": income["total"] - expenses["total"] - taxes - aca_subsidy,
                 "net_worth": net_worth["net_worth"],
                 "total_assets": net_worth["total_assets"],
                 "total_liabilities": net_worth["total_liabilities"],
