@@ -385,30 +385,32 @@ class RetirementPlanner:
         self.scenario = scenario
         self.accounts = {a.id: a for a in scenario.accounts}
         self.start_year = datetime.now().year
-
     @classmethod
     def from_config(cls, config_path: str) -> 'RetirementPlanner':
         """Load planner from JSON config file."""
         import json
         with open(config_path) as f:
             config = json.load(f)
-
+        
+        # Parse config into Scenario
+        # This is a simplified parser - full implementation would handle all fields
         from datetime import date
-
+        
         primary = Person(
             name=config["primary"]["name"],
             birth_date=date.fromisoformat(config["primary"]["birth_date"]),
             retirement_date=date.fromisoformat(config["primary"]["retirement_date"]),
             longevity_age=config["primary"].get("longevity_age", 90),
         )
-
+        
         spouse = Person(
             name=config["spouse"]["name"],
             birth_date=date.fromisoformat(config["spouse"]["birth_date"]),
             retirement_date=date.fromisoformat(config["spouse"]["retirement_date"]),
             longevity_age=config["spouse"].get("longevity_age", 90),
         )
-
+        
+        # Parse accounts
         accounts = []
         for acc_config in config.get("accounts", []):
             accounts.append(Account(
@@ -419,9 +421,130 @@ class RetirementPlanner:
                 balance=acc_config["balance"],
                 growth_rate=acc_config.get("growth_rate", 0.088),
             ))
-
+        
+        # Parse economic assumptions
+        econ_config = config.get("economic", {})
         economic = EconomicAssumptions(
-            general_inflation=config.get("economic", {}).get("inflation", 0.0254),
+            general_inflation=econ_config.get("inflation", 0.0254),
+            general_inflation_optimistic=econ_config.get("inflation_optimistic", 0.0203),
+            general_inflation_pessimistic=econ_config.get("inflation_pessimistic", 0.0305),
+            medical_inflation=econ_config.get("medical_inflation", 0.0336),
+            medical_inflation_optimistic=econ_config.get("medical_inflation_optimistic", 0.0269),
+            medical_inflation_pessimistic=econ_config.get("medical_inflation_pessimistic", 0.0403),
+            housing_appreciation=econ_config.get("housing_appreciation", 0.044),
+            housing_appreciation_optimistic=econ_config.get("housing_appreciation_optimistic", 0.0528),
+            housing_appreciation_pessimistic=econ_config.get("housing_appreciation_pessimistic", 0.0352),
+        )
+
+        # Parse income streams
+        income_streams = []
+        for ic in config.get("income_streams", []):
+            income_streams.append(IncomeStream(
+                id=ic["id"],
+                name=ic["name"],
+                owner=ic["owner"],
+                monthly_amount=ic["monthly_amount"],
+                start_date=date.fromisoformat(ic["start_date"]),
+                end_date=date.fromisoformat(ic["end_date"]),
+                growth_rate=ic.get("growth_rate", 0.0),
+                is_w2=ic.get("is_w2", True),
+                is_passive=ic.get("is_passive", False),
+                is_ss=ic.get("is_ss", False),
+                goes_to_account=ic.get("goes_to_account", ""),
+            ))
+
+        # Parse expenses
+        expenses = []
+        for ec in config.get("expenses", []):
+            one_time_date = ec.get("one_time_date")
+            expenses.append(Expense(
+                id=ec["id"],
+                name=ec["name"],
+                monthly_amount=ec["monthly_amount"],
+                start_date=date.fromisoformat(ec["start_date"]),
+                end_date=date.fromisoformat(ec["end_date"]),
+                growth_rate=ec.get("growth_rate", 0.0),
+                is_one_time=ec.get("is_one_time", False),
+                one_time_amount=ec.get("one_time_amount", 0.0),
+                one_time_date=date.fromisoformat(one_time_date) if one_time_date else None,
+                category=ec.get("category", "general"),
+                is_must_spend=ec.get("is_must_spend", True),
+                min_reduction=ec.get("min_reduction", 0.0),
+            ))
+
+        # Parse mortgages
+        mortgages = []
+        for mc in config.get("mortgages", []):
+            mortgages.append(Mortgage(
+                id=mc["id"],
+                name=mc["name"],
+                property_id=mc["property_id"],
+                balance=mc["balance"],
+                interest_rate=mc["interest_rate"],
+                monthly_payment=mc["monthly_payment"],
+                start_date=date.fromisoformat(mc["start_date"]),
+                end_date=date.fromisoformat(mc["end_date"]),
+                is_tax_deductible=mc.get("is_tax_deductible", True),
+            ))
+
+        # Parse windfalls
+        windfalls = []
+        for wf in config.get("windfalls", []):
+            windfalls.append(Windfall(
+                id=wf["id"],
+                name=wf["name"],
+                amount=wf["amount"],
+                date=date.fromisoformat(wf["date"]),
+                goes_to_account=wf.get("goes_to_account", ""),
+                is_taxable=wf.get("is_taxable", True),
+            ))
+
+        # Parse housing events
+        housing_events = []
+        for he in config.get("housing_events", []):
+            housing_events.append(HousingEvent(
+                id=he["id"],
+                name=he["name"],
+                event_date=date.fromisoformat(he["event_date"]),
+                sale_price=he.get("sale_price", 0.0),
+                purchase_price=he.get("purchase_price", 0.0),
+                down_payment=he.get("down_payment", 0.0),
+                mortgage_amount=he.get("mortgage_amount", 0.0),
+                mortgage_rate=he.get("mortgage_rate", 0.05),
+                mortgage_term_years=he.get("mortgage_term_years", 30),
+            ))
+
+        # Parse Roth conversions
+        roth_conversions = []
+        for rc in config.get("roth_conversions", []):
+            roth_conversions.append(RothConversion(
+                id=rc["id"],
+                name=rc["name"],
+                source_account=rc["source_account"],
+                target_account=rc["target_account"],
+                start_date=date.fromisoformat(rc["start_date"]),
+                end_date=date.fromisoformat(rc["end_date"]),
+                annual_amount=rc["annual_amount"],
+            ))
+
+        # Parse age events
+        age_events = []
+        for ae in config.get("age_events", []):
+            age_events.append(AgeEvent(
+                trigger_age=ae["trigger_age"],
+                expense_id=ae["expense_id"],
+                new_monthly_amount=ae.get("new_monthly_amount"),
+                duration_years=ae.get("duration_years", -1),
+            ))
+
+        # Parse social security
+        ss_config = config.get("social_security", {})
+        social_security = SocialSecurity(
+            primary_benefit_at_67=ss_config.get("primary_benefit_at_67", 3000),
+            primary_claiming_age=ss_config.get("primary_claiming_age", 67),
+            spouse_benefit_at_67=ss_config.get("spouse_benefit_at_67", 2500),
+            spouse_claiming_age=ss_config.get("spouse_claiming_age", 67),
+            cola_rate=ss_config.get("cola_rate", 0.0254),
         )
 
         scenario = Scenario(
@@ -431,18 +554,20 @@ class RetirementPlanner:
             spouse=spouse,
             economic=economic,
             accounts=accounts,
-            income_streams=[],
-            expenses=[],
-            mortgages=[],
+            income_streams=income_streams,
+            expenses=expenses,
+            mortgages=mortgages,
+            windfalls=windfalls,
+            housing_events=housing_events,
+            roth_conversions=roth_conversions,
+            age_events=age_events,
+            social_security=social_security,
             legacy_goal=config.get("legacy_goal", 2_000_000),
             state=config.get("state", "CA"),
         )
-
+        
         return cls(scenario)
 
-    # ------------------------------------------------------------------
-    # Account projections
-    # ------------------------------------------------------------------
     def get_account_balance(self, account_id: str, year: int,
                             scenario: str = "mean") -> float:
         """Get projected account balance for a given year (deterministic)."""
