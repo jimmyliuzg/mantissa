@@ -1,6 +1,8 @@
 {
-  "name": "Default Scenario",
-  "description": "A sample retirement plan configuration",
+  "name": "Default Retirement Plan",
+  "description": "A baseline retirement plan with reasonable assumptions based on historical data and forward-looking estimates.",
+  
+  "_comment": "All return rates are REAL (inflation-adjusted). Medical inflation is NOMINAL.",
   
   "primary": {
     "name": "Primary Person",
@@ -17,62 +19,110 @@
   },
   
   "economic": {
+    "_comment": "Conservative defaults — use historical medians, not optimistic projections",
     "inflation": 0.025,
-    "medical_inflation": 0.035,
-    "housing_appreciation": 0.04
+    "medical_inflation": 0.04,
+    "housing_appreciation": 0.035,
+    "investment_return_mean": 0.07,
+    "investment_return_volatility": 0.15
   },
   
   "accounts": [
     {
+      "_comment": "Diversified portfolio — adjust to your allocation",
       "id": "401k_primary",
       "name": "401k - Primary",
       "type": "401k",
       "tax_treatment": "pre_tax",
-      "balance": 200000,
-      "growth_rate": 0.088
+      "balance": 150000,
+      "growth_rate": 0.07
     },
     {
-      "id": "roth_ira",
-      "name": "Roth IRA",
+      "id": "401k_spouse",
+      "name": "401k - Spouse",
+      "type": "401k",
+      "tax_treatment": "pre_tax",
+      "balance": 100000,
+      "growth_rate": 0.07
+    },
+    {
+      "id": "roth_ira_primary",
+      "name": "Roth IRA - Primary",
       "type": "roth_ira",
       "tax_treatment": "roth",
       "balance": 50000,
-      "growth_rate": 0.088
+      "growth_rate": 0.07
+    },
+    {
+      "id": "roth_ira_spouse",
+      "name": "Roth IRA - Spouse",
+      "type": "roth_ira",
+      "tax_treatment": "roth",
+      "balance": 50000,
+      "growth_rate": 0.07
+    },
+    {
+      "id": "trad_ira",
+      "name": "Traditional IRA",
+      "type": "trad_ira",
+      "tax_treatment": "pre_tax",
+      "balance": 25000,
+      "growth_rate": 0.07
+    },
+    {
+      "id": "hsa",
+      "name": "HSA",
+      "type": "hsa",
+      "tax_treatment": "tax_exempt",
+      "balance": 15000,
+      "growth_rate": 0.07
     },
     {
       "id": "brokerage",
-      "name": "Brokerage",
+      "name": "Brokerage - Taxable",
       "type": "brokerage",
       "tax_treatment": "taxable",
       "balance": 100000,
-      "growth_rate": 0.088
+      "growth_rate": 0.07
     },
     {
       "id": "checking",
-      "name": "Checking",
+      "name": "Checking / Emergency Fund",
       "type": "checking",
       "tax_treatment": "taxable",
-      "balance": 10000,
+      "balance": 25000,
       "growth_rate": 0.015
     }
   ],
   
   "income_streams": [
     {
-      "id": "salary",
-      "name": "Salary",
+      "id": "salary_primary",
+      "name": "Salary - Primary",
       "owner": "primary",
       "monthly_amount": 10000,
       "start_date": "2024-01-01",
       "end_date": "2030-01-01",
-      "growth_rate": 0.03
+      "growth_rate": 0.03,
+      "is_w2": true
+    },
+    {
+      "id": "salary_spouse",
+      "name": "Salary - Spouse",
+      "owner": "spouse",
+      "monthly_amount": 8000,
+      "start_date": "2024-01-01",
+      "end_date": "2030-01-01",
+      "growth_rate": 0.03,
+      "is_w2": true
     }
   ],
   
   "expenses": [
     {
+      "_comment": "Conservative estimate — verify against your actual spending",
       "id": "living",
-      "name": "Living Expenses",
+      "name": "All Living Expenses",
       "monthly_amount": 5000,
       "start_date": "2024-01-01",
       "end_date": "2080-01-01",
@@ -84,5 +134,13 @@
   "windfalls": [],
   
   "legacy_goal": 1000000,
-  "state": "CA"
+  "state": "CA",
+  
+  "_notes": {
+    "investment_returns": "7% real is the historical S&P 500 average (1926-2023). Use 6% for conservative planning, 5% for very conservative.",
+    "expense_tracking": "Track your actual spending for 6+ months before planning. Boldin-style budgeting often underestimates real spending.",
+    "sequence_risk": "The first 5-10 years of retirement are most critical. A bad market early can derail even well-funded plans.",
+    "healthcare": "Medical inflation consistently exceeds general inflation by 1-2%. Budget separately for healthcare costs.",
+    "taxes": "This model does NOT include taxes in expenses. Add your expected tax burden separately."
+  }
 }
