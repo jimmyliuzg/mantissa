@@ -1,0 +1,44 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "retirement-planner"
+version = "0.1.0"
+description = "A flexible retirement planning engine with Monte Carlo simulation, Roth conversion optimization, Social Security modeling, and scenario comparison."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+authors = [
+    { name = "Jimmy Liu", email = "jimmyliuzg@gmail.com" },
+]
+keywords = [
+    "retirement",
+    "planning",
+    "monte-carlo",
+    "finance",
+    "investment",
+    "social-security",
+    "roth-conversion",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial",
+]
+
+[project.urls]
+Homepage = "https://github.com/jimmyliuzg/retirement-planner"
+Repository = "https://github.com/jimmyliuzg/retirement-planner"
+Issues = "https://github.com/jimmyliuzg/retirement-planner/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/retirement_planner"]

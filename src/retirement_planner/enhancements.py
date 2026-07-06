@@ -145,7 +145,7 @@ class SocialSecurityOptimizer:
         """Calculate monthly benefit at claiming age."""
         ss = self.scenario.social_security
         
-        if person.name == "Primary":
+        if person.name == self.scenario.primary.name:
             full_benefit = ss.primary_benefit_at_67
         else:
             full_benefit = ss.spouse_benefit_at_67
@@ -183,17 +183,17 @@ class SocialSecurityOptimizer:
                 primary_years = 90 - primary_age
                 spouse_years = 90 - spouse_age
                 
-                total_jimmy = primary_benefit * 12 * primary_years
-                total_faith = spouse_benefit * 12 * spouse_years
-                total = total_jimmy + total_faith
+                total_primary = primary_benefit * 12 * primary_years
+                total_spouse = spouse_benefit * 12 * spouse_years
+                total = total_primary + total_spouse
                 
                 strategies[key] = {
                     "primary_claiming_age": primary_age,
                     "spouse_claiming_age": spouse_age,
                     "primary_monthly": primary_benefit,
                     "spouse_monthly": spouse_benefit,
-                    "primary_lifetime": total_jimmy,
-                    "spouse_lifetime": total_faith,
+                    "primary_lifetime": total_primary,
+                    "spouse_lifetime": total_spouse,
                     "total_lifetime": total,
                 }
         
@@ -218,26 +218,26 @@ class SocialSecurityOptimizer:
         current_year = datetime.now().year
         
         for year in range(current_year, 2090):
-            primary_age = year - primary_birth
-            spouse_age = year - spouse_birth
+            p_age = year - primary_birth
+            s_age = year - spouse_birth
             
             primary_income = 0
             spouse_income = 0
             
-            if primary_age >= primary_claiming_age:
-                years_since = primary_age - primary_claiming_age
+            if p_age >= primary_claiming_age:
+                years_since = p_age - primary_claiming_age
                 cola = self.scenario.social_security.cola_rate
                 primary_income = primary_monthly * 12 * (1 + cola) ** years_since
             
-            if spouse_age >= spouse_claiming_age:
-                years_since = spouse_age - spouse_claiming_age
+            if s_age >= spouse_claiming_age:
+                years_since = s_age - spouse_claiming_age
                 cola = self.scenario.social_security.cola_rate
                 spouse_income = spouse_monthly * 12 * (1 + cola) ** years_since
             
             projections.append({
                 "year": year,
-                "primary_age": primary_age,
-                "spouse_age": spouse_age,
+                "primary_age": p_age,
+                "spouse_age": s_age,
                 "primary_income": primary_income,
                 "spouse_income": spouse_income,
                 "total_ss": primary_income + spouse_income,

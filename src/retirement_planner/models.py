@@ -125,8 +125,8 @@ class RothConversion:
 @dataclass
 class SocialSecurity:
     """Social Security configuration."""
-    # Primary
-    primary_benefit_at_67: float = 3000  # Monthly benefit
+    # Primary person
+    primary_benefit_at_67: float = 3000  # Monthly benefit at age 67
     primary_claiming_age: int = 67
     # Spouse
     spouse_benefit_at_67: float = 2500

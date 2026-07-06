@@ -232,8 +232,9 @@ class RetirementPlanner:
         """Calculate Social Security benefit for a year."""
         age = year - person.birth_date.year
         ss = self.scenario.social_security
-        
-        if person.name == "Primary":
+
+        # Determine if this is the primary person or spouse
+        if person.name == self.scenario.primary.name:
             claiming_age = ss.primary_claiming_age
             benefit_at_67 = ss.primary_benefit_at_67
         else:
