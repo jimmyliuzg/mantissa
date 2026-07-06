@@ -1,0 +1,88 @@
+{
+  "name": "Default Scenario",
+  "description": "A sample retirement plan configuration",
+  
+  "primary": {
+    "name": "Primary Person",
+    "birth_date": "1990-01-01",
+    "retirement_date": "2030-01-01",
+    "longevity_age": 90
+  },
+  
+  "spouse": {
+    "name": "Spouse",
+    "birth_date": "1990-01-01",
+    "retirement_date": "2030-01-01",
+    "longevity_age": 90
+  },
+  
+  "economic": {
+    "inflation": 0.025,
+    "medical_inflation": 0.035,
+    "housing_appreciation": 0.04
+  },
+  
+  "accounts": [
+    {
+      "id": "401k_primary",
+      "name": "401k - Primary",
+      "type": "401k",
+      "tax_treatment": "pre_tax",
+      "balance": 200000,
+      "growth_rate": 0.088
+    },
+    {
+      "id": "roth_ira",
+      "name": "Roth IRA",
+      "type": "roth_ira",
+      "tax_treatment": "roth",
+      "balance": 50000,
+      "growth_rate": 0.088
+    },
+    {
+      "id": "brokerage",
+      "name": "Brokerage",
+      "type": "brokerage",
+      "tax_treatment": "taxable",
+      "balance": 100000,
+      "growth_rate": 0.088
+    },
+    {
+      "id": "checking",
+      "name": "Checking",
+      "type": "checking",
+      "tax_treatment": "taxable",
+      "balance": 10000,
+      "growth_rate": 0.015
+    }
+  ],
+  
+  "income_streams": [
+    {
+      "id": "salary",
+      "name": "Salary",
+      "owner": "primary",
+      "monthly_amount": 10000,
+      "start_date": "2024-01-01",
+      "end_date": "2030-01-01",
+      "growth_rate": 0.03
+    }
+  ],
+  
+  "expenses": [
+    {
+      "id": "living",
+      "name": "Living Expenses",
+      "monthly_amount": 5000,
+      "start_date": "2024-01-01",
+      "end_date": "2080-01-01",
+      "category": "general"
+    }
+  ],
+  
+  "mortgages": [],
+  "windfalls": [],
+  
+  "legacy_goal": 1000000,
+  "state": "CA"
+}
