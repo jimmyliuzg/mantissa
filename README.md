@@ -1,11 +1,22 @@
-# Retirement Planner
+# Mantissa
 
-A flexible retirement planning engine with Monte Carlo simulation, withdrawal modeling, and scenario comparison.
+An open-source retirement planner that helps you answer the question: **"Given my savings, spending, and market assumptions, will I run out of money?"**
+
+Mantissa uses Monte Carlo simulation to run thousands of scenarios and calculate your probability of success. It models:
+
+- **Investment growth** across multiple account types (401k, Roth, brokerage, real estate)
+- **Income streams** (salary, RSUs, passive income, Social Security)
+- **Expense flexibility** — discretionary vs fixed expenses that can be cut during stress
+- **Age-based events** — healthcare costs, long-term care, kids' education
+- **Tax-optimized withdrawals** — Roth conversion planning, bracket management
+- **Withdrawal strategies** — fixed, dynamic, floor/ceiling approaches
+
+Built for people who want to stress-test their retirement plan against realistic market assumptions, not optimistic ones.
 
 ## Quick Start
 
 ```bash
-pip install git+https://github.com/jimmyliuzg/retirement-planner.git
+pip install git+https://github.com/jimmyliuzg/mantissa.git
 ```
 
 ```python
@@ -55,7 +66,7 @@ All rates are **real** (inflation-adjusted) unless noted.
 | `investment_return_volatility` | 15% | 20% | 10% | 15-20% | S&P 500 std dev |
 | `ss_cola` | 2.5% | 3.0% | 2.0% | 2.5% | Tied to CPI-W |
 
-**Important:** Boldin uses 8.8% real returns (Moderate-Aggressive). Forward-looking estimates from Vanguard/JPM suggest 5-7% for the next decade. This planner defaults to 7% (historical median).
+**Important:** Forward-looking estimates from Vanguard/JPM suggest 5-7% real returns for the next decade. This planner defaults to 7% (historical median). Many planners use 8-9% which may be overly optimistic.
 
 ### 3. Account Types & Growth Rates
 
@@ -266,11 +277,11 @@ This planner uses **conservative defaults** based on historical data:
 | Tax brackets | 2024 MFJ | IRS |
 | Legacy goal | $1M | User-configurable |
 
-**Compared to Boldin:**
-- Boldin uses 8.8% real returns (Moderate-Aggressive)
+**Conservative by design:**
+- Many planners use 8-9% real returns (Moderate-Aggressive)
 - This planner defaults to 7.0% real returns (historical median)
-- Boldin's 88% success rate assumes 8.8% returns
-- At 7% returns, success rate drops to ~67% (with actual expenses)
+- At 8.8% returns, success rate might be ~88%
+- At 7% returns, success rate drops to ~67% (more realistic)
 
 ---
 

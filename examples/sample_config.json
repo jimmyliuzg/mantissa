@@ -188,7 +188,7 @@
   
   "_notes": {
     "investment_returns": "7% real is the historical S&P 500 average (1926-2023). Use 6% for conservative planning, 5% for very conservative.",
-    "expense_tracking": "Track your actual spending for 6+ months before planning. Boldin-style budgeting often underestimates real spending.",
+    "expense_tracking": "Track your actual spending for 6+ months before planning. Budgeting tools often underestimate actual spending.",
     "sequence_risk": "The first 5-10 years of retirement are most critical. A bad market early can derail even well-funded plans.",
     "healthcare": "Medical inflation consistently exceeds general inflation by 1-2%. Budget separately for healthcare costs.",
     "taxes": "This model does NOT include taxes in expenses. Add your expected tax burden separately."

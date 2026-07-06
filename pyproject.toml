@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "retirement-planner"
+name = "mantissa"
 version = "0.1.0"
-description = "A flexible retirement planning engine with Monte Carlo simulation, Roth conversion optimization, Social Security modeling, and scenario comparison."
+description = "An open-source retirement planner with Monte Carlo simulation, withdrawal modeling, and scenario comparison."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.9"
@@ -36,9 +36,9 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/jimmyliuzg/retirement-planner"
-Repository = "https://github.com/jimmyliuzg/retirement-planner"
-Issues = "https://github.com/jimmyliuzg/retirement-planner/issues"
+Homepage = "https://github.com/jimmyliuzg/mantissa"
+Repository = "https://github.com/jimmyliuzg/mantissa"
+Issues = "https://github.com/jimmyliuzg/mantissa/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/retirement_planner"]
