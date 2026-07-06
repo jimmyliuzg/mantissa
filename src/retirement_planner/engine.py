@@ -1441,6 +1441,59 @@ class RetirementPlanner:
         }
 
     # ------------------------------------------------------------------
+    # Asset location suggestions
+    # ------------------------------------------------------------------
+    def suggest_asset_location(self, accounts: Optional[List[Account]] = None) -> Dict[str, str]:
+        """Suggest which asset class should be held in each account for tax efficiency.
+
+        This is a recommendation only — it does not move money or change
+        account settings.  The mapping follows standard asset-location wisdom:
+
+        * **Roth IRA / Roth 401(k)** → "equity" (highest growth, tax-free)
+        * **Traditional IRA / 401(k)** → "bond" (ordinary income, avoid
+          wasting tax-free growth space)
+        * **Taxable brokerage** → "equity" (tax-efficient index funds / munis;
+          here we still suggest equity since index funds are more tax-efficient
+          than bonds in taxable)
+        * **HSA** → "equity" (triple tax advantage)
+        * **Everything else** → "mixed" (no strong recommendation)
+
+        Args:
+            accounts: List of Account objects to evaluate.  If None, uses
+                all accounts in the current scenario.
+
+        Returns:
+            Dict mapping account_id to suggested asset_class string.
+        """
+        if accounts is None:
+            accounts = list(self.accounts.values())
+
+        suggestions: Dict[str, str] = {}
+        for account in accounts:
+            acct_type = account.account_type.lower()
+            tax = account.tax_treatment.lower()
+
+            # Roth accounts → equity (tax-free growth)
+            if tax == "roth" or "roth" in acct_type:
+                suggestions[account.id] = "equity"
+            # HSA → equity (triple tax advantage)
+            elif acct_type == "hsa":
+                suggestions[account.id] = "equity"
+            # Traditional / pre-tax retirement accounts → bonds
+            # (withdrawing bonds from pre-tax accounts avoids wasting
+            #  tax-free growth space on low-return assets)
+            elif tax == "pre_tax" or acct_type in ("401k", "trad_ira", "trad_401k", "traditional_ira"):
+                suggestions[account.id] = "bond"
+            # Taxable brokerage → equity (tax-efficient index funds)
+            elif tax == "taxable":
+                suggestions[account.id] = "equity"
+            # Everything else (checking, real estate, vehicles, etc.)
+            else:
+                suggestions[account.id] = "mixed"
+
+        return suggestions
+
+    # ------------------------------------------------------------------
     # Deterministic cash flow projection
     # ------------------------------------------------------------------
     def project_cash_flow(self, scenario_name: str = "mean") -> List[Dict]:
