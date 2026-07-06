@@ -86,6 +86,7 @@ class Account:
     employer_match_limit: float = 0.0
     is_depreciating: bool = False
     liquid: bool = True
+    asset_class: Optional[str] = None  # "equity", "bond", "mixed", or None (auto)
     expense_ratio: float = 0.0  # Annual fee as decimal (e.g., 0.001 = 0.1%)
     equity_pct: Optional[float] = None  # None = use glidepath default
 
