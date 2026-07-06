@@ -8,6 +8,58 @@ import json
 
 
 @dataclass
+class AssetAllocation:
+    """Asset allocation between equity and bonds.
+
+    equity_pct + bond_pct should sum to 1.0.
+    """
+    equity_pct: float = 1.0
+    bond_pct: float = 0.0
+
+    def __post_init__(self):
+        # Allow minor floating-point drift
+        if abs(self.equity_pct + self.bond_pct - 1.0) > 0.01:
+            raise ValueError(
+                f"equity_pct ({self.equity_pct}) + bond_pct ({self.bond_pct}) "
+                f"must sum to 1.0"
+            )
+
+
+@dataclass
+class GlidepathConfig:
+    """Age-based equity/bond glidepath with optional bond tent.
+
+    The glidepath defines how asset allocation shifts from equity-heavy
+    (younger) to bond-heavy (older).  A "bond tent" further increases
+    bond allocation around retirement to reduce sequence-of-returns risk.
+
+    Default schedule (interpolated between anchor points):
+        age 30 → 90% equity, age 40 → 80%, age 50 → 70%,
+        age 60 → 60%, age 70 → 50%, age 80 → 40%
+
+    Bond tent: during [retirement_age - pre_retirement_years,
+    retirement_age + post_retirement_years], equity is held at
+    tent_equity_pct instead of the normal glidepath value.  After the
+    tent window, allocation gradually returns to the normal glidepath
+    over ``tent_ramp_years``.
+    """
+    # Age → equity fraction mapping (interpolated linearly)
+    equity_by_age: Dict[int, float] = field(default_factory=lambda: {
+        30: 0.90,
+        40: 0.80,
+        50: 0.70,
+        60: 0.60,
+        70: 0.50,
+        80: 0.40,
+    })
+    # Bond tent parameters
+    pre_retirement_years: int = 5
+    post_retirement_years: int = 5
+    tent_equity_pct: float = 0.30  # 30% equity during tent
+    tent_ramp_years: int = 3  # Years to ramp back after tent
+
+
+@dataclass
 class Person:
     """Profile for a person."""
     name: str
@@ -34,7 +86,9 @@ class Account:
     employer_match_limit: float = 0.0
     is_depreciating: bool = False
     liquid: bool = True
-    
+    expense_ratio: float = 0.0  # Annual fee as decimal (e.g., 0.001 = 0.1%)
+    equity_pct: Optional[float] = None  # None = use glidepath default
+
     def project_balance(self, years: int, rate: float) -> float:
         return self.balance * (1 + rate) ** years
 
@@ -205,6 +259,7 @@ class Scenario:
     roth_conversions: List[RothConversion] = field(default_factory=list)
     age_events: List[AgeEvent] = field(default_factory=list)
     social_security: SocialSecurity = field(default_factory=SocialSecurity)
+    glidepath: Optional[GlidepathConfig] = None
     legacy_goal: float = 2_000_000
     state: str = "CA"
     
