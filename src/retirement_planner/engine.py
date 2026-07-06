@@ -232,13 +232,14 @@ class RetirementPlanner:
         """Calculate Social Security benefit for a year."""
         age = year - person.birth_date.year
         ss = self.scenario.social_security
-        
-        if person.name == "Jimmy":
-            claiming_age = ss.jimmy_claiming_age
-            benefit_at_67 = ss.jimmy_benefit_at_67
+
+        # Determine if this is the primary person or spouse
+        if person.name == self.scenario.primary.name:
+            claiming_age = ss.primary_claiming_age
+            benefit_at_67 = ss.primary_benefit_at_67
         else:
-            claiming_age = ss.faith_claiming_age
-            benefit_at_67 = ss.faith_benefit_at_67
+            claiming_age = ss.spouse_claiming_age
+            benefit_at_67 = ss.spouse_benefit_at_67
         
         if age < claiming_age:
             return 0.0
@@ -300,9 +301,9 @@ class RetirementPlanner:
             
             # Social Security
             ss_income = 0
-            if primary_age >= self.scenario.social_security.jimmy_claiming_age:
+            if primary_age >= self.scenario.social_security.primary_claiming_age:
                 ss_income += self.calculate_social_security(year, self.scenario.primary)
-            if spouse_age >= self.scenario.social_security.faith_claiming_age:
+            if spouse_age >= self.scenario.social_security.spouse_claiming_age:
                 ss_income += self.calculate_social_security(year, self.scenario.spouse)
             annual_income += ss_income
             total_ss += ss_income

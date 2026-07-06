@@ -125,12 +125,12 @@ class RothConversion:
 @dataclass
 class SocialSecurity:
     """Social Security configuration."""
-    # Jimmy
-    jimmy_benefit_at_67: float = 3000  # Monthly benefit
-    jimmy_claiming_age: int = 67
-    # Faith
-    faith_benefit_at_67: float = 2500
-    faith_claiming_age: int = 67
+    # Primary person
+    primary_benefit_at_67: float = 3000  # Monthly benefit at age 67
+    primary_claiming_age: int = 67
+    # Spouse
+    spouse_benefit_at_67: float = 2500
+    spouse_claiming_age: int = 67
     # COLA
     cola_rate: float = 0.0254  # Tied to inflation
 

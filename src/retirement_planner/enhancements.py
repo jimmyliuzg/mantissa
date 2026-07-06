@@ -71,7 +71,7 @@ class RothConversionOptimizer:
         
         # Identify low-income years (retirement to SS claiming)
         primary_retire_year = self.scenario.primary.retirement_date.year
-        ss_start_year = primary_retire_year + (self.scenario.social_security.jimmy_claiming_age - 
+        ss_start_year = primary_retire_year + (self.scenario.social_security.primary_claiming_age - 
                                                (primary_retire_year - self.scenario.primary.birth_date.year))
         
         for proj in projections:
@@ -145,10 +145,10 @@ class SocialSecurityOptimizer:
         """Calculate monthly benefit at claiming age."""
         ss = self.scenario.social_security
         
-        if person.name == "Jimmy":
-            full_benefit = ss.jimmy_benefit_at_67
+        if person.name == self.scenario.primary.name:
+            full_benefit = ss.primary_benefit_at_67
         else:
-            full_benefit = ss.faith_benefit_at_67
+            full_benefit = ss.spouse_benefit_at_67
         
         # Adjustment for early/late claiming
         if claiming_age < 67:
@@ -171,29 +171,29 @@ class SocialSecurityOptimizer:
         """Compare different claiming strategies."""
         strategies = {}
         
-        for jimmy_age in [62, 64, 66, 67, 68, 70]:
-            for faith_age in [62, 64, 66, 67, 68, 70]:
-                key = f"jimmy_{jimmy_age}_faith_{faith_age}"
+        for primary_age in [62, 64, 66, 67, 68, 70]:
+            for spouse_age in [62, 64, 66, 67, 68, 70]:
+                key = f"primary_{primary_age}_spouse_{spouse_age}"
                 
                 # Calculate lifetime benefits
-                jimmy_benefit = self.calculate_benefit_at_age(self.scenario.primary, jimmy_age)
-                faith_benefit = self.calculate_benefit_at_age(self.scenario.spouse, faith_age)
+                primary_benefit = self.calculate_benefit_at_age(self.scenario.primary, primary_age)
+                spouse_benefit = self.calculate_benefit_at_age(self.scenario.spouse, spouse_age)
                 
                 # Simplified: assume claiming from age to 90
-                jimmy_years = 90 - jimmy_age
-                faith_years = 90 - faith_age
+                primary_years = 90 - primary_age
+                spouse_years = 90 - spouse_age
                 
-                total_jimmy = jimmy_benefit * 12 * jimmy_years
-                total_faith = faith_benefit * 12 * faith_years
-                total = total_jimmy + total_faith
+                total_primary = primary_benefit * 12 * primary_years
+                total_spouse = spouse_benefit * 12 * spouse_years
+                total = total_primary + total_spouse
                 
                 strategies[key] = {
-                    "jimmy_claiming_age": jimmy_age,
-                    "faith_claiming_age": faith_age,
-                    "jimmy_monthly": jimmy_benefit,
-                    "faith_monthly": faith_benefit,
-                    "jimmy_lifetime": total_jimmy,
-                    "faith_lifetime": total_faith,
+                    "primary_claiming_age": primary_age,
+                    "spouse_claiming_age": spouse_age,
+                    "primary_monthly": primary_benefit,
+                    "spouse_monthly": spouse_benefit,
+                    "primary_lifetime": total_primary,
+                    "spouse_lifetime": total_spouse,
                     "total_lifetime": total,
                 }
         
@@ -205,42 +205,42 @@ class SocialSecurityOptimizer:
             "optimal": strategies[optimal_key],
         }
     
-    def project_ss_income(self, jimmy_claiming_age: int = 67, faith_claiming_age: int = 67) -> List[Dict]:
+    def project_ss_income(self, primary_claiming_age: int = 67, spouse_claiming_age: int = 67) -> List[Dict]:
         """Project Social Security income year by year."""
         projections = []
         
-        jimmy_birth = self.scenario.primary.birth_date.year
-        faith_birth = self.scenario.spouse.birth_date.year
+        primary_birth = self.scenario.primary.birth_date.year
+        spouse_birth = self.scenario.spouse.birth_date.year
         
-        jimmy_monthly = self.calculate_benefit_at_age(self.scenario.primary, jimmy_claiming_age)
-        faith_monthly = self.calculate_benefit_at_age(self.scenario.spouse, faith_claiming_age)
+        primary_monthly = self.calculate_benefit_at_age(self.scenario.primary, primary_claiming_age)
+        spouse_monthly = self.calculate_benefit_at_age(self.scenario.spouse, spouse_claiming_age)
         
         current_year = datetime.now().year
         
         for year in range(current_year, 2090):
-            jimmy_age = year - jimmy_birth
-            faith_age = year - faith_birth
+            p_age = year - primary_birth
+            s_age = year - spouse_birth
             
-            jimmy_income = 0
-            faith_income = 0
+            primary_income = 0
+            spouse_income = 0
             
-            if jimmy_age >= jimmy_claiming_age:
-                years_since = jimmy_age - jimmy_claiming_age
+            if p_age >= primary_claiming_age:
+                years_since = p_age - primary_claiming_age
                 cola = self.scenario.social_security.cola_rate
-                jimmy_income = jimmy_monthly * 12 * (1 + cola) ** years_since
+                primary_income = primary_monthly * 12 * (1 + cola) ** years_since
             
-            if faith_age >= faith_claiming_age:
-                years_since = faith_age - faith_claiming_age
+            if s_age >= spouse_claiming_age:
+                years_since = s_age - spouse_claiming_age
                 cola = self.scenario.social_security.cola_rate
-                faith_income = faith_monthly * 12 * (1 + cola) ** years_since
+                spouse_income = spouse_monthly * 12 * (1 + cola) ** years_since
             
             projections.append({
                 "year": year,
-                "jimmy_age": jimmy_age,
-                "faith_age": faith_age,
-                "jimmy_income": jimmy_income,
-                "faith_income": faith_income,
-                "total_ss": jimmy_income + faith_income,
+                "primary_age": p_age,
+                "spouse_age": s_age,
+                "primary_income": primary_income,
+                "spouse_income": spouse_income,
+                "total_ss": primary_income + spouse_income,
             })
         
         return projections
