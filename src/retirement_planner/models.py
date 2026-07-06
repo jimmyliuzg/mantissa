@@ -231,3 +231,17 @@ class Scenario:
     
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), indent=2)
+
+
+@dataclass
+class TaxableIncome:
+    """Carries income breakdown by tax treatment for accurate tax calculation.
+
+    Each field represents annual amounts.  The engine populates this
+    from salary, account withdrawals, Social Security, and other sources
+    before passing it to ``calculate_taxes()``.
+    """
+    ordinary: float = 0.0       # W-2 wages, pre-tax 401k/IRA withdrawals, interest, SS (taxable portion)
+    capital_gains: float = 0.0  # Long-term capital gains from taxable brokerage sales
+    tax_free: float = 0.0       # Roth withdrawals, HSA qualified distributions
+    total: float = 0.0          # Convenience total (set by caller)
