@@ -66,6 +66,7 @@ def _rmd_divisor(age: int) -> float:
 class WithdrawalStrategy(Enum):
     """Withdrawal strategy options for stress scenarios."""
     fixed = "fixed"
+    guardrails = "guardrails"
     floor_ceiling = "floor_ceiling"
     percent_of_portfolio = "percent_of_portfolio"
     dynamic = "dynamic"
@@ -1179,6 +1180,247 @@ class RetirementPlanner:
         return year >= person.retirement_date.year
 
     # ------------------------------------------------------------------
+    # Withdrawal strategy methods
+    # ------------------------------------------------------------------
+    def apply_guardrails(
+        self,
+        year: int,
+        base_spending: float,
+        portfolio_value: float,
+        portfolio_peak: float,
+    ) -> float:
+        """Guardrails-based spending strategy.
+
+        Adjusts spending within a floor/ceiling band around the base
+        spending level.  If the portfolio drops >20% from its prior peak,
+        spending is cut by 5% (down to floor).  If it rises >10% above
+        peak, spending increases by 3% (up to ceiling).
+
+        Args:
+            year: Current calendar year.
+            base_spending: The baseline annual spending (year 1 expenses).
+            portfolio_value: Current total portfolio value.
+            portfolio_peak: Highest portfolio value seen so far.
+
+        Returns:
+            Adjusted spending amount.
+        """
+        scenario = self.scenario
+        floor = base_spending * scenario.guardrail_floor_pct
+        ceiling = base_spending * scenario.guardrail_ceiling_pct
+
+        # Portfolio change from peak (as fraction)
+        if portfolio_peak > 0:
+            peak_change = (portfolio_value - portfolio_peak) / portfolio_peak
+        else:
+            peak_change = 0.0
+
+        adjusted = base_spending
+
+        if peak_change < -0.20:
+            # Portfolio dropped >20% — cut spending by 5%
+            adjusted = base_spending * 0.95
+        elif peak_change > 0.10:
+            # Portfolio grew >10% — allow 3% increase
+            adjusted = base_spending * 1.03
+
+        # Clamp to floor/ceiling
+        adjusted = max(floor, min(ceiling, adjusted))
+        return adjusted
+
+    def apply_dynamic_spending(
+        self,
+        year: int,
+        base_spending: float,
+        portfolio_value: float,
+        expenses: Dict,
+    ) -> float:
+        """Dynamic spending strategy based on portfolio health.
+
+        Monitors the spending rate (spending / portfolio).  If above 5%,
+        cuts discretionary expenses.  If below 3%, allows a 2% increase.
+
+        Args:
+            year: Current calendar year.
+            base_spending: The baseline annual spending.
+            portfolio_value: Current total portfolio value.
+            expenses: Dict with 'total' and 'by_category' keys.
+
+        Returns:
+            Adjusted spending amount.
+        """
+        if portfolio_value <= 0:
+            return base_spending
+
+        spending_rate = base_spending / portfolio_value
+
+        if spending_rate > 0.05:
+            # Unsustainable — reduce spending by applying a 10% cut
+            # (reduces discretionary as much as possible first)
+            adjusted = base_spending * 0.90
+        elif spending_rate < 0.03:
+            # Conservative — allow a 2% bump
+            adjusted = base_spending * 1.02
+        else:
+            adjusted = base_spending
+
+        # Never go below floor (must-spend expenses)
+        must_spend_total = 0.0
+        for exp in self.scenario.expenses:
+            if exp.is_must_spend and not exp.is_one_time:
+                if exp.start_date.year <= year <= exp.end_date.year:
+                    must_spend_total += exp.monthly_amount * 12
+        adjusted = max(must_spend_total, adjusted)
+
+        return adjusted
+
+    def apply_percent_of_portfolio(
+        self,
+        year: int,
+        portfolio_value: float,
+        withdrawal_rate: float,
+        floor_expenses: float,
+    ) -> float:
+        """Withdraw a fixed percentage of portfolio each year.
+
+        The withdrawal is floored at minimum expenses (fixed costs
+        like housing, food) so essential needs are always met.
+
+        Args:
+            year: Current calendar year.
+            portfolio_value: Current total portfolio value.
+            withdrawal_rate: Annual withdrawal rate (e.g., 0.04 = 4%).
+            floor_expenses: Minimum expenses that must be covered.
+
+        Returns:
+            Adjusted spending amount.
+        """
+        if portfolio_value <= 0:
+            return floor_expenses
+
+        percent_withdrawal = portfolio_value * withdrawal_rate
+        return max(floor_expenses, percent_withdrawal)
+
+    def apply_floor_ceiling(
+        self,
+        year: int,
+        base_spending: float,
+        portfolio_value: float,
+        floor: float,
+        ceiling: float,
+    ) -> float:
+        """Floor/ceiling spending strategy.
+
+        Hard floor: minimum expenses (sum of all is_must_spend=True expenses).
+        Hard ceiling: maximum expenses (base + 20%).
+        Spending adjusts within these bounds based on portfolio value.
+
+        When portfolio is healthy (above 25x annual spending), allow
+        spending near the ceiling.  When stressed (below 15x), cut
+        toward the floor.  Otherwise, spend at the base level.
+
+        Args:
+            year: Current calendar year.
+            base_spending: The baseline annual spending.
+            portfolio_value: Current total portfolio value.
+            floor: Hard minimum (must-spend expenses).
+            ceiling: Hard maximum (base + 20%).
+
+        Returns:
+            Adjusted spending amount clamped to [floor, ceiling].
+        """
+        if base_spending <= 0 or portfolio_value <= 0:
+            return floor
+
+        # Portfolio coverage ratio (how many years of base spending)
+        coverage = portfolio_value / base_spending
+
+        if coverage >= 25.0:
+            # Very healthy — spend near ceiling
+            adjusted = ceiling
+        elif coverage >= 20.0:
+            # Healthy — allow 10% above base
+            adjusted = base_spending * 1.10
+        elif coverage >= 15.0:
+            # Normal — spend base
+            adjusted = base_spending
+        elif coverage >= 10.0:
+            # Stressed — reduce by 10%
+            adjusted = base_spending * 0.90
+        else:
+            # Severely stressed — cut to floor
+            adjusted = floor
+
+        return max(floor, min(ceiling, adjusted))
+
+    def apply_withdrawal_strategy(
+        self,
+        year: int,
+        base_spending: float,
+        portfolio_value: float,
+        portfolio_peak: float,
+        expenses: Dict,
+    ) -> float:
+        """Dispatcher: apply the configured withdrawal strategy.
+
+        Reads ``self.scenario.withdrawal_strategy`` and delegates to
+        the appropriate method.  Returns base_spending unchanged for
+        the 'fixed' strategy (backward compatible).
+
+        Args:
+            year: Current calendar year.
+            base_spending: Base annual expenses from calculate_annual_expenses().
+            portfolio_value: Current total portfolio value.
+            portfolio_peak: High-water mark of portfolio value.
+            expenses: Dict with 'total' and 'by_category' from expenses calculation.
+
+        Returns:
+            Adjusted annual spending amount.
+        """
+        strategy = getattr(self.scenario, 'withdrawal_strategy', 'fixed')
+
+        if strategy == 'fixed':
+            return base_spending
+
+        elif strategy == 'guardrails':
+            return self.apply_guardrails(
+                year, base_spending, portfolio_value, portfolio_peak,
+            )
+
+        elif strategy == 'dynamic':
+            return self.apply_dynamic_spending(
+                year, base_spending, portfolio_value, expenses,
+            )
+
+        elif strategy == 'percent_of_portfolio':
+            # Compute floor expenses (must-spend items)
+            floor = 0.0
+            for exp in self.scenario.expenses:
+                if exp.is_must_spend and not exp.is_one_time:
+                    if exp.start_date.year <= year <= exp.end_date.year:
+                        floor += exp.monthly_amount * 12
+            withdrawal_rate = getattr(self.scenario, 'withdrawal_rate', 0.04)
+            return self.apply_percent_of_portfolio(
+                year, portfolio_value, withdrawal_rate, floor,
+            )
+
+        elif strategy == 'floor_ceiling':
+            # Compute floor (must-spend) and ceiling (base + 20%)
+            floor = 0.0
+            for exp in self.scenario.expenses:
+                if exp.is_must_spend and not exp.is_one_time:
+                    if exp.start_date.year <= year <= exp.end_date.year:
+                        floor += exp.monthly_amount * 12
+            ceiling = base_spending * 1.20
+            return self.apply_floor_ceiling(
+                year, base_spending, portfolio_value, floor, ceiling,
+            )
+
+        else:
+            # Unknown strategy — fall back to fixed
+            return base_spending
+
+    # ------------------------------------------------------------------
     # Monte Carlo single simulation  — REWRITE: withdrawals, contributions,
     # RMDs, proper tax handling
     # ------------------------------------------------------------------
@@ -1225,6 +1467,10 @@ class RetirementPlanner:
 
         # Track MAGI by year for IRMAA 2-year lookback
         magi_history: Dict[int, float] = {}
+
+        # Withdrawal strategy tracking
+        portfolio_peak = 0.0
+        base_spending = None  # Will be set on first retirement year
 
         # Historical return sequence index (for sequential replay)
         _hist_idx = 0
@@ -1338,6 +1584,20 @@ class RetirementPlanner:
                 annual_expenses = max(0.0, annual_expenses - aca_subsidy)
                 total_aca_subsidy += aca_subsidy
 
+            # --- Step 4d: Apply withdrawal strategy (if retired) ---
+            total_portfolio_value = sum(b for b in balances.values() if b > 0)
+
+            if primary_retired and spouse_retired:
+                # Set base spending from first retirement year
+                if base_spending is None:
+                    base_spending = annual_expenses
+
+                # Apply withdrawal strategy to adjust spending
+                annual_expenses = self.apply_withdrawal_strategy(
+                    year, base_spending, total_portfolio_value,
+                    portfolio_peak, expense_data,
+                )
+
             # --- Step 5: Withdrawals (tax-efficient order) ---
             shortfall = withdrawal_engine.calculate_withdrawal_needed(
                 year, annual_expenses, annual_income, ss_income,
@@ -1411,6 +1671,11 @@ class RetirementPlanner:
 
             if net_worth > peak_nw:
                 peak_nw = net_worth
+
+            # Update portfolio peak for guardrails/withdrawal strategies
+            total_portfolio = sum(b for b in balances.values() if b > 0)
+            if total_portfolio > portfolio_peak:
+                portfolio_peak = total_portfolio
 
             if net_worth <= 0 and out_of_savings_year is None:
                 out_of_savings_year = year
