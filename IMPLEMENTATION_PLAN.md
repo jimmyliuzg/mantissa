@@ -106,12 +106,12 @@
 
 ---
 
-### Phase 6: Reporting & UX (TODO)
+### Phase 6: Reporting & UX ✅ COMPLETE
 
-- [ ] 6.1 Generate standard reports — cash flow, account balances, taxes, net worth
-- [ ] 6.2 Export formats — JSON, CSV, Markdown
-- [ ] 6.3 Visualization — net worth trajectory, Monte Carlo fan chart
-- [ ] 6.4 CLI interface — `mantissa run`, `mantissa compare`, `mantissa sensitivity`
+- [x] 6.1 Generate standard reports — cash flow, account balances, taxes, net worth
+- [x] 6.2 Export formats — JSON, CSV, Markdown
+- [x] 6.3 Visualization — net worth trajectory, Monte Carlo fan chart
+- [x] 6.4 CLI interface — `mantissa run`, `mantissa compare`, `mantissa sensitivity`
 
 ---
 
@@ -147,10 +147,10 @@
 | Pension modeling | ✅ | ✅ | ❌ Phase 5 |
 | Inherited IRA | ❌ | ✅ | ❌ Phase 5 |
 | Annuities | ✅ | ❌ | ❌ Phase 5 |
-| CLI interface | ❌ | ❌ | ❌ Phase 6 |
-| Reporting / export | ✅ | ✅ | ❌ Phase 6 |
-| Visualization | ✅ | ✅ | ❌ Phase 6 |
-| Sensitivity analysis | ✅ | ✅ | ❌ Stub |
+| CLI interface | ❌ | ❌ | ✅ `mantissa` CLI |
+| Reporting / export | ✅ | ✅ | ✅ JSON, CSV, Markdown |
+| Visualization | ✅ | ✅ | ✅ matplotlib charts |
+| Sensitivity analysis | ✅ | ✅ | ✅ Single variable impact |
 | Open source | ❌ | ❌ | ✅ MIT License |
 
 ### Mantissa Differentiators
