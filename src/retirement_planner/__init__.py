@@ -34,3 +34,18 @@ from .models import (
 )
 from .engine import RetirementPlanner
 from .simulators import MonteCarloEngine, ScenarioComparator
+from .reports import (
+    generate_summary_report,
+    generate_cash_flow_report,
+    generate_mc_report,
+    export_json,
+    export_csv,
+    export_markdown,
+)
+from .charts import (
+    plot_net_worth_trajectory,
+    plot_mc_fan_chart,
+    plot_income_vs_expenses,
+    plot_tax_breakdown,
+)
+from .sensitivity import SensitivityAnalyzer
