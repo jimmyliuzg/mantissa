@@ -34,6 +34,14 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Topic :: Office/Business :: Financial",
 ]
+dependencies = [
+    "click>=8.0",
+    "tabulate>=0.9",
+    "matplotlib>=3.7",
+]
+
+[project.scripts]
+mantissa = "retirement_planner.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/jimmyliuzg/mantissa"
