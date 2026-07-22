@@ -15,9 +15,25 @@ Built for people who want to stress-test their retirement plan against realistic
 
 ## Quick Start
 
+### CLI (recommended)
+
 ```bash
 pip install git+https://github.com/jimmyliuzg/mantissa.git
+
+# Run Monte Carlo simulation
+mantissa run --config my_plan.json --simulations 10000
+
+# Generate a report (JSON, CSV, or Markdown)
+mantissa report --config my_plan.json --format markdown --output report.md
+
+# Compare two scenarios
+mantissa compare --config1 base.json --config2 early_retire.json
+
+# Sensitivity analysis
+mantissa sensitivity --config my_plan.json --variable inflation --values 0.02,0.025,0.03
 ```
+
+### Python API
 
 ```python
 from retirement_planner import RetirementPlanner, MonteCarloEngine
@@ -32,6 +48,10 @@ projections = planner.project_cash_flow()
 mc = MonteCarloEngine(planner)
 results = mc.run(num_simulations=10000)
 print(f"Success Rate: {results['success_rate']:.1%}")
+
+# Generate charts
+from retirement_planner import plot_net_worth_trajectory
+plot_net_worth_trajectory(projections, "net_worth.png")
 ```
 
 ---
@@ -287,6 +307,14 @@ This planner uses **conservative defaults** based on historical data:
 
 ## Sensitivity Analysis
 
+Test how changes in a single variable affect your success rate:
+
+```bash
+mantissa sensitivity --config my_plan.json --variable investment_return_mean --values 0.05,0.06,0.07,0.08
+```
+
+Supported variables: `inflation`, `medical_inflation`, `housing_appreciation`, `investment_return_mean`.
+
 How much does 1% change in each assumption affect success rate?
 
 | Variable | 1% Change Impact | Notes |
@@ -297,6 +325,30 @@ How much does 1% change in each assumption affect success rate?
 | Inflation | ±3-5% success | Compounds over time |
 | Healthcare costs | ±2-3% success | Significant after 65 |
 | Tax rates | ±1-2% success | Moderate impact |
+
+---
+
+## Visualization
+
+Generate charts from your retirement plan:
+
+```python
+from retirement_planner import (
+    plot_net_worth_trajectory,
+    plot_income_vs_expenses,
+    plot_tax_breakdown,
+    plot_mc_fan_chart,
+)
+
+# Net worth over time
+plot_net_worth_trajectory(projections, "net_worth.png")
+
+# Income vs expenses comparison
+plot_income_vs_expenses(projections, "income_vs_expenses.png")
+
+# Cumulative tax burden
+plot_tax_breakdown(projections, "tax_breakdown.png")
+```
 
 ---
 
