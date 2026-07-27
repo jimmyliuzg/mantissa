@@ -50,3 +50,9 @@ Issues = "https://github.com/jimmyliuzg/mantissa/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/retirement_planner"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["retirement_planner"]
