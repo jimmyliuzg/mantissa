@@ -4,7 +4,6 @@ Sensitivity analysis for retirement plans.
 Tests how varying one variable affects outcomes by running
 Monte Carlo simulations across a range of values.
 """
-import copy
 from typing import Dict, List
 
 
@@ -28,32 +27,30 @@ class SensitivityAnalyzer:
         Returns list of dicts with keys:
             variable, value, success_rate, avg_final_nw, num_simulations
         """
-        original_scenario = copy.deepcopy(self.planner.scenario)
+        original_value = self._get_variable_value(variable, self.planner.scenario)
         results = []
 
-        try:
-            for value in values:
-                self._set_variable(variable, value, self.planner.scenario)
+        for value in values:
+            self._set_variable(variable, value, self.planner.scenario)
 
-                success_count = 0
-                total_final_nw = 0.0
+            success_count = 0
+            total_final_nw = 0.0
 
-                for _ in range(num_simulations):
-                    sim = self.planner.run_single_simulation()
-                    if sim["success"]:
-                        success_count += 1
-                    total_final_nw += sim["final_net_worth"]
+            for _ in range(num_simulations):
+                sim = self.planner.run_single_simulation()
+                if sim["success"]:
+                    success_count += 1
+                total_final_nw += sim["final_net_worth"]
 
-                results.append({
-                    "variable": variable,
-                    "value": value,
-                    "success_rate": success_count / num_simulations,
-                    "avg_final_nw": total_final_nw / num_simulations,
-                    "num_simulations": num_simulations,
-                })
-        finally:
-            self.planner.scenario = original_scenario
+            results.append({
+                "variable": variable,
+                "value": value,
+                "success_rate": success_count / num_simulations,
+                "avg_final_nw": total_final_nw / num_simulations,
+                "num_simulations": num_simulations,
+            })
 
+        self._set_variable(variable, original_value, self.planner.scenario)
         return results
 
     def _set_variable(self, variable: str, value: float, scenario) -> None:
@@ -77,5 +74,21 @@ class SensitivityAnalyzer:
             for account in scenario.accounts:
                 if account.account_type not in ("real_estate", "vehicle", "checking"):
                     account.growth_rate = value
+        else:
+            raise ValueError(f"Unsupported sensitivity variable: {variable!r}")
+
+    def _get_variable_value(self, variable: str, scenario) -> float:
+        """Get the current value of a variable on the scenario object."""
+        if variable == "inflation":
+            return scenario.economic.general_inflation
+        elif variable == "medical_inflation":
+            return scenario.economic.medical_inflation
+        elif variable == "housing_appreciation":
+            return scenario.economic.housing_appreciation
+        elif variable == "investment_return_mean":
+            for account in scenario.accounts:
+                if account.account_type not in ("real_estate", "vehicle", "checking"):
+                    return account.growth_rate
+            return 0.0
         else:
             raise ValueError(f"Unsupported sensitivity variable: {variable!r}")
