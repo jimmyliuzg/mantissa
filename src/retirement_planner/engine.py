@@ -785,6 +785,7 @@ class RetirementPlanner:
         year: int,
         scenario: str = "mean",
         stress_level: float = 0.0,
+        mortgage_balances: Optional[Dict[str, float]] = None,
     ) -> Dict:
         """Calculate total expenses for a year.
 
@@ -797,6 +798,12 @@ class RetirementPlanner:
             year: Calendar year.
             scenario: Economic scenario (for age-event overrides only).
             stress_level: 0.0 = normal, 1.0 = max stress.
+            mortgage_balances: Optional dict of mortgage.id -> remaining
+                balance.  When provided, each year's payment is amortized:
+                interest = balance * rate, principal = payment - interest,
+                and the dict is updated in place.  Mortgages paid down to
+                zero stop generating expenses.  When None, payments are
+                modeled flat (legacy behavior).
         """
         total_expenses = 0
         expenses_by_category = {}
@@ -827,10 +834,22 @@ class RetirementPlanner:
                     total_expenses += amount
                     expenses_by_category[expense.name] = amount
 
-        # Add mortgage payments
+        # Add mortgage payments (amortized when balances are tracked)
         for mortgage in self.scenario.mortgages:
             if mortgage.start_date.year <= year <= mortgage.end_date.year:
-                amount = mortgage.monthly_payment * 12
+                if mortgage_balances is not None:
+                    balance = mortgage_balances.get(mortgage.id, 0.0)
+                    if balance <= 0:
+                        continue  # Paid off — no more payments
+                    interest = balance * mortgage.interest_rate
+                    annual_payment = mortgage.monthly_payment * 12
+                    # Final payoff year may need less than a full payment
+                    amount = min(annual_payment, balance + interest)
+                    principal = amount - interest
+                    mortgage_balances[mortgage.id] = max(
+                        0.0, balance - principal)
+                else:
+                    amount = mortgage.monthly_payment * 12
                 total_expenses += amount
                 expenses_by_category[f"Mortgage - {mortgage.name}"] = amount
 
@@ -1452,6 +1471,12 @@ class RetirementPlanner:
         for account_id, account in self.accounts.items():
             balances[account_id] = account.balance
 
+        # Track mortgage balances separately — amortized annually and
+        # subtracted from net worth as liabilities.
+        mortgage_balances: Dict[str, float] = {}
+        for mortgage in self.scenario.mortgages:
+            mortgage_balances[mortgage.id] = mortgage.balance
+
         # Initialize cost basis — for simplicity, assume initial basis
         # equals current balance (all contributions up to now).
         # A real implementation would track actual contributions.
@@ -1557,7 +1582,8 @@ class RetirementPlanner:
             total_ss += ss_income
 
             # --- Step 4: Expenses ---
-            expense_data = self.calculate_annual_expenses(year, scenario_name)
+            expense_data = self.calculate_annual_expenses(
+                year, scenario_name, mortgage_balances=mortgage_balances)
             annual_expenses = expense_data["total"]
 
             # --- Step 4b: IRMAA Medicare surcharges (age >= 65) ---
@@ -1660,6 +1686,8 @@ class RetirementPlanner:
             # --- Step 9: Track net worth ---
             total_assets = sum(b for b in balances.values() if b > 0)
             total_liabs = sum(abs(b) for b in balances.values() if b < 0)
+            total_liabs += sum(
+                b for b in mortgage_balances.values() if b > 0)
             net_worth = total_assets - total_liabs
 
             if net_worth > peak_nw:
@@ -1682,7 +1710,8 @@ class RetirementPlanner:
                 total_estate_tax = self.calculate_estate_tax(
                     net_worth, "MFJ", inflation_rate, years_from_base)
 
-        final_nw = sum(balances.values())
+        final_nw = (sum(balances.values())
+                    - sum(b for b in mortgage_balances.values() if b > 0))
         # Net of estate tax for success calculation
         final_nw_after_estate = final_nw - total_estate_tax
         success = (final_nw_after_estate > self.scenario.legacy_goal
