@@ -141,27 +141,27 @@ class MonteCarloEngine:
 
 class ScenarioComparator:
     """Compare multiple retirement scenarios."""
-    
+
     def __init__(self, planners: Dict[str, RetirementPlanner]):
         """
         Args:
             planners: Dictionary of scenario_name -> RetirementPlanner
         """
         self.planners = planners
-    
+
     def compare_cash_flow(self, scenarios: List[str] = None) -> Dict:
         """Compare year-by-year cash flow across scenarios."""
         if scenarios is None:
             scenarios = list(self.planners.keys())
-        
+
         comparison = {}
         for scenario_name in scenarios:
             planner = self.planners[scenario_name]
             projections = planner.project_cash_flow()
             comparison[scenario_name] = projections
-        
+
         return comparison
-    
+
     def compare_monte_carlo(
         self,
         scenarios: List[str] = None,
@@ -171,73 +171,24 @@ class ScenarioComparator:
         """Compare Monte Carlo results across scenarios."""
         if scenarios is None:
             scenarios = list(self.planners.keys())
-        
+
         comparison = {}
         for scenario_name in scenarios:
             planner = self.planners[scenario_name]
             mc = MonteCarloEngine(planner)
             comparison[scenario_name] = mc.run(num_simulations, method=method)
-        
+
         return comparison
-    
+
     def compare_net_worth(self, year: int, scenarios: List[str] = None) -> Dict:
         """Compare net worth at a specific year."""
         if scenarios is None:
             scenarios = list(self.planners.keys())
-        
+
         comparison = {}
         for scenario_name in scenarios:
             planner = self.planners[scenario_name]
             nw = planner.calculate_net_worth(year)
             comparison[scenario_name] = nw
-        
+
         return comparison
-    
-    def sensitivity_analysis(
-        self,
-        base_scenario: str,
-        variable: str,
-        values: List[float],
-    ) -> Dict:
-        """
-        Run sensitivity analysis on a single variable.
-
-        Args:
-            base_scenario: Name of the base scenario
-            variable: Variable to test (e.g., "growth_rate", "inflation")
-            values: List of values to test
-            
-        Returns:
-            Dictionary of value -> success_rate
-        """
-        # TODO: Implement sensitivity analysis
-        # This would modify the scenario and re-run Monte Carlo
-        pass
-
-
-class RothConversionOptimizer:
-    """Optimize Roth conversion timing and amounts."""
-    
-    def __init__(self, planner: RetirementPlanner):
-        self.planner = planner
-    
-    def find_optimal_conversions(
-        self,
-        max_annual_conversion: float = 100_000,
-        tax_bracket_target: float = 0.24,
-    ) -> List[Dict]:
-        """
-        Find optimal Roth conversion strategy.
-
-        Converts during low-income years (early retirement) to stay
-        in lower tax brackets.
-
-        Returns:
-            List of conversion recommendations by year
-        """
-        # TODO: Implement optimization algorithm
-        # Key logic:
-        # 1. Identify low-income years (post-retirement, pre-SS)
-        # 2. Calculate how much to convert to fill lower brackets
-        # 3. Balance against future tax rates and RMDs
-        pass
