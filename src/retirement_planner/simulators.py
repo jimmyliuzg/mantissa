@@ -7,6 +7,7 @@ Supports two return-generation methods:
   capturing sequence-of-returns risk
 """
 from typing import Dict, List, Optional
+from itertools import islice, cycle
 import random
 
 from .engine import RetirementPlanner
@@ -132,8 +133,10 @@ class MonteCarloEngine:
     def _get_return_sequence(start_year_index: int, num_years: int) -> List[float]:
         """Get a cyclically-wrapped sequence of historical returns."""
         span = len(_HISTORICAL_SNP500_VALUES)
-        return [_HISTORICAL_SNP500_VALUES[(start_year_index + i) % span]
-                for i in range(num_years)]
+        cycled = cycle(_HISTORICAL_SNP500_VALUES)
+        for _ in range(start_year_index):
+            next(cycled)
+        return list(islice(cycled, num_years))
 
 
 class ScenarioComparator:

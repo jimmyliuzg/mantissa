@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 import math
 import random
+import numpy as np
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -1521,7 +1522,7 @@ class RetirementPlanner:
                     # Use pre-computed historical return sequence
                     actual_rate = self._historical_return_override[_hist_idx]
                 elif return_volatility > 0:
-                    actual_rate = random.gauss(base_rate, return_volatility)
+                    actual_rate = np.random.normal(base_rate, return_volatility)
                 else:
                     actual_rate = base_rate
 
