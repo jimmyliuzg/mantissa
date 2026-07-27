@@ -60,8 +60,10 @@ def plot_net_worth_trajectory(
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: _fmt_dollar(x)))
     ax.grid(axis="y", alpha=0.3)
     fig.tight_layout()
-    fig.savefig(output_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    try:
+        fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    finally:
+        plt.close(fig)
     return output_path
 
 
@@ -110,8 +112,10 @@ def plot_mc_fan_chart(
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: _fmt_dollar(x)))
     ax.grid(axis="y", alpha=0.3)
     fig.tight_layout()
-    fig.savefig(output_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    try:
+        fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    finally:
+        plt.close(fig)
     return output_path
 
 
@@ -156,8 +160,10 @@ def plot_income_vs_expenses(
     ax.legend()
     ax.grid(axis="y", alpha=0.3)
     fig.tight_layout()
-    fig.savefig(output_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    try:
+        fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    finally:
+        plt.close(fig)
     return output_path
 
 
@@ -208,6 +214,8 @@ def plot_tax_breakdown(
     ax1.legend(lines1 + lines2, labels1 + labels2, loc="upper left")
     ax1.grid(axis="y", alpha=0.3)
     fig.tight_layout()
-    fig.savefig(output_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    try:
+        fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    finally:
+        plt.close(fig)
     return output_path

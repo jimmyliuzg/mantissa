@@ -17,8 +17,6 @@ from .sensitivity import SensitivityAnalyzer
 
 def _fmt_money(value: float) -> str:
     """Format a float as $X,XXX,XXX."""
-    if abs(value) >= 1_000_000:
-        return f"${value:,.0f}"
     return f"${value:,.0f}"
 
 

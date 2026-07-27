@@ -30,7 +30,12 @@ def generate_cash_flow_report(cash_flow: List[Dict[str, Any]]) -> Dict[str, Any]
 
 
 def generate_mc_report(mc_results: Dict[str, Any]) -> Dict[str, Any]:
-    """Generate a Monte Carlo analysis report with percentile breakdowns."""
+    """Generate a Monte Carlo analysis report with percentile breakdowns.
+
+    Returns a dict.  Note: export_markdown() returns a str — this
+    inconsistency is by design; *generate_* functions return structured
+    data while *export_* functions produce serialized output.
+    """
     percentiles = []
     for pct in [10, 25, 50, 75, 90]:
         key = f"p{pct}_final_nw"
@@ -55,10 +60,15 @@ def export_json(data: Any, filepath: str) -> None:
         json.dump(data, f, indent=2, default=str)
 
 
-def export_csv(rows: List[Dict[str, Any]], filepath: str) -> None:
-    """Write a list of dicts to a CSV file."""
+def export_csv(rows: List[Dict[str, Any]], filepath: str) -> bool:
+    """Write a list of dicts to a CSV file.
+
+    Returns True if the file was written, False if rows was empty.
+    """
     if not rows:
-        return
+        import warnings
+        warnings.warn("export_csv: no rows to write — skipping CSV export", stacklevel=2)
+        return False
     Path(filepath).parent.mkdir(parents=True, exist_ok=True)
     fieldnames = list(rows[0].keys())
     with open(filepath, "w", newline="") as f:
