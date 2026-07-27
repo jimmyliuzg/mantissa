@@ -122,7 +122,7 @@ All rates are **real** (inflation-adjusted) unless noted.
 
 **Savings allocation:** Surplus cash flow (income − expenses − taxes) is
 distributed into accounts each year by `contribution_priority`.  The
-top-level `savings_order` list (e.g. `["nvidia_401k", "hsa", "roth_ira",
+top-level `savings_order` list (e.g. `["401k_primary", "hsa", "roth_ira",
 "joint_brokerage"]`) assigns priorities 1..N to those accounts; accounts
 not listed get no auto-contribution unless they set `contribution_priority`
 explicitly or use the legacy `monthly_contribution` field.  Employer match
