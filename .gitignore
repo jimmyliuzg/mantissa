@@ -44,3 +44,7 @@ htmlcov/
 # Personal configs (contains real financial data)
 examples/ziji_plan.json
 examples/my_plan.json
+
+# Internal docs (not for public repo)
+AUDIT_IMPLEMENTATION_PLAN.md
+IMPLEMENTATION_PLAN.md
