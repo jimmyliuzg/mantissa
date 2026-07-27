@@ -68,6 +68,7 @@ class SensitivityAnalyzer:
         """
         if variable == "inflation":
             scenario.economic.general_inflation = value
+            scenario.economic.ss_cola = value
         elif variable == "medical_inflation":
             scenario.economic.medical_inflation = value
         elif variable == "housing_appreciation":

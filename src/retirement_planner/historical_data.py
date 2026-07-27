@@ -38,9 +38,27 @@ HISTORICAL_SNP500_REAL_RETURNS: Dict[int, float] = {
 # Historical real returns for intermediate-term government bonds.
 # Bonds have much lower volatility than equities; we approximate
 # with a stable ~2% real return plus small random noise.
-HISTORICAL_BOND_REAL_RETURNS: Dict[int, float] = {
-    year: 0.02 for year in range(1926, 2024)
+HISTORICAL_BOND_REAL_RETURNS: Dict[int, float] = {}
+_decade_rates = {
+    (1926, 1929): 0.04,
+    (1930, 1939): 0.05,
+    (1940, 1949): 0.01,
+    (1950, 1959): 0.01,
+    (1960, 1969): 0.015,
+    (1970, 1979): -0.02,
+    (1980, 1989): 0.05,
+    (1990, 1999): 0.035,
+    (2000, 2009): 0.03,
+    (2010, 2019): 0.01,
+    (2020, 2024): 0.015,
 }
+for year in range(1926, 2024):
+    rate = 0.02  # fallback
+    for (start, end), r in _decade_rates.items():
+        if start <= year <= end:
+            rate = r
+            break
+    HISTORICAL_BOND_REAL_RETURNS[year] = rate
 
 # Ordered lists for sequential access (index = offset from first year)
 HISTORICAL_YEARS = sorted(HISTORICAL_SNP500_REAL_RETURNS.keys())

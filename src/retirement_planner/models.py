@@ -17,6 +17,14 @@ class AssetAllocation:
     bond_pct: float = 0.0
 
     def __post_init__(self):
+        for field_name, value in (
+            ("equity_pct", self.equity_pct),
+            ("bond_pct", self.bond_pct),
+        ):
+            if value < 0.0 or value > 1.0:
+                raise ValueError(
+                    f"{field_name} ({value}) must be between 0.0 and 1.0"
+                )
         # Allow minor floating-point drift
         if abs(self.equity_pct + self.bond_pct - 1.0) > 0.01:
             raise ValueError(
@@ -267,6 +275,7 @@ class Scenario:
     guardrail_ceiling_pct: float = 1.10  # 110% of base spending ceiling
     legacy_goal: float = 2_000_000
     state: str = "CA"
+    family_size: int = 2
     
     def to_dict(self) -> dict:
         """Convert to JSON-serializable dict."""
