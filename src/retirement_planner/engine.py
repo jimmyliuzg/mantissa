@@ -1529,11 +1529,6 @@ class RetirementPlanner:
                 growth = balance * actual_rate
                 balances[account_id] = balance + growth
 
-                # Update cost basis for taxable accounts with growth
-                if account.tax_treatment == "taxable":
-                    current_basis = cost_basis.get_basis(account_id, 0.0)
-                    cost_basis.set_basis(account_id, current_basis + growth)
-
             # Advance historical return index (one position per simulated year)
             if self._historical_return_override is not None:
                 _hist_idx += 1
