@@ -8,7 +8,6 @@ Supports two return-generation methods:
 """
 from typing import Dict, List, Optional
 import random
-from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from .engine import RetirementPlanner
 from .historical_data import HISTORICAL_YEARS, _HISTORICAL_SNP500_VALUES
@@ -69,7 +68,6 @@ class MonteCarloEngine:
         num_simulations: int = 1000,
         scenario: str = "mean",
         return_volatility: float = 0.15,
-        num_workers: int = 4,
         method: str = "gaussian",
     ) -> Dict:
         """
@@ -79,7 +77,6 @@ class MonteCarloEngine:
             num_simulations: Number of simulations to run
             scenario: Economic scenario (mean, optimistic, pessimistic)
             return_volatility: Standard deviation of returns (used for gaussian)
-            num_workers: Number of parallel workers
             method: "gaussian" for random normal returns, "historical" to
                     replay actual S&P 500 annual return sequences
 
