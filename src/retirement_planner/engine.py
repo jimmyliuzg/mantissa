@@ -289,20 +289,42 @@ class WithdrawalEngine:
     def contribute(
         self,
         balances: Dict[str, float],
-        year: int,
+        available_savings: float,
     ) -> Dict[str, float]:
-        """Add monthly contributions + employer match to each account.
+        """Distribute surplus savings into accounts by contribution priority.
+
+        Accounts are funded in ascending ``contribution_priority`` order
+        (accounts with priority 0 are skipped).  Each account receives
+        ``min(remaining_savings, annual_contribution_cap - already_contributed)``
+        where a cap of 0 means unlimited.  Employer match is computed
+        separately and added on top of the employee contribution — it is
+        not deducted from available savings.
 
         Returns dict of {account_id: total_contribution} for logging.
         """
         contributions: Dict[str, float] = {}
-        for account_id, account in self.accounts.items():
-            if account.monthly_contribution <= 0 and account.employer_match <= 0:
+        if available_savings <= 0:
+            return contributions
+
+        eligible = sorted(
+            (a for a in self.accounts.values() if a.contribution_priority > 0),
+            key=lambda a: a.contribution_priority,
+        )
+
+        remaining = available_savings
+        for account in eligible:
+            if remaining <= 0:
+                break
+
+            if account.annual_contribution_cap > 0:
+                employee = min(remaining, account.annual_contribution_cap)
+            else:
+                employee = remaining  # Unlimited — receives the remainder
+            if employee <= 0:
                 continue
+            remaining -= employee
 
-            employee = account.monthly_contribution * 12
-
-            # Employer match: match up to match_limit of employee contribution
+            # Employer match: separate calc on top of employee contribution
             match = 0.0
             if account.employer_match > 0 and account.employer_match_limit > 0:
                 matchable = min(employee, account.employer_match_limit)
@@ -311,13 +333,13 @@ class WithdrawalEngine:
                 match = employee * account.employer_match
 
             total = employee + match
-            if total > 0:
-                balances[account_id] = balances.get(account_id, 0.0) + total
-                contributions[account_id] = total
-                # Increase cost basis for taxable accounts (contributions are basis)
-                if account.tax_treatment == "taxable":
-                    current_basis = self.cost_basis.get_basis(account_id, 0.0)
-                    self.cost_basis.set_basis(account_id, current_basis + total)
+            account_id = account.id
+            balances[account_id] = balances.get(account_id, 0.0) + total
+            contributions[account_id] = total
+            # Increase cost basis for taxable accounts (contributions are basis)
+            if account.tax_treatment == "taxable":
+                current_basis = self.cost_basis.get_basis(account_id, 0.0)
+                self.cost_basis.set_basis(account_id, current_basis + total)
 
         return contributions
 
@@ -469,7 +491,34 @@ class RetirementPlanner:
                 tax_treatment=acc_config.get("tax_treatment", "taxable"),
                 balance=acc_config["balance"],
                 growth_rate=acc_config.get("growth_rate", 0.088),
+                monthly_contribution=acc_config.get("monthly_contribution", 0.0),
+                employer_match=acc_config.get("employer_match", 0.0),
+                employer_match_limit=acc_config.get("employer_match_limit", 0.0),
+                contribution_priority=acc_config.get("contribution_priority", 0),
+                annual_contribution_cap=acc_config.get("annual_contribution_cap", 0.0),
             ))
+
+        # Resolve savings allocation priorities:
+        #   1. Explicit per-account contribution_priority wins.
+        #   2. Otherwise, position in top-level savings_order (1-based).
+        #   3. Otherwise, legacy monthly_contribution > 0 → appended after
+        #      savings_order entries, with annual cap = 12 × monthly amount.
+        savings_order = config.get("savings_order", [])
+        raw_accounts = {a["id"]: a for a in config.get("accounts", [])}
+        accounts_by_id = {a.id: a for a in accounts}
+        for position, acc_id in enumerate(savings_order, start=1):
+            acct = accounts_by_id.get(acc_id)
+            if acct is None:
+                continue
+            if "contribution_priority" not in raw_accounts.get(acc_id, {}):
+                acct.contribution_priority = position
+        next_priority = len(savings_order) + 1
+        for acct in accounts:
+            if acct.contribution_priority == 0 and acct.monthly_contribution > 0:
+                acct.contribution_priority = next_priority
+                next_priority += 1
+                if "annual_contribution_cap" not in raw_accounts.get(acct.id, {}):
+                    acct.annual_contribution_cap = acct.monthly_contribution * 12
         
         # Parse economic assumptions
         econ_config = config.get("economic", {})
@@ -613,6 +662,7 @@ class RetirementPlanner:
             social_security=social_security,
             legacy_goal=config.get("legacy_goal", 2_000_000),
             state=config.get("state", "CA"),
+            savings_order=savings_order,
         )
         
         return cls(scenario)
@@ -1557,14 +1607,9 @@ class RetirementPlanner:
             if self._historical_return_override is not None:
                 _hist_idx += 1
 
-            # --- Step 2: Employee contributions + employer match ---
+            # --- Step 2: Retirement status (used below) ---
             primary_retired = self._is_retired(year, self.scenario.primary)
             spouse_retired = self._is_retired(year, self.scenario.spouse)
-
-            if not primary_retired or not spouse_retired:
-                # At least one person is still working — allow contributions
-                contribs = withdrawal_engine.contribute(balances, year)
-                total_contributions += sum(contribs.values())
 
             # --- Step 3: Income ---
             income_data = self.calculate_annual_income(year, scenario_name)
@@ -1670,6 +1715,17 @@ class RetirementPlanner:
 
             # Record this year's MAGI for future IRMAA lookback
             magi_history[year] = magi
+
+            # --- Step 7c: Allocate surplus savings into accounts ---
+            # Savings = income - expenses - taxes.  Distribute by account
+            # contribution priority (401k → HSA → Roth → brokerage …).
+            # Only while at least one person is still working.
+            if not primary_retired or not spouse_retired:
+                available_savings = annual_income - annual_expenses - taxes
+                if available_savings > 0:
+                    contribs = withdrawal_engine.contribute(
+                        balances, available_savings)
+                    total_contributions += sum(contribs.values())
 
             # --- Step 8: Windfalls ---
             for windfall in self.scenario.windfalls:

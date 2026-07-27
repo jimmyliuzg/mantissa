@@ -89,9 +89,14 @@ class Account:
     growth_rate: float = 0.088
     growth_rate_optimistic: float = 0.1056
     growth_rate_pessimistic: float = 0.070
-    monthly_contribution: float = 0.0
+    monthly_contribution: float = 0.0  # Legacy — superseded by cash-flow allocation
     employer_match: float = 0.0
     employer_match_limit: float = 0.0
+    # Cash-flow savings allocation: lower priority number = funded first.
+    # 0 = no auto-contribution from surplus savings.
+    contribution_priority: int = 0
+    # Max employee contribution per year (0 = unlimited).
+    annual_contribution_cap: float = 0.0
     is_depreciating: bool = False
     liquid: bool = True
     asset_class: Optional[str] = None  # "equity", "bond", "mixed", or None (auto)
@@ -276,6 +281,11 @@ class Scenario:
     legacy_goal: float = 2_000_000
     state: str = "CA"
     family_size: int = 2
+    # Explicit savings priority order (account ids, funded first → last).
+    # Accounts not listed get contribution_priority=0 (no auto-contribution)
+    # unless they set contribution_priority explicitly or use the legacy
+    # monthly_contribution field.
+    savings_order: List[str] = field(default_factory=list)
     
     def to_dict(self) -> dict:
         """Convert to JSON-serializable dict."""

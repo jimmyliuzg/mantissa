@@ -112,11 +112,21 @@ All rates are **real** (inflation-adjusted) unless noted.
 | `tax_treatment` | string | pre_tax, roth, taxable, tax_exempt |
 | `balance` | float | Current balance |
 | `growth_rate` | float | Real annual return |
-| `monthly_contribution` | float | Monthly contribution |
-| `employer_match` | float | Employer match amount |
-| `employer_match_limit` | float | Max employer match |
+| `contribution_priority` | int | Savings allocation order (lower = funded first, 0 = none) |
+| `annual_contribution_cap` | float | Max employee contribution per year (0 = unlimited) |
+| `monthly_contribution` | float | Legacy — converted to priority + annual cap (12×) |
+| `employer_match` | float | Employer match rate on employee contribution |
+| `employer_match_limit` | float | Max matchable employee contribution |
 | `is_depreciating` | bool | True for vehicles |
 | `liquid` | bool | Can be withdrawn from |
+
+**Savings allocation:** Surplus cash flow (income − expenses − taxes) is
+distributed into accounts each year by `contribution_priority`.  The
+top-level `savings_order` list (e.g. `["nvidia_401k", "hsa", "roth_ira",
+"joint_brokerage"]`) assigns priorities 1..N to those accounts; accounts
+not listed get no auto-contribution unless they set `contribution_priority`
+explicitly or use the legacy `monthly_contribution` field.  Employer match
+is computed separately and added on top of the employee contribution.
 
 ### 4. Income Streams
 
