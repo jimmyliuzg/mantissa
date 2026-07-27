@@ -48,11 +48,6 @@ def generate_mc_report(mc_results: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def generate_account_report(cash_flow: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Placeholder for account-level breakdown report."""
-    return {"accounts": [], "cash_flow": cash_flow}
-
-
 def export_json(data: Any, filepath: str) -> None:
     """Write data to a JSON file."""
     Path(filepath).parent.mkdir(parents=True, exist_ok=True)

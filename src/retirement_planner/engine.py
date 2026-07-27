@@ -433,8 +433,13 @@ class RetirementPlanner:
     def from_config(cls, config_path: str) -> 'RetirementPlanner':
         """Load planner from JSON config file."""
         import json
-        with open(config_path) as f:
-            config = json.load(f)
+        try:
+            with open(config_path) as f:
+                config = json.load(f)
+        except json.JSONDecodeError as e:
+            raise json.JSONDecodeError(
+                f"Invalid JSON in config file '{config_path}': {e.msg}",
+                e.doc, e.pos)
         
         # Parse config into Scenario
         # This is a simplified parser - full implementation would handle all fields
@@ -910,26 +915,28 @@ class RetirementPlanner:
         federal_ordinary = _bracket_tax(ordinary_after_deduction, fed_brackets)
 
         # ---- Federal long-term capital gains tax ----
-        # LTCG stacks on top of ordinary income for bracket determination
+        # LTCG stacks on top of ordinary income for bracket determination.
+        # Ordinary income fills the bottom of the LTCG bracket stack first,
+        # reducing available 0% (and possibly 15%) LTCG space.
         ltcg_taxable = income.capital_gains
         if ltcg_taxable > 0:
-            # LTCG bracket thresholds are reduced by ordinary income
             remaining_ordinary = ordinary_after_deduction
             ltcg_tax = 0.0
             prev_threshold = 0.0
             for bracket_top, rate in ltcg_brackets:
                 if ltcg_taxable <= 0:
                     break
-                # How much of this LTCG bracket is available
-                bracket_floor = max(prev_threshold - remaining_ordinary, 0.0)
                 bracket_width = bracket_top - prev_threshold
-                available = bracket_width - bracket_floor
+                prev_threshold = bracket_top
+                # Ordinary income occupies the lowest brackets first
+                ordinary_in_bracket = min(remaining_ordinary, bracket_width)
+                remaining_ordinary -= ordinary_in_bracket
+                available = bracket_width - ordinary_in_bracket
                 if available <= 0:
                     continue
                 taxed_here = min(ltcg_taxable, available)
                 ltcg_tax += taxed_here * rate
                 ltcg_taxable -= taxed_here
-                prev_threshold = bracket_top
         else:
             ltcg_tax = 0.0
 
@@ -941,14 +948,6 @@ class RetirementPlanner:
         ca_tax = _bracket_tax(ca_taxable, ca_brackets)
 
         return federal_tax + ca_tax
-
-    # Legacy signature wrapper for backward compatibility
-    def _calculate_taxes_legacy(self, year: int, income: float,
-                                scenario: str = "mean") -> float:
-        """Calculate taxes treating all income as ordinary (legacy)."""
-        ti = TaxableIncome(ordinary=income, capital_gains=0.0,
-                           tax_free=0.0, total=income)
-        return self.calculate_taxes(year, ti, scenario)
 
     # ------------------------------------------------------------------
     # IRMAA — Income-Related Monthly Adjustment Amount (Medicare surcharges)
@@ -1676,7 +1675,10 @@ class RetirementPlanner:
                 out_of_savings_year = year
 
             # --- Step 10: Estate tax (at end of life) ---
-            if (younger_age >= self.scenario.primary.longevity_age
+            younger_longevity = (self.scenario.primary.longevity_age
+                if self.scenario.primary.birth_date > self.scenario.spouse.birth_date
+                else self.scenario.spouse.longevity_age)
+            if (younger_age >= younger_longevity
                     and total_estate_tax == 0.0):
                 total_estate_tax = self.calculate_estate_tax(
                     net_worth, "MFJ", inflation_rate, years_from_base)
@@ -1806,7 +1808,10 @@ class RetirementPlanner:
             net_worth = self.calculate_net_worth(year, scenario_name)
 
             # Estate tax (at end of life, applied once)
-            if (younger_age >= self.scenario.primary.longevity_age
+            younger_longevity = (self.scenario.primary.longevity_age
+                if self.scenario.primary.birth_date > self.scenario.spouse.birth_date
+                else self.scenario.spouse.longevity_age)
+            if (younger_age >= younger_longevity
                     and total_estate_tax == 0.0):
                 total_estate_tax = self.calculate_estate_tax(
                     net_worth["net_worth"], "MFJ",
@@ -1822,7 +1827,7 @@ class RetirementPlanner:
                 "aca_subsidy": aca_subsidy,
                 "expenses_by_category": expenses["by_category"],
                 "taxes": taxes,
-                "estate_tax": total_estate_tax if younger_age >= self.scenario.primary.longevity_age else 0.0,
+                "estate_tax": total_estate_tax if younger_age >= younger_longevity else 0.0,
                 "net_cash_flow": income["total"] - expenses["total"] - taxes - aca_subsidy,
                 "net_worth": net_worth["net_worth"],
                 "total_assets": net_worth["total_assets"],
