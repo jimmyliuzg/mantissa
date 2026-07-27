@@ -1572,9 +1572,8 @@ class RetirementPlanner:
 
             # --- Step 4c: ACA subsidy (pre-Medicare, age < 65) ---
             if younger_age < 65:
-                family_size = 2  # Primary + spouse
                 aca_subsidy = self.calculate_aca_subsidy(
-                    annual_income, family_size, self.scenario.state)
+                    annual_income, self.scenario.family_size, self.scenario.state)
                 annual_expenses = max(0.0, annual_expenses - aca_subsidy)
                 total_aca_subsidy += aca_subsidy
 
@@ -1789,9 +1788,8 @@ class RetirementPlanner:
             # ACA subsidy (pre-Medicare, age < 65)
             aca_subsidy = 0.0
             if younger_age < 65:
-                family_size = 2  # Primary + spouse
                 aca_subsidy = self.calculate_aca_subsidy(
-                    income["total"], family_size, self.scenario.state)
+                    income["total"], self.scenario.family_size, self.scenario.state)
 
             # Build TaxableIncome (simplified — all income as ordinary
             # for deterministic projection; real sim handles this properly)
