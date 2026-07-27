@@ -248,10 +248,10 @@ is computed separately and added on top of the employee contribution.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `jimmy_benefit_at_67` | float | $3,000/mo | Primary benefit at 67 |
-| `jimmy_claiming_age` | int | 67 | When to claim |
-| `faith_benefit_at_67` | float | $2,500/mo | Spouse benefit at 67 |
-| `faith_claiming_age` | int | 67 | When to claim |
+| `primary_benefit_at_67` | float | $3,000/mo | Primary benefit at 67 |
+| `primary_claiming_age` | int | 67 | When to claim |
+| `spouse_benefit_at_67` | float | $2,500/mo | Spouse benefit at 67 |
+| `spouse_claiming_age` | int | 67 | When to claim |
 | `cola_rate` | float | 2.5% | Cost-of-living adjustment |
 
 **Claiming age adjustments:**
