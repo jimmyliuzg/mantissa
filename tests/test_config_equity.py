@@ -74,31 +74,25 @@ class TestConfigParsing:
 class TestIncomeWithEquity:
 
     def test_faith_2026_income(self, planner):
-        """2026: base (224,400) + bonus (22,000) + RSU (cliff + grant2 + refresher)."""
+        """2026: base (224,400) + bonus (22,000) + RSU (cliff + grant2)."""
         income = planner.calculate_annual_income(2026)
         # Faith base: 224,400
         # Faith bonus: 22,000
-        # Faith RSU: Grant 1 cliff (1,975) + Grant 2 partial (173) + Refresher 2026 (123.5) = 2,271.5
-        faith_total = 224400 + 22000 + 2271.5 * 55.59
+        # Faith RSU: Grant 1 cliff (1,975) + Grant 2 partial (228) = 2,203 shares
+        faith_total = 224400 + 22000 + 2203 * 55.59
         jimmy_total = 190000
         expected_total = faith_total + jimmy_total
         assert income["total"] == pytest.approx(expected_total, rel=1e-3)
 
     def test_faith_2027_income(self, planner):
-        """2027: base + bonus + quarterly RSUs."""
+        """2027: base + bonus + RSU (grant1 quarterly + grant2 + refresher)."""
         income = planner.calculate_annual_income(2027)
         # Faith base: 224,400 × 1.03 = 231,132
         # Faith bonus: 22,000 × 1.03 = 22,660
-        # Faith RSU: Grant 1 quarterly (1,976 shares) + Grant 2 done
-        # + Refresher 2026 (494) + Refresher 2027 (123.5)
-        # Total RSU shares: 1,976 + 494 + 123.5 = 2,593.5
-        faith_base = 224400 * 1.03
-        faith_bonus = 22000 * 1.03
-        faith_rsu = 2593.5 * 55.59
-
-        jimmy_base = 190000 * 1.03
-
-        expected_total = faith_base + faith_bonus + faith_rsu + jimmy_base
+        # Faith RSU: Grant 1 quarterly (1,976) + Grant 2 (228) + refresher (52) = 2,256 shares
+        faith_total = 224400 * 1.03 + 22000 * 1.03 + 2256 * 55.59
+        jimmy_total = 190000 * 1.03
+        expected_total = faith_total + jimmy_total
         assert income["total"] == pytest.approx(expected_total, rel=1e-3)
 
     def test_income_by_source_includes_rsu(self, planner):
