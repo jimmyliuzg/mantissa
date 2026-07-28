@@ -38,3 +38,27 @@ def test_report_command():
         "report", "--config", "examples/sample_config.json", "--format", "markdown",
     ])
     assert result.exit_code == 0
+
+
+def test_report_show_equity_with_equity_config():
+    """--show-equity flag outputs equity breakdown."""
+    runner = CliRunner()
+    result = runner.invoke(main, [
+        "report", "--config", "tests/fixtures/equity_config.json",
+        "--format", "markdown", "--show-equity",
+    ])
+    assert result.exit_code == 0
+    assert "EXMP" in result.output
+    assert "Equity:" in result.output
+
+
+def test_report_show_equity_no_equity_config():
+    """--show-equity flag on config without equity produces no extra output."""
+    runner = CliRunner()
+    result = runner.invoke(main, [
+        "report", "--config", "examples/sample_config.json",
+        "--format", "markdown", "--show-equity",
+    ])
+    assert result.exit_code == 0
+    # No equity section should appear
+    assert "EXMP" not in result.output
