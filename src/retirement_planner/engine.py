@@ -535,13 +535,75 @@ class RetirementPlanner:
         )
 
         # Parse income streams
+        from .models import RSUGrant, RefresherPolicy, Bonus, EquityComp
         income_streams = []
         for ic in config.get("income_streams", []):
+            # Parse optional base_salary
+            base_salary = None
+            if "base_salary" in ic:
+                base_salary = ic["base_salary"]
+
+            # Parse optional bonus
+            bonus = None
+            if "bonus" in ic:
+                bc = ic["bonus"]
+                bonus = Bonus(
+                    annual=bc.get("annual", 0),
+                    growth_rate=bc.get("growth_rate", 0),
+                    payment_month=bc.get("payment_month", 3),
+                )
+
+            # Parse optional equity
+            equity = None
+            if ic.get("equity"):
+                ec = ic["equity"]
+                grants = []
+                for g in ec.get("grants", []):
+                    grants.append(RSUGrant(
+                        id=g["id"],
+                        grant_date=date.fromisoformat(g["grant_date"]),
+                        total_shares=g["total_shares"],
+                        vesting_pattern=g["vesting_pattern"],
+                        cliff_shares=g.get("cliff_shares", 0),
+                        periodic_shares=g.get("periodic_shares", 0),
+                        cliff_date=date.fromisoformat(g["cliff_date"]) if g.get("cliff_date") else None,
+                        cliff_replaces_first_vest=g.get("cliff_replaces_first_vest", False),
+                        status=g.get("status", "active"),
+                    ))
+                refresher = None
+                if "refreshers" in ec and ec["refreshers"]:
+                    rp = ec["refreshers"]
+                    refresher = RefresherPolicy(
+                        annual_shares=rp["annual_shares"],
+                        grant_month=rp["grant_month"],
+                        vesting_pattern=rp["vesting_pattern"],
+                        vesting_delay_months=rp.get("vesting_delay_months", 3),
+                        start_year=rp["start_year"],
+                        end_year=rp["end_year"],
+                        growth_rate=rp.get("growth_rate", 0),
+                    )
+                equity = EquityComp(
+                    ticker=ec.get("ticker", ""),
+                    current_price=ec.get("current_price", 0),
+                    price_source=ec.get("price_source", "manual"),
+                    grants=grants,
+                    refreshers=refresher,
+                    end_date=date.fromisoformat(ec["end_date"]) if ec.get("end_date") else None,
+                    sell_to_cover=ec.get("sell_to_cover", True),
+                    is_taxable=ec.get("is_taxable", True),
+                    goes_to_account=ec.get("goes_to_account", ""),
+                )
+
+            # Compute monthly_amount from base_salary if provided (legacy compat)
+            monthly_amount = ic.get("monthly_amount", 0)
+            if base_salary and monthly_amount == 0:
+                monthly_amount = base_salary["annual"] / 12
+
             income_streams.append(IncomeStream(
                 id=ic["id"],
                 name=ic["name"],
                 owner=ic["owner"],
-                monthly_amount=ic["monthly_amount"],
+                monthly_amount=monthly_amount,
                 start_date=date.fromisoformat(ic["start_date"]),
                 end_date=date.fromisoformat(ic["end_date"]),
                 growth_rate=ic.get("growth_rate", 0.0),
@@ -549,6 +611,9 @@ class RetirementPlanner:
                 is_passive=ic.get("is_passive", False),
                 is_ss=ic.get("is_ss", False),
                 goes_to_account=ic.get("goes_to_account", ""),
+                base_salary=base_salary,
+                bonus=bonus,
+                equity=equity,
             ))
 
         # Parse expenses
@@ -813,17 +878,50 @@ class RetirementPlanner:
     # ------------------------------------------------------------------
     def calculate_annual_income(self, year: int,
                                 scenario: str = "mean") -> Dict:
-        """Calculate total income for a year."""
+        """Calculate total income for a year.
+
+        Supports two modes per stream:
+        - Legacy: monthly_amount × 12 × growth (unchanged)
+        - Enhanced: base_salary + bonus + equity (new fields)
+        """
         total_income = 0
         income_by_source = {}
 
         for stream in self.scenario.income_streams:
             if stream.start_date.year <= year <= stream.end_date.year:
                 years_active = year - stream.start_date.year
-                amount = (stream.monthly_amount * 12
-                          * (1 + stream.growth_rate) ** years_active)
-                total_income += amount
-                income_by_source[stream.name] = amount
+
+                if stream.base_salary or stream.equity:
+                    # Enhanced mode: base + bonus + equity
+                    stream_income = 0
+
+                    # Base salary
+                    if stream.base_salary:
+                        base = stream.base_salary["annual"]
+                        growth = stream.base_salary.get("growth_rate", 0)
+                        stream_income += base * (1 + growth) ** years_active
+
+                    # Bonus (annual lump sum)
+                    if stream.bonus and stream.bonus.annual > 0:
+                        bonus_growth = stream.bonus.growth_rate
+                        stream_income += stream.bonus.annual * (1 + bonus_growth) ** years_active
+
+                    # RSU equity
+                    if stream.equity and stream.equity.ticker:
+                        rsu_income = self.calculate_annual_rsu_income(year, stream.equity)
+                        stream_income += rsu_income
+                        if rsu_income > 0:
+                            income_by_source[f"{stream.name} — RSU"] = rsu_income
+
+                    total_income += stream_income
+                    if stream.base_salary:
+                        income_by_source[stream.name] = stream_income
+                else:
+                    # Legacy mode: flat monthly amount with growth
+                    amount = (stream.monthly_amount * 12
+                              * (1 + stream.growth_rate) ** years_active)
+                    total_income += amount
+                    income_by_source[stream.name] = amount
 
         return {"total": total_income, "by_source": income_by_source}
 
