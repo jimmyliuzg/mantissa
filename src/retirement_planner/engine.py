@@ -8,7 +8,7 @@ Key design decisions (all monetary values are in REAL dollars unless noted):
 - Taxes distinguish ordinary income, long-term capital gains, and tax-free.
 """
 from typing import Dict, List, Optional, Tuple
-from datetime import datetime
+from datetime import datetime, date
 import math
 import numpy as np
 from dataclasses import dataclass, field
@@ -826,6 +826,148 @@ class RetirementPlanner:
                 income_by_source[stream.name] = amount
 
         return {"total": total_income, "by_source": income_by_source}
+
+    # ------------------------------------------------------------------
+    # Equity Compensation — RSU vesting math (stateless)
+    # ------------------------------------------------------------------
+    def calculate_annual_rsu_income(self, year: int, equity) -> float:
+        """Calculate total RSU income for a year from all active grants + refreshers.
+
+        Args:
+            year: Calendar year.
+            equity: EquityComp instance with grants and optional refresher policy.
+
+        Returns:
+            Total RSU income in dollars (shares × current_price).
+        """
+        from .models import RSUGrant, EquityComp
+        total_shares = 0.0
+
+        # 1. Explicit grants
+        for grant in equity.grants:
+            if equity.end_date and grant.grant_date > equity.end_date:
+                continue  # grant cancelled
+            shares = self._vested_shares_in_year(grant, year, equity.end_date)
+            total_shares += shares
+
+        # 2. Auto-generated refreshers
+        if equity.refreshers:
+            policy = equity.refreshers
+            for grant_year in range(policy.start_year, min(year, policy.end_year) + 1):
+                if equity.end_date and date(grant_year, policy.grant_month, 1) > equity.end_date:
+                    continue
+                grant_shares = policy.annual_shares * (1 + policy.growth_rate) ** (grant_year - policy.start_year)
+                grant_date = date(grant_year, policy.grant_month, 1)
+                # Determine periodic shares based on vesting pattern
+                if policy.vesting_pattern == "quarterly":
+                    periodic = grant_shares / 4  # shares per quarter
+                    total = grant_shares * 4     # 4 years × annual_shares
+                elif policy.vesting_pattern == "monthly":
+                    periodic = grant_shares / 12
+                    total = grant_shares * 4
+                else:
+                    periodic = grant_shares
+                    total = grant_shares * 4
+                synthetic_grant = RSUGrant(
+                    id=f"grant_{grant_year}",
+                    grant_date=grant_date,
+                    total_shares=total,
+                    vesting_pattern=policy.vesting_pattern,
+                    periodic_shares=periodic,
+                    status="forecasted" if year > grant_year + 1 else "active"
+                )
+                total_shares += self._vested_shares_in_year(synthetic_grant, year, equity.end_date)
+
+        return total_shares * equity.current_price
+
+    def _vested_shares_in_year(self, grant, year: int, end_date=None) -> float:
+        """How many shares from this grant vest in a given year. Stateless."""
+        if end_date and date(year, 12, 31) > end_date:
+            return 0  # job ended — no more vests
+
+        if grant.vesting_pattern == "cliff_quarterly":
+            return self._cliff_quarterly_vests(grant, year)
+        elif grant.vesting_pattern == "quarterly":
+            return self._quarterly_vests(grant, year)
+        elif grant.vesting_pattern == "monthly":
+            return self._monthly_vests(grant, year)
+        return 0
+
+    def _cliff_quarterly_vests(self, grant, year: int) -> float:
+        """Cliff + quarterly vesting. Handles cliff_replaces_first_vest.
+
+        Stateless: computes cumulative vests up to year and year-1, returns delta.
+        """
+        cumulative_now = self._cliff_quarterly_cumulative(grant, year)
+        cumulative_prev = self._cliff_quarterly_cumulative(grant, year - 1)
+        return min(cumulative_now - cumulative_prev, grant.total_shares - cumulative_prev)
+
+    def _cliff_quarterly_cumulative(self, grant, year: int) -> float:
+        """Cumulative shares vested through end of `year`."""
+        if grant.cliff_date is None or year < grant.cliff_date.year:
+            return 0.0
+
+        total = grant.cliff_shares  # cliff always vests
+
+        if grant.cliff_replaces_first_vest:
+            # Cliff replaces Q1: Q2,Q3,Q4 in cliff year, then 4/yr after
+            years_after_cliff = max(0, year - grant.cliff_date.year)
+            if years_after_cliff == 0:
+                total += grant.periodic_shares * 3  # Q2, Q3, Q4
+            else:
+                total += grant.periodic_shares * 3  # Q2-Q4 of cliff year
+                total += grant.periodic_shares * 4 * years_after_cliff
+        else:
+            # Cliff only in cliff year, quarterly starts year after
+            years_after_cliff = max(0, year - grant.cliff_date.year)
+            total += grant.periodic_shares * 4 * years_after_cliff
+
+        return min(total, grant.total_shares)
+
+    def _quarterly_vests(self, grant, year: int) -> float:
+        """Quarterly vesting, no cliff. Stateless cumulative approach."""
+        cumulative_now = self._quarterly_cumulative(grant, year)
+        cumulative_prev = self._quarterly_cumulative(grant, year - 1)
+        return min(cumulative_now - cumulative_prev, grant.total_shares - cumulative_prev)
+
+    def _quarterly_cumulative(self, grant, year: int) -> float:
+        """Cumulative shares vested through end of `year`, capped at total_shares."""
+        if year < grant.grant_date.year:
+            return 0.0
+
+        if year == grant.grant_date.year:
+            months_active = 13 - grant.grant_date.month
+            quarters = months_active // 3
+            return min(grant.periodic_shares * quarters, grant.total_shares)
+
+        years_after_grant = year - grant.grant_date.year
+        first_year_quarters = (13 - grant.grant_date.month) // 3
+        total_quarters = first_year_quarters + 4 * years_after_grant
+        # Cap: 4-year vest = max 16 quarters
+        total_quarters = min(total_quarters, 16)
+        return min(grant.periodic_shares * total_quarters, grant.total_shares)
+
+    def _monthly_vests(self, grant, year: int) -> float:
+        """Monthly vesting. Stateless cumulative approach."""
+        cumulative_now = self._monthly_cumulative(grant, year)
+        cumulative_prev = self._monthly_cumulative(grant, year - 1)
+        return min(cumulative_now - cumulative_prev, grant.total_shares - cumulative_prev)
+
+    def _monthly_cumulative(self, grant, year: int) -> float:
+        """Cumulative shares vested through end of `year`, capped at total_shares."""
+        if year < grant.grant_date.year:
+            return 0.0
+
+        if year == grant.grant_date.year:
+            months_active = 13 - grant.grant_date.month
+            return min(grant.periodic_shares * months_active, grant.total_shares)
+
+        years_after_grant = year - grant.grant_date.year
+        first_year_months = 13 - grant.grant_date.month
+        total_months = first_year_months + 12 * years_after_grant
+        # Cap: 4-year vest = max 48 months
+        total_months = min(total_months, 48)
+        return min(grant.periodic_shares * total_months, grant.total_shares)
 
     # ------------------------------------------------------------------
     # Expenses  — FIX: no inflation multiplier (returns are real)
