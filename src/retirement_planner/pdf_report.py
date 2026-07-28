@@ -404,6 +404,83 @@ def _section_income_expenses(styles: dict, cash_flow: list) -> list:
     return elements
 
 
+def _section_equity_vesting(styles: dict, planner) -> list:
+    """Equity Vesting Timeline — year-by-year RSU vesting by ticker."""
+    elements = []
+    elements.append(Paragraph("Equity Vesting Timeline", styles["SectionHead"]))
+    elements.append(_hr())
+
+    has_equity = False
+    for stream in planner.scenario.income_streams:
+        if not stream.equity or not stream.equity.ticker:
+            continue
+        has_equity = True
+        eq = stream.equity
+
+        # Header
+        elements.append(Paragraph(
+            f"{stream.name} — {eq.ticker} @ ${eq.current_price:,.2f}",
+            styles["SubHead"]
+        ))
+        elements.append(Spacer(1, 0.1 * inch))
+
+        # Year-by-year data
+        start_year = planner.start_year
+        end_year = min(stream.end_date.year, start_year + 20)
+        categories = []
+        shares_data = []
+        income_data = []
+
+        for year in range(start_year, end_year + 1):
+            rsu_income = planner.calculate_annual_rsu_income(year, eq)
+            shares = rsu_income / eq.current_price if eq.current_price > 0 else 0
+            if shares > 0:
+                categories.append(str(year))
+                shares_data.append(shares)
+                income_data.append(rsu_income)
+
+        if categories:
+            # Bar chart: shares vesting by year
+            chart = _bar_chart(
+                categories,
+                {"Shares Vesting": shares_data},
+                f"{eq.ticker} Shares Vesting by Year",
+                width=480, height=180,
+            )
+            elements.append(chart)
+            elements.append(Spacer(1, 0.1 * inch))
+
+            # Summary table
+            table_rows = [["Year", "Shares", "RSU Income"]]
+            for i, yr in enumerate(categories):
+                table_rows.append([yr, f"{shares_data[i]:,.1f}", f"${income_data[i]:,.0f}"])
+            t = _make_table(table_rows, col_widths=[1.0*inch, 1.2*inch, 1.5*inch])
+            elements.append(t)
+            elements.append(Spacer(1, 0.15 * inch))
+
+        # Active grants + refresher summary
+        summary_parts = []
+        if eq.grants:
+            summary_parts.append(f"Active Grants: {len(eq.grants)}")
+            for g in eq.grants:
+                summary_parts.append(f"  {g.id}: {g.total_shares:,.0f} shares ({g.vesting_pattern})")
+        if eq.refreshers:
+            rp = eq.refreshers
+            summary_parts.append(
+                f"Refresher: {rp.annual_shares:,.0f} shares/yr, {rp.vesting_pattern}, "
+                f"grant month {rp.grant_month}, years {rp.start_year}–{rp.end_year}"
+            )
+        if summary_parts:
+            elements.append(Paragraph("<br/>".join(summary_parts), styles["Body"]))
+            elements.append(Spacer(1, 0.15 * inch))
+
+    if not has_equity:
+        elements.append(Paragraph("No equity compensation configured.", styles["Body"]))
+
+    elements.append(PageBreak())
+    return elements
+
+
 def _section_tax_summary(styles: dict, cash_flow: list) -> list:
     """Tax Summary — chart + cumulative."""
     elements = []
@@ -689,6 +766,9 @@ def generate_pdf_report(
 
     # 4. Income & Expenses
     elements.extend(_section_income_expenses(styles, cash_flow))
+
+    # 4b. Equity Vesting Timeline
+    elements.extend(_section_equity_vesting(styles, planner))
 
     # 5. Tax Summary
     elements.extend(_section_tax_summary(styles, cash_flow))

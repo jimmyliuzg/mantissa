@@ -69,3 +69,28 @@ def test_fmt_pct():
     assert _fmt_pct(0.85) == "85.0%"
     assert _fmt_pct(0.0) == "0.0%"
     assert _fmt_pct(1.0) == "100.0%"
+
+
+def test_pdf_report_with_equity(tmp_path):
+    """PDF report with equity config includes equity section."""
+    from retirement_planner.pdf_report import _section_equity_vesting, _styles
+
+    planner = RetirementPlanner.from_config("tests/fixtures/equity_config.json")
+    styles = _styles()
+    elements = _section_equity_vesting(styles, planner)
+    # Should have elements (chart, table, etc.)
+    assert len(elements) > 3  # header + hr + chart + table + summary + pagebreak
+
+
+def test_pdf_report_with_equity_creates_file(tmp_path):
+    """PDF report with equity config creates valid file."""
+    planner = RetirementPlanner.from_config("tests/fixtures/equity_config.json")
+    mc = MonteCarloEngine(planner)
+    cash_flow = planner.project_cash_flow()
+    mc_results = mc.run(num_simulations=10, scenario="mean")
+
+    out = tmp_path / "equity_report.pdf"
+    result = generate_pdf_report(planner, mc_results, cash_flow, str(out))
+
+    assert os.path.exists(result)
+    assert os.path.getsize(result) > 1000

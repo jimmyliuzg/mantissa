@@ -45,6 +45,55 @@ def main():
     pass
 
 
+def _format_equity_breakdown(planner) -> str:
+    """Format equity vesting breakdown for CLI output."""
+    from tabulate import tabulate
+
+    lines = []
+    for stream in planner.scenario.income_streams:
+        if not stream.equity or not stream.equity.ticker:
+            continue
+
+        eq = stream.equity
+        lines.append(f"\n{'='*60}")
+        lines.append(f"Equity: {stream.name} ({eq.ticker} @ ${eq.current_price:.2f})")
+        lines.append(f"{'='*60}")
+
+        # Build year-by-year vesting table
+        start_year = stream.start_date.year
+        end_year = stream.end_date.year
+        table = []
+
+        for year in range(start_year, min(end_year + 1, start_year + 15)):
+            rsu_income = planner.calculate_annual_rsu_income(year, eq)
+            shares = rsu_income / eq.current_price if eq.current_price > 0 else 0
+            if shares > 0:
+                table.append([year, f"{shares:,.1f}", f"${rsu_income:,.0f}"])
+
+        if table:
+            headers = ["Year", "Shares Vesting", "RSU Income"]
+            lines.append(tabulate(table, headers=headers, tablefmt="simple"))
+        else:
+            lines.append("  No vesting in projection window.")
+
+        # Active grants summary
+        if eq.grants:
+            lines.append(f"\n  Active Grants: {len(eq.grants)}")
+            for g in eq.grants:
+                lines.append(f"    {g.id}: {g.total_shares:,.0f} shares ({g.vesting_pattern})")
+
+        # Refresher summary
+        if eq.refreshers:
+            rp = eq.refreshers
+            lines.append(f"\n  Refresher Policy:")
+            lines.append(f"    {rp.annual_shares:,.0f} shares/year, {rp.vesting_pattern}, "
+                         f"grant month {rp.grant_month}")
+            lines.append(f"    Years {rp.start_year}–{rp.end_year}, "
+                         f"growth {rp.growth_rate*100:.1f}%")
+
+    return "\n".join(lines) if lines else ""
+
+
 @main.command()
 @click.option("--config", "-c", required=True, type=click.Path(exists=True))
 @click.option("--simulations", "-n", default=1000, type=int)
@@ -84,7 +133,9 @@ def run(config, simulations, method, scenario, output):
 )
 @click.option("--output", "-o", default=None, type=click.Path())
 @click.option("--simulations", "-n", default=1000, type=int)
-def report(config, fmt, output, simulations):
+@click.option("--show-equity", is_flag=True, default=False,
+              help="Include equity vesting breakdown in report.")
+def report(config, fmt, output, simulations, show_equity):
     """Generate a retirement plan report."""
     planner = RetirementPlanner.from_config(config)
     mc = MonteCarloEngine(planner)
@@ -115,6 +166,12 @@ def report(config, fmt, output, simulations):
         click.echo(f"Report saved to {output}")
     else:
         click.echo(content)
+
+    # Equity breakdown (optional)
+    if show_equity:
+        equity_lines = _format_equity_breakdown(planner)
+        if equity_lines:
+            click.echo("\n" + equity_lines)
 
 
 @main.command()
