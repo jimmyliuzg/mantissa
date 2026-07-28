@@ -7,6 +7,7 @@ import pytest
 from retirement_planner.models import (
     Account, AssetAllocation, EconomicAssumptions, IncomeStream, Person,
     Scenario, SocialSecurity,
+    RSUGrant, RefresherPolicy, Bonus, EquityComp,
 )
 
 
@@ -180,3 +181,158 @@ def test_scenario_to_json_round_trip():
     parsed = json.loads(sc.to_json())
     assert parsed == sc.to_dict()
     assert parsed["primary"]["name"] == "Primary"
+
+
+# ---------------------------------------------------------------------------
+# RSUGrant model
+# ---------------------------------------------------------------------------
+def test_rsu_grant_creation():
+    grant = RSUGrant(
+        id="grant_1",
+        grant_date=date(2025, 10, 10),
+        total_shares=3951,
+        vesting_pattern="cliff_quarterly",
+        cliff_shares=1975,
+        periodic_shares=494,
+        cliff_date=date(2026, 10, 10),
+    )
+    assert grant.cliff_replaces_first_vest is False
+    assert grant.status == "active"
+
+
+def test_rsu_grant_defaults():
+    grant = RSUGrant(
+        id="grant_2",
+        grant_date=date(2025, 8, 10),
+        total_shares=230,
+        vesting_pattern="quarterly",
+        periodic_shares=57,
+    )
+    assert grant.cliff_shares == 0
+    assert grant.cliff_date is None
+    assert grant.cliff_replaces_first_vest is False
+
+
+# ---------------------------------------------------------------------------
+# RefresherPolicy model
+# ---------------------------------------------------------------------------
+def test_refresher_policy_creation():
+    policy = RefresherPolicy(
+        annual_shares=494,
+        grant_month=10,
+        vesting_pattern="quarterly",
+        vesting_delay_months=3,
+        start_year=2026,
+        end_year=2035,
+        growth_rate=0.0,
+    )
+    assert policy.annual_shares == 494
+    assert policy.vesting_delay_months == 3
+
+
+def test_refresher_policy_defaults():
+    policy = RefresherPolicy(annual_shares=100, grant_month=6, vesting_pattern="monthly")
+    assert policy.vesting_delay_months == 3
+    assert policy.growth_rate == 0.0
+    assert policy.start_year == 0
+    assert policy.end_year == 0
+
+
+# ---------------------------------------------------------------------------
+# Bonus model
+# ---------------------------------------------------------------------------
+def test_bonus_creation():
+    bonus = Bonus(annual=22000, growth_rate=0.03, payment_month=3)
+    assert bonus.annual == 22000
+    assert bonus.payment_month == 3
+
+
+def test_bonus_defaults():
+    bonus = Bonus()
+    assert bonus.annual == 0.0
+    assert bonus.growth_rate == 0.0
+    assert bonus.payment_month == 3
+
+
+# ---------------------------------------------------------------------------
+# EquityComp model
+# ---------------------------------------------------------------------------
+def test_equity_comp_creation():
+    equity = EquityComp(
+        ticker="DOCU",
+        current_price=55.59,
+        grants=[
+            RSUGrant(
+                id="grant_1",
+                grant_date=date(2025, 10, 10),
+                total_shares=3951,
+                vesting_pattern="cliff_quarterly",
+                cliff_shares=1975,
+                periodic_shares=494,
+                cliff_date=date(2026, 10, 10),
+            ),
+        ],
+        refreshers=RefresherPolicy(
+            annual_shares=494,
+            grant_month=10,
+            vesting_pattern="quarterly",
+            start_year=2026,
+            end_year=2035,
+        ),
+        sell_to_cover=True,
+        goes_to_account="brokerage_faith",
+    )
+    assert equity.ticker == "DOCU"
+    assert len(equity.grants) == 1
+    assert equity.refreshers is not None
+    assert equity.sell_to_cover is True
+    assert equity.is_taxable is True
+    assert equity.end_date is None
+
+
+def test_equity_comp_defaults():
+    equity = EquityComp()
+    assert equity.ticker == ""
+    assert equity.current_price == 0.0
+    assert equity.grants == []
+    assert equity.refreshers is None
+    assert equity.sell_to_cover is True
+
+
+# ---------------------------------------------------------------------------
+# IncomeStream with enhanced comp fields
+# ---------------------------------------------------------------------------
+def test_income_stream_legacy_compatibility():
+    """Legacy IncomeStream with only monthly_amount still works."""
+    stream = IncomeStream(
+        id="salary",
+        name="Salary",
+        owner="primary",
+        monthly_amount=10000,
+        start_date=date(2026, 1, 1),
+        end_date=date(2035, 1, 1),
+    )
+    assert stream.monthly_amount == 10000
+    assert stream.base_salary is None
+    assert stream.bonus is None
+    assert stream.equity is None
+
+
+def test_income_stream_with_base_salary():
+    stream = IncomeStream(
+        id="faith_docusign",
+        name="Faith — Docusign",
+        owner="spouse",
+        monthly_amount=0,
+        start_date=date(2026, 1, 1),
+        end_date=date(2036, 1, 1),
+        base_salary={"annual": 224400, "growth_rate": 0.03},
+        bonus=Bonus(annual=22000, growth_rate=0.03, payment_month=3),
+        equity=EquityComp(ticker="DOCU", current_price=55.59),
+    )
+    assert stream.base_salary is not None
+    assert stream.bonus is not None
+    assert stream.equity is not None
+    assert stream.base_salary["annual"] == 224400
+    assert stream.bonus.annual == 22000
+    assert stream.equity.ticker == "DOCU"

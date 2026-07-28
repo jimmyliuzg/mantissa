@@ -121,6 +121,58 @@ class IncomeStream:
     is_passive: bool = False
     is_ss: bool = False
     goes_to_account: str = ""
+    # Enhanced comp fields (optional — legacy monthly_amount still works)
+    base_salary: Optional[dict] = None   # {"annual": N, "growth_rate": N}
+    bonus: Optional["Bonus"] = None
+    equity: Optional["EquityComp"] = None
+
+
+@dataclass
+class RSUGrant:
+    """A single RSU grant with its vesting schedule."""
+    id: str
+    grant_date: date
+    total_shares: float
+    vesting_pattern: str        # "cliff_quarterly" | "quarterly" | "monthly"
+    cliff_shares: float = 0    # shares at cliff vest
+    periodic_shares: float = 0 # shares per period after cliff
+    cliff_date: Optional[date] = None
+    cliff_replaces_first_vest: bool = False  # cliff + first quarterly, or cliff only?
+    status: str = "active"     # "active" | "forecasted" | "cancelled"
+
+
+@dataclass
+class RefresherPolicy:
+    """Rules for generating future grants automatically."""
+    annual_shares: float
+    grant_month: int            # month of year new grant arrives (1-12)
+    vesting_pattern: str        # "quarterly" | "monthly"
+    vesting_delay_months: int = 3  # months after grant before first vest
+    start_year: int = 0
+    end_year: int = 0           # typically retirement year
+    growth_rate: float = 0.0    # annual growth in grant size
+
+
+@dataclass
+class Bonus:
+    """Annual bonus configuration."""
+    annual: float = 0.0
+    growth_rate: float = 0.0
+    payment_month: int = 3      # month bonus lands (1-12)
+
+
+@dataclass
+class EquityComp:
+    """Full equity compensation model for one employer."""
+    ticker: str = ""
+    current_price: float = 0.0
+    price_source: str = "manual"  # "manual" only for v1
+    grants: List[RSUGrant] = field(default_factory=list)
+    refreshers: Optional[RefresherPolicy] = None
+    end_date: Optional[date] = None    # job termination — stops all vests
+    sell_to_cover: bool = True         # sell shares at vest to cover taxes
+    is_taxable: bool = True
+    goes_to_account: str = ""          # where vested cash lands
 
 
 @dataclass

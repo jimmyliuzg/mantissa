@@ -30,7 +30,8 @@ __version__ = "0.1.0"
 
 from .models import (
     Person, Account, IncomeStream, Expense, Mortgage,
-    Windfall, HousingEvent, RothConversion, EconomicAssumptions
+    Windfall, HousingEvent, RothConversion, EconomicAssumptions,
+    RSUGrant, RefresherPolicy, Bonus, EquityComp,
 )
 from .engine import RetirementPlanner
 from .simulators import MonteCarloEngine, ScenarioComparator
