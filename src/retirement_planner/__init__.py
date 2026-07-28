@@ -42,6 +42,7 @@ from .reports import (
     export_csv,
     export_markdown,
 )
+from .pdf_report import generate_pdf_report
 from .charts import (
     plot_net_worth_trajectory,
     plot_mc_fan_chart,

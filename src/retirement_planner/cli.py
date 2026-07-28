@@ -12,6 +12,7 @@ from .reports import (
     export_csv,
     export_markdown,
 )
+from .pdf_report import generate_pdf_report
 from .sensitivity import SensitivityAnalyzer
 
 
@@ -114,6 +115,33 @@ def report(config, fmt, output, simulations):
         click.echo(f"Report saved to {output}")
     else:
         click.echo(content)
+
+
+@main.command()
+@click.option("--config", "-c", required=True, type=click.Path(exists=True))
+@click.option("--output", "-o", default=None, type=click.Path(), help="Output PDF path (default: report.pdf)")
+@click.option("--simulations", "-n", default=1000, type=int)
+@click.option("--method", "-m", default="gaussian",
+              type=click.Choice(["gaussian", "historical"]))
+@click.option("--scenario", "-s", default="mean",
+              type=click.Choice(["mean", "optimistic", "pessimistic"]))
+def pdf(config, output, simulations, method, scenario):
+    """Generate a PDF retirement plan report (Boldin-style)."""
+    planner = RetirementPlanner.from_config(config)
+    mc = MonteCarloEngine(planner)
+
+    click.echo(f"Running {simulations:,} simulations ({method}, {scenario})...")
+    mc_results = mc.run(
+        num_simulations=simulations,
+        scenario=scenario,
+        method=method,
+    )
+    cash_flow = planner.project_cash_flow(scenario)
+
+    output = output or "report.pdf"
+    click.echo("Generating PDF report...")
+    path = generate_pdf_report(planner, mc_results, cash_flow, output)
+    click.echo(f"Report saved to {path}")
 
 
 @main.command()

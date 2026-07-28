@@ -41,8 +41,7 @@ htmlcov/
 .env
 .env.local
 
-# Personal configs (contains real financial data)
-examples/ziji_plan.json
+# Personal configs (live in ~/Documents/finance/, not in repo)
 examples/my_plan.json
 
 # Internal docs (not for public repo)
