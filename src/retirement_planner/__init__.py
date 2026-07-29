@@ -51,3 +51,9 @@ from .charts import (
     plot_tax_breakdown,
 )
 from .sensitivity import SensitivityAnalyzer
+from .tax_law import (
+    TaxLawVersion, TaxLawRegistry, FilingStatus,
+    bracket_tax, calculate_niit, calculate_amt, calculate_irmaa,
+    calculate_aca_subsidy, calculate_estate_tax, calculate_child_tax_credit,
+    calculate_qcd, determine_filing_status,
+)
