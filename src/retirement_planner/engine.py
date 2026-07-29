@@ -21,6 +21,16 @@ from .models import (
     AssetAllocation, GlidepathConfig,
 )
 
+from .fixes import process_housing_event, process_roth_conversions, apply_medical_inflation
+from .tax_lots import TaxLotTracker, calculate_121_exclusion
+from .sim_integration import determine_annual_filing_status, calculate_401k_limit
+from .tax_law import (
+    TaxLawRegistry, FilingStatus,
+    calculate_irmaa as tax_law_irmaa,
+    calculate_aca_subsidy as tax_law_aca,
+    calculate_estate_tax as tax_law_estate,
+)
+
 
 # ---------------------------------------------------------------------------
 # IRS Uniform Lifetime Table (Publication 590-B, Table III)
@@ -1756,6 +1766,7 @@ class RetirementPlanner:
         rates = self.scenario.economic.get_rate(scenario_name)
         inflation_rate = rates["general_inflation"]
         withdrawal_engine = WithdrawalEngine(self.accounts, cost_basis)
+        tax_law_registry = TaxLawRegistry()
 
         # Track MAGI by year for IRMAA 2-year lookback
         magi_history: Dict[int, float] = {}
@@ -1775,6 +1786,16 @@ class RetirementPlanner:
             spouse_age = year - self.scenario.spouse.birth_date.year
             younger_age = min(primary_age, spouse_age)
             years_from_base = year - self.start_year
+
+            # --- Filing status ---
+            filing_status = determine_annual_filing_status(
+                year, primary_alive=True, spouse_alive=True,
+                death_year_spouse=None,  # TODO: track spouse death year
+                has_dependents=False,
+            )
+
+            # Get tax law for this year
+            law = tax_law_registry.law_for_year(year)
 
             if (primary_age > self.scenario.primary.longevity_age
                     and spouse_age > self.scenario.spouse.longevity_age):
@@ -1849,6 +1870,14 @@ class RetirementPlanner:
                 year, scenario_name, mortgage_balances=mortgage_balances)
             annual_expenses = expense_data["total"]
 
+            # Apply medical inflation to healthcare expenses
+            medical_extra = apply_medical_inflation(
+                0, year, self.start_year,
+                general_inflation=rates.get("general_inflation", 0.025),
+                medical_inflation=rates.get("medical_inflation", 0.034),
+            )
+            annual_expenses += medical_extra
+
             # --- Step 4b: IRMAA Medicare surcharges (age >= 65) ---
             older_age = max(primary_age, spouse_age)
             irmaa_amount = 0.0
@@ -1856,13 +1885,13 @@ class RetirementPlanner:
                 # 2-year lookback: use MAGI from 2 years prior
                 lookback_year = year - 2
                 magi_2yr_ago = magi_history.get(lookback_year, 0.0)
-                irmaa_amount = self.calculate_irmaa(magi_2yr_ago, older_age)
+                irmaa_amount = tax_law_irmaa(magi_2yr_ago, law, num_people=2)
                 annual_expenses += irmaa_amount
 
             # --- Step 4c: ACA subsidy (pre-Medicare, age < 65) ---
             if younger_age < 65:
-                aca_subsidy = self.calculate_aca_subsidy(
-                    annual_income, self.scenario.family_size, self.scenario.state)
+                aca_subsidy = tax_law_aca(
+                    annual_income, self.scenario.family_size, law, self.scenario.state)
                 annual_expenses = max(0.0, annual_expenses - aca_subsidy)
                 total_aca_subsidy += aca_subsidy
 
@@ -1879,6 +1908,15 @@ class RetirementPlanner:
                     year, base_spending, total_portfolio_value,
                     portfolio_peak, expense_data,
                 )
+
+            # --- Step 4e: Roth conversions ---
+            rc_result = process_roth_conversions(
+                self.scenario.roth_conversions, year, balances)
+            if rc_result.total_converted > 0:
+                # Track for later use when building ordinary income
+                _roth_conversion_income = rc_result.ordinary_income_added
+            else:
+                _roth_conversion_income = 0.0
 
             # --- Step 5: Withdrawals (tax-efficient order) ---
             shortfall = withdrawal_engine.calculate_withdrawal_needed(
@@ -1898,6 +1936,7 @@ class RetirementPlanner:
 
             # Ordinary income = non-SS wages/withdrawals + taxable SS portion
             ordinary = non_ss_income
+            ordinary += _roth_conversion_income  # Roth conversions add to ordinary income
             capital_gains = 0.0
             tax_free = 0.0
             for w in withdrawals:
@@ -1953,6 +1992,20 @@ class RetirementPlanner:
                             current_basis = cost_basis.get_basis(target, 0.0)
                             cost_basis.set_basis(target, current_basis + windfall.amount)
 
+            # --- Step 8b: Housing events ---
+            for he in self.scenario.housing_events:
+                he_result = process_housing_event(
+                    he, year, balances, mortgage_balances,
+                    cost_basis=cost_basis.get_basis("real_estate"),
+                    filing_status=filing_status,
+                )
+                if he_result.event_type != "none":
+                    goes_to = getattr(he, 'goes_to_account', 'joint_brokerage')
+                    balances[goes_to] = balances.get(goes_to, 0) + he_result.account_delta
+                    for mort_id in mortgage_balances:
+                        mortgage_balances[mort_id] += he_result.mortgage_delta
+                    taxes += he_result.tax_due
+
             # --- Step 9: Track net worth ---
             total_assets = sum(b for b in balances.values() if b > 0)
             total_liabs = sum(abs(b) for b in balances.values() if b < 0)
@@ -1977,8 +2030,8 @@ class RetirementPlanner:
                 else self.scenario.spouse.longevity_age)
             if (younger_age >= younger_longevity
                     and total_estate_tax == 0.0):
-                total_estate_tax = self.calculate_estate_tax(
-                    net_worth, "MFJ", inflation_rate, years_from_base)
+                total_estate_tax = tax_law_estate(
+                    net_worth, law, FilingStatus.MFJ)
 
         final_nw = (sum(balances.values())
                     - sum(b for b in mortgage_balances.values() if b > 0))
