@@ -1181,7 +1181,7 @@ class RetirementPlanner:
         return mods
 
     # ------------------------------------------------------------------
-    # Taxes  — REWRITE: accepts TaxableIncome, distinguishes income types
+    # Taxes  — uses TaxLawRegistry for versioned, year-aware brackets
     # ------------------------------------------------------------------
     def calculate_taxes(
         self,
@@ -1191,10 +1191,7 @@ class RetirementPlanner:
         inflation_rate: float = 0.0,
         years_from_base: int = 0,
     ) -> float:
-        """Calculate federal + CA state taxes using income-type breakdown.
-
-        Bracket limits and the standard deduction are indexed to inflation
-        using ``(1 + inflation_rate) ** years_from_base``.
+        """Calculate federal + CA state taxes using versioned tax law.
 
         Args:
             year: Calendar year.
@@ -1207,54 +1204,68 @@ class RetirementPlanner:
         Returns:
             Total tax liability (federal + state).
         """
-        # Index factor for bracket inflation
-        idx = (1.0 + inflation_rate) ** years_from_base
+        from .tax_law import TaxLawRegistry, FilingStatus, bracket_tax
 
-        # Standard deduction (indexed)
-        standard_deduction = 29_200 * idx
+        # Get versioned tax law for this year
+        if not hasattr(self, '_tax_registry'):
+            self._tax_registry = TaxLawRegistry()
+        law = self._tax_registry.law_for_year(
+            year,
+            fallback_inflation=inflation_rate if inflation_rate > 0 else 0.025,
+        )
 
-        # Indexed brackets
-        fed_brackets = _indexed_brackets(_FEDERAL_BRACKETS, idx)
-        ltcg_brackets = _indexed_brackets(_LTCG_BRACKETS, idx)
-        ca_brackets = _indexed_brackets(_CA_BRACKETS, idx)
+        # Determine filing status (simplified — MFJ for now)
+        status = FilingStatus.MFJ
+
+        # Standard deduction from law
+        standard_deduction = law.standard_deduction.get(status, 29_200)
 
         # ---- Federal ordinary income tax ----
-        # Apply standard deduction against ordinary income first
         ordinary_after_deduction = max(0.0, income.ordinary - standard_deduction)
-        federal_ordinary = _bracket_tax(ordinary_after_deduction, fed_brackets)
+        fed_brackets = law.federal_brackets.get(status, [])
+        federal_ordinary = bracket_tax(ordinary_after_deduction, fed_brackets)
 
         # ---- Federal long-term capital gains tax ----
-        # LTCG stacks on top of ordinary income for bracket determination.
-        # Ordinary income fills the bottom of the LTCG bracket stack first,
-        # reducing available 0% (and possibly 15%) LTCG space.
         ltcg_taxable = income.capital_gains
+        ltcg_brackets = law.ltcg_brackets.get(status, [])
         if ltcg_taxable > 0:
             remaining_ordinary = ordinary_after_deduction
             ltcg_tax = 0.0
             prev_threshold = 0.0
-            for bracket_top, rate in ltcg_brackets:
+            for b in ltcg_brackets:
                 if ltcg_taxable <= 0:
                     break
-                bracket_width = bracket_top - prev_threshold
-                prev_threshold = bracket_top
-                # Ordinary income occupies the lowest brackets first
+                bracket_width = b.upper - prev_threshold
+                prev_threshold = b.upper
                 ordinary_in_bracket = min(remaining_ordinary, bracket_width)
                 remaining_ordinary -= ordinary_in_bracket
                 available = bracket_width - ordinary_in_bracket
                 if available <= 0:
                     continue
                 taxed_here = min(ltcg_taxable, available)
-                ltcg_tax += taxed_here * rate
+                ltcg_tax += taxed_here * b.rate
                 ltcg_taxable -= taxed_here
         else:
             ltcg_tax = 0.0
 
         federal_tax = federal_ordinary + ltcg_tax
 
+        # ---- NIIT (Net Investment Income Tax) ----
+        from .tax_law import calculate_niit
+        magi = income.ordinary + income.capital_gains
+        niit = calculate_niit(income.capital_gains, magi, law, status)
+        federal_tax += niit
+
+        # ---- AMT (Alternative Minimum Tax) ----
+        from .tax_law import calculate_amt
+        amt = calculate_amt(federal_tax, income.ordinary, income.capital_gains, law, status)
+        federal_tax += amt
+
         # ---- California state tax (all ordinary — CA taxes LTCG as ordinary) ----
         ca_total = income.ordinary + income.capital_gains
         ca_taxable = max(0.0, ca_total - standard_deduction)
-        ca_tax = _bracket_tax(ca_taxable, ca_brackets)
+        ca_brackets = law.ca_brackets
+        ca_tax = bracket_tax(ca_taxable, ca_brackets)
 
         return federal_tax + ca_tax
 
