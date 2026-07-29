@@ -81,3 +81,12 @@ from .explain import (
     ReproducibilityMetadata, ScenarioDiff, compare_scenarios,
     ValidationResult, validate_projection,
 )
+from .fixes import (
+    HousingEventResult, process_housing_event,
+    RothConversionResult, process_roth_conversions,
+    apply_medical_inflation, process_medical_expenses,
+)
+from .tax_lots import (
+    TaxLot, TaxLotTracker, LiquidationResult,
+    calculate_121_exclusion,
+)
