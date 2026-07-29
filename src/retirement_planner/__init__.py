@@ -70,3 +70,9 @@ from .portfolio import (
     AssetClass, DEFAULT_ASSET_CLASSES, CapitalMarketModel, MarketYear,
     BondTentPolicy, STRESS_SCENARIOS, optimize_asset_location, rebalance_portfolio,
 )
+from .household import (
+    MortalityModel, HouseholdLifetime, sample_household_lifetimes,
+    SurvivorTransition, compute_survivor_transition,
+    HealthcarePhase, DEFAULT_HEALTHCARE_PHASES, calculate_healthcare_cost,
+    SpendingPhaseProfile, HouseholdState,
+)
