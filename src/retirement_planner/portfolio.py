@@ -3,7 +3,7 @@ Multi-asset capital market model (Phase 3).
 
 Provides:
 - Asset class definitions with expected returns, volatility, correlations
-- Correlated return generation (multivariate Student-t)
+- Correlated return generation (Cholesky-decomposed multivariate normal)
 - Historical data loading for bootstrap
 - Stress scenario definitions (2000, 2008, high-inflation, early-retirement crash)
 - Bond tent generalization
@@ -182,7 +182,7 @@ class CapitalMarketModel:
     """Generates correlated returns for multi-asset portfolios.
 
     Supports:
-    - Multivariate Student-t returns (default)
+    - Multivariate normal returns via Cholesky decomposition (default)
     - Deterministic stress scenarios
     - Historical replay
     """
@@ -241,24 +241,29 @@ class CapitalMarketModel:
 
     def _sample_correlated_normals(self, rng) -> List[float]:
         """Sample n correlated normal random variables using Cholesky."""
-        import random
         n = len(self._means)
-        # Independent normals
-        z = [random.gauss(0, 1) for _ in range(n)]
-        # Cholesky multiply
+        z = [rng.gauss(0, 1) for _ in range(n)]
         L = self._chol_decompose(self._cov)
         x = [sum(L[i][j] * z[j] for j in range(n)) for i in range(n)]
         return x
 
-    def sample_year(self, year: int = 0, regime: str = "normal") -> MarketYear:
-        """Generate one year of correlated returns."""
+    def sample_year(self, year: int = 0, regime: str = "normal",
+                    rng=None) -> MarketYear:
+        """Generate one year of correlated returns.
+
+        Args:
+            rng: random.Random instance for reproducibility.
+                 If None, creates a new unseeded instance (non-reproducible).
+        """
         import random
+        if rng is None:
+            rng = random.Random()
 
         # Sample correlated real returns
-        shocks = self._sample_correlated_normals(rng=None)
+        shocks = self._sample_correlated_normals(rng=rng)
 
         # Add inflation
-        inflation = random.gauss(self.inflation_mean, self.inflation_vol)
+        inflation = rng.gauss(self.inflation_mean, self.inflation_vol)
         inflation = max(-0.02, min(0.15, inflation))  # clamp
 
         # Convert real returns to nominal
@@ -271,15 +276,23 @@ class CapitalMarketModel:
         # Add asset classes not in correlation matrix
         for aid, ac in self.asset_classes.items():
             if aid not in returns:
-                real_return = random.gauss(ac.expected_real_return, ac.volatility)
+                real_return = rng.gauss(ac.expected_real_return, ac.volatility)
                 nominal = (1 + real_return) * (1 + inflation) - 1
                 returns[aid] = nominal
 
         return MarketYear(regime=regime, inflation=inflation, returns=returns)
 
-    def sample_path(self, years: int, start_year: int = 2026) -> List[MarketYear]:
-        """Generate a full path of correlated returns."""
-        return [self.sample_year(start_year + i) for i in range(years)]
+    def sample_path(self, years: int, start_year: int = 2026,
+                    rng=None) -> List[MarketYear]:
+        """Generate a full path of correlated returns.
+
+        Args:
+            rng: random.Random instance. If None, creates unseeded.
+        """
+        import random
+        if rng is None:
+            rng = random.Random()
+        return [self.sample_year(start_year + i, rng=rng) for i in range(years)]
 
     def stress_path(self, scenario_id: str) -> List[MarketYear]:
         """Generate a deterministic stress path."""

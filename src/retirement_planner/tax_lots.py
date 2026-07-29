@@ -130,85 +130,23 @@ class TaxLotTracker:
         self,
         account_id: str,
         shares_to_sell: float,
+        current_price: float,
         algorithm: str = "hifo",
-        as_of: date = field(default_factory=date.today),
+        sale_date: Optional[date] = None,
     ) -> LiquidationResult:
-        """Liquidate shares from an account using the specified algorithm.
+        """Liquidate shares from an account. Requires current_price.
 
-        Algorithms:
-        - FIFO: First In First Out
-        - HIFO: Highest In First Out (minimizes gains)
-        - LIFO: Last In First Out
-        - min_gain: Sell lots with lowest gains first
-        - specific: Sell specific lots by lot_id (use sell_specific)
+        This is a convenience wrapper around liquidate_with_price().
+        Price is required — silent zero-gain reporting is a bug.
         """
-        if algorithm == "specific":
-            raise ValueError("Use sell_specific() for specific lot IDs")
-
-        available = self.lots.get(account_id, [])
-        if not available:
-            return LiquidationResult(
-                lots_sold=[], total_shares=0, total_proceeds=0,
-                total_cost_basis=0, short_term_gain=0,
-                long_term_gain=0, total_gain=0,
-            )
-
-        # Sort lots by algorithm
-        if algorithm == "fifo":
-            sorted_lots = sorted(available, key=lambda l: l.purchase_date)
-        elif algorithm == "hifo":
-            sorted_lots = sorted(available, key=lambda l: l.cost_basis_per_share, reverse=True)
-        elif algorithm == "lifo":
-            sorted_lots = sorted(available, key=lambda l: l.purchase_date, reverse=True)
-        elif algorithm == "min_gain":
-            # Sort by gain per share (lowest first) — but we need current price
-            # For now, just sort by cost basis (highest = lowest gain at same price)
-            sorted_lots = sorted(available, key=lambda l: l.cost_basis_per_share, reverse=True)
-        else:
-            raise ValueError(f"Unknown algorithm: {algorithm}")
-
-        # Select lots
-        sold_lots = []
-        remaining_shares = shares_to_sell
-
-        for lot in sorted_lots:
-            if remaining_shares <= 0:
-                break
-            if lot.shares <= 0:
-                continue
-
-            sell_shares = min(remaining_shares, lot.shares)
-            sold, remainder = lot.split(sell_shares)
-            sold_lots.append(sold)
-
-            # Update the lot in place
-            lot.shares = remainder.shares
-            remaining_shares -= sell_shares
-
-        # Remove empty lots
-        self.lots[account_id] = [l for l in self.lots[account_id] if l.shares > 0]
-
-        # Compute gains
-        total_shares = sum(l.shares for l in sold_lots)
-        total_basis = sum(l.total_cost for l in sold_lots)
-        total_proceeds = total_shares * 0  # Caller provides price
-
-        short_term = 0.0
-        long_term = 0.0
-        for lot in sold_lots:
-            # Gain = (market price - basis) × shares
-            # But we don't have market price here — caller must compute
-            # For now, track basis reduction
-            pass
-
-        return LiquidationResult(
-            lots_sold=sold_lots,
-            total_shares=total_shares,
-            total_proceeds=total_proceeds,
-            total_cost_basis=total_basis,
-            short_term_gain=short_term,
-            long_term_gain=long_term,
-            total_gain=0,
+        if current_price < 0:
+            raise ValueError("current_price must be non-negative")
+        return self.liquidate_with_price(
+            account_id=account_id,
+            shares_to_sell=shares_to_sell,
+            current_price=current_price,
+            algorithm=algorithm,
+            sale_date=sale_date,
         )
 
     def liquidate_with_price(
@@ -294,27 +232,41 @@ class TaxLotTracker:
     def sell_specific(
         self,
         account_id: str,
-        lot_ids: List[str],
+        shares_by_lot: dict,
         current_price: float,
         sale_date: Optional[date] = None,
     ) -> LiquidationResult:
-        """Sell specific lots by their IDs (Specific Identification)."""
+        """Sell specific lots by ID with partial share support.
+
+        Args:
+            shares_by_lot: dict mapping lot_id -> shares to sell.
+                           Can sell partial lots (e.g., {"lot_abc": 50}).
+        """
         if sale_date is None:
             sale_date = date.today()
 
         available = self.lots.get(account_id, [])
         sold_lots = []
-        remaining_ids = set(lot_ids)
+        updated_lots = []
 
         for lot in available:
-            if lot.lot_id in remaining_ids:
-                sold_lots.append(lot)
-                remaining_ids.remove(lot.lot_id)
+            if lot.lot_id in shares_by_lot:
+                requested = shares_by_lot[lot.lot_id]
+                if requested <= 0:
+                    raise ValueError(f"Invalid share quantity for lot {lot.lot_id}")
+                if requested > lot.shares + 0.01:
+                    raise ValueError(
+                        f"Requested {requested} shares for lot {lot.lot_id} "
+                        f"but only {lot.shares} available"
+                    )
+                sold, remainder = lot.split(requested)
+                sold_lots.append(sold)
+                if remainder.shares > 0.01:
+                    updated_lots.append(remainder)
+            else:
+                updated_lots.append(lot)
 
-        # Remove sold lots
-        self.lots[account_id] = [
-            l for l in available if l.lot_id not in {sl.lot_id for sl in sold_lots}
-        ]
+        self.lots[account_id] = updated_lots
 
         # Compute gains
         total_shares = sum(l.shares for l in sold_lots)

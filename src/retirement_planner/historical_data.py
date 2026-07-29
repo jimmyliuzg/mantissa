@@ -35,9 +35,11 @@ HISTORICAL_SNP500_REAL_RETURNS: Dict[int, float] = {
     2021: 0.287, 2022: -0.181, 2023: 0.263,
 }
 
-# Historical real returns for intermediate-term government bonds.
-# Bonds have much lower volatility than equities; we approximate
-# with a stable ~2% real return plus small random noise.
+# SYNTHETIC bond returns — NOT real historical data.
+# Approximated from decade-level average real yields for intermediate-term
+# government bonds. Equity series (HISTORICAL_SNP500_VALUES) are real
+# annual observations; bond series is a simplified model.
+# TODO: replace with annual nominal total-return dataset from FRED or similar.
 HISTORICAL_BOND_REAL_RETURNS: Dict[int, float] = {}
 _decade_rates = {
     (1926, 1929): 0.04,

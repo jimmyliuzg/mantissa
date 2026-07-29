@@ -113,13 +113,13 @@ class SpendingPolicy(Protocol):
     """Interface for spending adjustment strategies."""
     def spending_target(
         self, year: int, base_spending: float,
-        portfolio_value: float, portfolio_peak: float,
+        portfolio_value: float, planned_portfolio: float,
     ) -> float: ...
 
 
 class FixedSpendingPolicy:
     """No adjustment — spend the base amount."""
-    def spending_target(self, year, base_spending, portfolio_value, portfolio_peak):
+    def spending_target(self, year, base_spending, portfolio_value, planned_portfolio):
         return base_spending
 
 
@@ -128,6 +128,9 @@ class GuardrailsPolicy:
 
     Upper guardrail: if portfolio > 120% of planned path, increase spending.
     Lower guardrail: if portfolio < 80% of planned path, decrease spending.
+
+    planned_portfolio should be the inflation-adjusted expected portfolio
+    value for this year, NOT a high-water mark.
     """
     def __init__(self, upper_pct: float = 1.20, lower_pct: float = 0.80,
                  increase_pct: float = 0.10, decrease_pct: float = 0.10):
@@ -136,10 +139,10 @@ class GuardrailsPolicy:
         self.increase_pct = increase_pct
         self.decrease_pct = decrease_pct
 
-    def spending_target(self, year, base_spending, portfolio_value, portfolio_peak):
-        if portfolio_peak <= 0:
+    def spending_target(self, year, base_spending, portfolio_value, planned_portfolio):
+        if planned_portfolio <= 0:
             return base_spending
-        ratio = portfolio_value / portfolio_peak
+        ratio = portfolio_value / planned_portfolio
         if ratio > self.upper_pct:
             return base_spending * (1 + self.increase_pct)
         elif ratio < self.lower_pct:
@@ -159,7 +162,7 @@ class VPWPolicy:
         self.max_rate = max_rate
         self.life_expectancy = life_expectancy
 
-    def spending_target(self, year, base_spending, portfolio_value, portfolio_peak):
+    def spending_target(self, year, base_spending, portfolio_value, planned_portfolio):
         # Simple VPW: divide by remaining years
         # In practice, this would use the current age, but we approximate
         # with a declining rate based on years into retirement
@@ -173,7 +176,7 @@ class FloorCeilingPolicy:
         self.floor_ratio = floor_ratio
         self.ceiling_ratio = ceiling_ratio
 
-    def spending_target(self, year, base_spending, portfolio_value, portfolio_peak):
+    def spending_target(self, year, base_spending, portfolio_value, planned_portfolio):
         floor = base_spending * self.floor_ratio
         ceiling = base_spending * self.ceiling_ratio
         # Adjust based on portfolio coverage
