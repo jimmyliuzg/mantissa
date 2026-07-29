@@ -90,3 +90,9 @@ from .tax_lots import (
     TaxLot, TaxLotTracker, LiquidationResult,
     calculate_121_exclusion,
 )
+from .sim_integration import (
+    determine_annual_filing_status, compute_survivor_ss_benefit,
+    GBMParams, simulate_gbm_path, simulate_rsu_value,
+    ContributionLimits, get_contribution_limits,
+    calculate_401k_limit, calculate_ira_limit, calculate_hsa_limit,
+)
