@@ -119,6 +119,10 @@ class TaxLotTracker:
     def total_basis(self, account_id: str) -> float:
         return sum(l.total_cost for l in self.lots.get(account_id, []))
 
+    def get_basis(self, account_id: str, default: float = 0.0) -> float:
+        """Get total cost basis for an account (compatibility alias)."""
+        return self.total_basis(account_id) or default
+
     def get_lots(self, account_id: str) -> List[TaxLot]:
         return list(self.lots.get(account_id, []))
 
