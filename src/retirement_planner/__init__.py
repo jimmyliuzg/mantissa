@@ -61,3 +61,8 @@ from .monthly_events import (
     MonthlyEvent, calculate_monthly_aca_subsidy, calculate_irmaa_assessment,
     calculate_rmd_events, process_year_events,
 )
+from .optimizer import (
+    YearDecision, CandidateDecision, DecisionTrace,
+    WithdrawalOptimizer, OptimizerConfig,
+    FixedSpendingPolicy, GuardrailsPolicy, VPWPolicy, FloorCeilingPolicy,
+)

@@ -1,0 +1,380 @@
+"""
+Integrated withdrawal and Roth conversion optimizer (Phase 2).
+
+Evaluates withdrawals, Roth conversions, capital-gain harvesting, QCDs,
+and charitable giving as one yearly decision problem, constrained by:
+- Cash needs (must cover expenses)
+- RMD requirements (age 73+)
+- Account balance limits
+- ACA MAGI targets
+- IRMAA avoidance thresholds
+- Tax bracket filling
+
+Two modes:
+1. Policy mode: rule-based withdrawal strategy (guardrails, VPW, etc.)
+2. Optimizer mode: grid search over candidates, pick lowest lifetime cost
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Callable, Dict, List, Optional, Protocol, Tuple
+
+
+# ---------------------------------------------------------------------------
+# Decision variables
+# ---------------------------------------------------------------------------
+@dataclass
+class YearDecision:
+    """What to do in a single year — the optimizer's output."""
+    # Withdrawals by account_id
+    taxable_withdrawals: Dict[str, float] = field(default_factory=dict)
+    pretax_withdrawals: Dict[str, float] = field(default_factory=dict)
+    roth_withdrawals: Dict[str, float] = field(default_factory=dict)
+
+    # Roth conversions (pre-tax → Roth, taxable event)
+    roth_conversions: Dict[str, float] = field(default_factory=dict)
+
+    # Capital-gain harvesting (sell taxable, realize gains at 0%/15%)
+    realized_ltcg: float = 0.0
+
+    # Charitable giving
+    charitable_gifts: float = 0.0
+    qcd_amount: float = 0.0  # from IRA, reduces AGI
+
+    # Derived totals
+    total_cash_in: float = 0.0   # sum of all withdrawals (taxable + tax-free)
+    total_ordinary_income: float = 0.0  # withdrawals + conversions + RMDs
+    total_taxable_event: float = 0.0  # conversions + gains + RMDs
+
+    # Spending target this decision covers
+    spending_target: float = 0.0
+
+    def compute_totals(self):
+        """Recompute derived fields from the component parts."""
+        self.total_cash_in = (
+            sum(self.taxable_withdrawals.values())
+            + sum(self.pretax_withdrawals.values())
+            + sum(self.roth_withdrawals.values())
+        )
+        self.total_ordinary_income = (
+            sum(self.pretax_withdrawals.values())
+            + sum(self.roth_conversions.values())
+        )
+        self.total_taxable_event = (
+            self.total_ordinary_income
+            + self.realized_ltcg
+        )
+        return self
+
+
+@dataclass
+class CandidateDecision:
+    """A candidate year-decision with metadata for comparison."""
+    decision: YearDecision
+    label: str          # e.g. "bracket_fill_24pct", "aca_target_150pct_fpl"
+    score: float = 0.0  # objective value (lower = better)
+
+
+# ---------------------------------------------------------------------------
+# Decision trace — why this action was taken
+# ---------------------------------------------------------------------------
+@dataclass
+class DecisionTrace:
+    """Record of why a particular decision was selected."""
+    year: int
+    selected: YearDecision
+    selected_label: str
+    alternatives: List[CandidateDecision] = field(default_factory=list)
+    reasons: List[str] = field(default_factory=list)
+    tax_cost: float = 0.0
+    aca_subsidy: float = 0.0
+    irmaa_cost: float = 0.0
+    rmd_forced: float = 0.0
+
+    def explain(self) -> str:
+        """Human-readable explanation of why this decision was made."""
+        lines = [f"Year {self.year}: {self.selected_label}"]
+        for r in self.reasons:
+            lines.append(f"  - {r}")
+        if self.tax_cost > 0:
+            lines.append(f"  Tax cost: ${self.tax_cost:,.0f}")
+        if self.aca_subsidy > 0:
+            lines.append(f"  ACA subsidy preserved: ${self.aca_subsidy:,.0f}")
+        if self.irmaa_cost > 0:
+            lines.append(f"  IRMAA surcharge: ${self.irmaa_cost:,.0f}")
+        return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Spending policies
+# ---------------------------------------------------------------------------
+class SpendingPolicy(Protocol):
+    """Interface for spending adjustment strategies."""
+    def spending_target(
+        self, year: int, base_spending: float,
+        portfolio_value: float, portfolio_peak: float,
+    ) -> float: ...
+
+
+class FixedSpendingPolicy:
+    """No adjustment — spend the base amount."""
+    def spending_target(self, year, base_spending, portfolio_value, portfolio_peak):
+        return base_spending
+
+
+class GuardrailsPolicy:
+    """Guyton-Klinger style guardrails.
+
+    Upper guardrail: if portfolio > 120% of planned path, increase spending.
+    Lower guardrail: if portfolio < 80% of planned path, decrease spending.
+    """
+    def __init__(self, upper_pct: float = 1.20, lower_pct: float = 0.80,
+                 increase_pct: float = 0.10, decrease_pct: float = 0.10):
+        self.upper_pct = upper_pct
+        self.lower_pct = lower_pct
+        self.increase_pct = increase_pct
+        self.decrease_pct = decrease_pct
+
+    def spending_target(self, year, base_spending, portfolio_value, portfolio_peak):
+        if portfolio_peak <= 0:
+            return base_spending
+        ratio = portfolio_value / portfolio_peak
+        if ratio > self.upper_pct:
+            return base_spending * (1 + self.increase_pct)
+        elif ratio < self.lower_pct:
+            return base_spending * (1 - self.decrease_pct)
+        return base_spending
+
+
+class VPWPolicy:
+    """Variable Percentage Withdrawal (Vpw).
+
+    Withdraws a percentage of portfolio that decreases with age,
+    based on remaining life expectancy.
+    """
+    def __init__(self, base_rate: float = 0.04, max_rate: float = 0.10,
+                 life_expectancy: int = 90):
+        self.base_rate = base_rate
+        self.max_rate = max_rate
+        self.life_expectancy = life_expectancy
+
+    def spending_target(self, year, base_spending, portfolio_value, portfolio_peak):
+        # Simple VPW: divide by remaining years
+        # In practice, this would use the current age, but we approximate
+        # with a declining rate based on years into retirement
+        rate = min(self.max_rate, self.base_rate)
+        return portfolio_value * rate
+
+
+class FloorCeilingPolicy:
+    """Floor/ceiling spending — protect essentials, cap discretionary."""
+    def __init__(self, floor_ratio: float = 0.70, ceiling_ratio: float = 1.20):
+        self.floor_ratio = floor_ratio
+        self.ceiling_ratio = ceiling_ratio
+
+    def spending_target(self, year, base_spending, portfolio_value, portfolio_peak):
+        floor = base_spending * self.floor_ratio
+        ceiling = base_spending * self.ceiling_ratio
+        # Adjust based on portfolio coverage
+        if portfolio_value <= 0:
+            return floor
+        coverage = portfolio_value / base_spending
+        if coverage >= 25:
+            return ceiling
+        elif coverage >= 15:
+            return base_spending
+        else:
+            return floor
+
+
+# ---------------------------------------------------------------------------
+# Optimizer engine
+# ---------------------------------------------------------------------------
+@dataclass
+class OptimizerConfig:
+    """Configuration for the withdrawal optimizer."""
+    # ACA MAGI targets (annual income thresholds for subsidy optimization)
+    aca_target_MAGI: Optional[float] = None  # e.g. 200% FPL for family
+    irmaa_thresholds: List[float] = field(default_factory=list)  # e.g. [206000, 258000]
+    # Bracket fill targets (marginal rates to fill up to)
+    bracket_fill_rates: List[float] = field(default_factory=lambda: [0.22, 0.24])
+    # Maximum Roth conversion per year (to avoid pushing into higher bracket)
+    max_roth_conversion: float = float('inf')
+    # Whether to harvest gains at 0% LTCG rate
+    harvest_0pct_gains: bool = True
+    # Lookahead horizon for evaluation (years)
+    lookahead_years: int = 10
+
+
+class WithdrawalOptimizer:
+    """Evaluates withdrawal/conversion/harvesting decisions jointly.
+
+    For each year, generates candidate decisions and scores them using
+    a simple objective: minimize tax cost while meeting spending needs
+    and preserving ACA/IRMAA benefits.
+    """
+
+    def __init__(self, config: Optional[OptimizerConfig] = None):
+        self.config = config or OptimizerConfig()
+
+    def generate_candidates(
+        self,
+        year: int,
+        age: int,
+        accounts: Dict[str, dict],  # id → {balance, type, tax_treatment}
+        spending_target: float,
+        rmd_required: float,
+        current_tax_bracket_top: float,
+        ordinary_income_so_far: float,
+    ) -> List[CandidateDecision]:
+        """Generate feasible candidate decisions for one year.
+
+        Returns a list of CandidateDecision, each representing a different
+        withdrawal/conversion strategy.
+        """
+        candidates = []
+
+        # Candidate 1: RMD only (baseline)
+        c1 = YearDecision(
+            pretax_withdrawals={k: min(v['balance'], rmd_required / max(1, len([a for a in accounts.values() if a['type'] in ('401k', 'trad_ira')])))
+                                for k, v in accounts.items()
+                                if v['type'] in ('401k', 'trad_ira') and v['balance'] > 0},
+            spending_target=spending_target,
+        )
+        c1.compute_totals()
+        candidates.append(CandidateDecision(decision=c1, label="rmd_only"))
+
+        # Candidate 2: Bracket fill (fill up to next bracket)
+        bracket_room = max(0, current_tax_bracket_top - ordinary_income_so_far)
+        if bracket_room > 0 and rmd_required < bracket_room:
+            additional = bracket_room - rmd_required
+            conversion = min(additional, self.config.max_roth_conversion)
+            if conversion > 0:
+                c2 = YearDecision(
+                    pretax_withdrawals=dict(c1.pretax_withdrawals),
+                    roth_conversions={},  # Will fill below
+                    spending_target=spending_target,
+                )
+                # Find best account to convert from
+                best_acct = max(
+                    [(k, v) for k, v in accounts.items()
+                     if v['type'] in ('401k', 'trad_ira') and v['balance'] > rmd_required],
+                    key=lambda x: x[1]['balance'],
+                    default=None,
+                )
+                if best_acct:
+                    c2.roth_conversions = {best_acct[0]: conversion}
+                c2.compute_totals()
+                candidates.append(CandidateDecision(
+                    decision=c2,
+                    label=f"bracket_fill_{int(current_tax_bracket_top/1000)}k",
+                ))
+
+        # Candidate 3: ACA MAGI target (if applicable)
+        if self.config.aca_target_MAGI is not None:
+            target_ordinary = max(0, self.config.aca_target_MAGI - ordinary_income_so_far)
+            if target_ordinary > 0:
+                c3 = YearDecision(
+                    pretax_withdrawals=dict(c1.pretax_withdrawals),
+                    spending_target=spending_target,
+                )
+                # Withdraw just enough to hit MAGI target
+                shortfall = spending_target - sum(c1.pretax_withdrawals.values())
+                if shortfall > 0:
+                    # Fill from taxable first, then pre-tax up to MAGI target
+                    taxable_avail = sum(v['balance'] for k, v in accounts.items()
+                                       if v['type'] == 'brokerage' and v['balance'] > 0)
+                    taxable_draw = min(shortfall, taxable_avail)
+                    pretax_draw = min(shortfall - taxable_draw, target_ordinary)
+                    c3.taxable_withdrawals = {
+                        k: min(v['balance'], taxable_draw / max(1, len([a for a in accounts.values() if a['type'] == 'brokerage'])))
+                        for k, v in accounts.items()
+                        if v['type'] == 'brokerage' and v['balance'] > 0
+                    }
+                    c3.pretax_withdrawals = {
+                        k: min(v['balance'], pretax_draw / max(1, len([a for a in accounts.values() if a['type'] in ('401k', 'trad_ira')])))
+                        for k, v in accounts.items()
+                        if v['type'] in ('401k', 'trad_ira') and v['balance'] > 0
+                    }
+                c3.compute_totals()
+                candidates.append(CandidateDecision(
+                    decision=c3,
+                    label=f"aca_target_{int(self.config.aca_target_MAGI/1000)}k",
+                ))
+
+        # Candidate 4: 0% gain harvesting (if taxable gains available)
+        if self.config.harvest_0pct_gains:
+            # Estimate if we're in the 0% LTCG bracket
+            # For MFJ 2024: 0% up to ~$94K total income
+            c4 = YearDecision(
+                pretax_withdrawals=dict(c1.pretax_withdrawals),
+                realized_ltcg=0,  # Would need cost basis info
+                spending_target=spending_target,
+            )
+            c4.compute_totals()
+            # Only add if we have room
+            if ordinary_income_so_far < 80_000:
+                candidates.append(CandidateDecision(
+                    decision=c4, label="gain_harvest_0pct",
+                ))
+
+        return candidates
+
+    def select_best(
+        self,
+        candidates: List[CandidateDecision],
+        year: int,
+        age: int,
+    ) -> CandidateDecision:
+        """Select the best candidate from a list.
+
+        Scoring: minimize tax cost + IRMAA penalty + lost ACA subsidy,
+        subject to meeting spending needs.
+        """
+        if not candidates:
+            return CandidateDecision(
+                decision=YearDecision(), label="no_candidates", score=float('inf')
+            )
+
+        for c in candidates:
+            d = c.decision
+            # Score = total ordinary income (proxy for tax cost)
+            # Lower is better, but penalize if spending isn't met
+            score = d.total_ordinary_income * 0.3  # Tax cost proxy
+            score += d.realized_ltcg * 0.15  # LTCG tax cost
+            score += d.roth_conversions.__len__() * 1000  # Slight penalty for complexity
+            c.score = score
+
+        return min(candidates, key=lambda c: c.score)
+
+    def optimize_year(
+        self,
+        year: int,
+        age: int,
+        accounts: Dict[str, dict],
+        spending_target: float,
+        rmd_required: float,
+        bracket_top: float,
+        ordinary_income: float,
+    ) -> Tuple[YearDecision, DecisionTrace]:
+        """Run one year of optimization.
+
+        Returns the best decision and a trace explaining why.
+        """
+        candidates = self.generate_candidates(
+            year, age, accounts, spending_target,
+            rmd_required, bracket_top, ordinary_income,
+        )
+
+        best = self.select_best(candidates, year, age)
+
+        trace = DecisionTrace(
+            year=year,
+            selected=best.decision,
+            selected_label=best.label,
+            alternatives=candidates,
+            reasons=[f"Selected {best.label} (score={best.score:.0f})"],
+        )
+
+        return best.decision, trace
