@@ -96,3 +96,9 @@ from .sim_integration import (
     ContributionLimits, get_contribution_limits,
     calculate_401k_limit, calculate_ira_limit, calculate_hsa_limit,
 )
+from .tech_comp import (
+    ESPPGrant, ESPPDisposition, calculate_espp_purchase_price,
+    calculate_espp_income, simulate_espp_period,
+    NQSOGrant, NQSOExercise, exercise_nqso, calculate_nqso_spread_tax,
+    MegaBackdoorRoth, AfterTaxAccount,
+)
