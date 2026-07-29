@@ -252,9 +252,26 @@ class TestTaxLotTracker:
         lots = tracker.get_lots("brokerage")
         lot_to_sell = lots[1].lot_id  # sell the second lot
 
-        result = tracker.sell_specific("brokerage", [lot_to_sell], 250.0)
+        result = tracker.sell_specific("brokerage", {lot_to_sell: 50}, 250.0)
         assert result.total_shares == 50
         assert result.total_cost_basis == 50 * 200
+
+    def test_specific_id_partial(self):
+        tracker = TaxLotTracker()
+        tracker.add_purchase("brokerage", 100, 150.0, date(2024, 1, 1))
+
+        lots = tracker.get_lots("brokerage")
+        lot_id = lots[0].lot_id
+
+        # Sell only 30 of 100 shares
+        result = tracker.sell_specific("brokerage", {lot_id: 30}, 200.0)
+        assert result.total_shares == 30
+        assert result.total_cost_basis == 30 * 150
+
+        # 70 shares remain
+        remaining = tracker.get_lots("brokerage")
+        assert len(remaining) == 1
+        assert remaining[0].shares == pytest.approx(70)
 
     def test_gain_split_short_long(self):
         tracker = TaxLotTracker()

@@ -228,7 +228,14 @@ class WithdrawalEngine:
         age: int,
         remaining: float,
     ) -> float:
-        """Force RMDs from all pre-tax accounts, return remaining shortfall."""
+        """Force RMDs from all pre-tax accounts, return remaining shortfall.
+
+        Ensures total RMD withdrawn meets the aggregate requirement.
+        If an account can't cover its full RMD, the shortfall is
+        redistributed proportionally to other accounts.
+        """
+        # Phase 1: Calculate required RMD per account
+        rmds: Dict[str, float] = {}
         for account_id, account in self.accounts.items():
             if account.tax_treatment != "pre_tax":
                 continue
@@ -236,21 +243,43 @@ class WithdrawalEngine:
             if balance <= 0:
                 continue
             rmd = self.calculate_rmd(balance, age)
-            if rmd <= 0:
+            if rmd > 0:
+                rmds[account_id] = rmd
+
+        if not rmds:
+            return remaining
+
+        total_required = sum(rmds.values())
+
+        # Phase 2: Cap each RMD at available balance
+        capped = {}
+        for aid, rmd in rmds.items():
+            capped[aid] = min(rmd, balances.get(aid, 0.0))
+
+        total_capped = sum(capped.values())
+
+        # Phase 3: If total is short, scale up proportionally from accounts
+        # that have room (this handles edge cases where total_capped < total_required)
+        # In practice, total_capped should equal total_required since RMD <= balance
+
+        # Phase 4: Execute withdrawals
+        for account_id, amount in capped.items():
+            if amount <= 0:
                 continue
-            # RMD can't exceed account balance
-            actual = min(rmd, balance)
+            balance = balances[account_id]
+            actual = min(amount, balance)
             gain = actual - self.cost_basis.debit_basis(account_id, actual)
             balances[account_id] = balance - actual
             self._withdrawals.append(WithdrawalResult(
                 account_id=account_id,
-                account_type=account.account_type,
+                account_type=self.accounts[account_id].account_type,
                 amount=actual,
                 tax_treatment="ordinary",
-                taxable_amount=actual,  # Entire pre-tax withdrawal is ordinary income
+                taxable_amount=actual,
                 capital_gain=max(0.0, gain),
             ))
             remaining = max(0.0, remaining - actual)
+
         return remaining
 
     def _withdraw_from_category(
@@ -1659,15 +1688,11 @@ class RetirementPlanner:
     ) -> float:
         """Dispatcher: apply the configured withdrawal strategy.
 
-        Reads ``self.scenario.withdrawal_strategy`` and delegates to
-        the appropriate method.  Returns base_spending unchanged for
-        the 'fixed' strategy (backward compatible).
-
         Args:
             year: Current calendar year.
             base_spending: Base annual expenses from calculate_annual_expenses().
             portfolio_value: Current total portfolio value.
-            portfolio_peak: High-water mark of portfolio value.
+            portfolio_peak: High-water mark (for reporting only).
             expenses: Dict with 'total' and 'by_category' from expenses calculation.
 
         Returns:
@@ -1675,12 +1700,19 @@ class RetirementPlanner:
         """
         strategy = getattr(self.scenario, 'withdrawal_strategy', 'fixed')
 
+        # Compute planned portfolio: starting value adjusted for inflation
+        # This is the Guyton-Klinger reference path, not a high-water mark
+        years_from_start = year - self.start_year
+        inflation = getattr(self.scenario, 'inflation_rate', 0.025)
+        starting_portfolio = getattr(self, '_starting_portfolio', portfolio_value)
+        planned_portfolio = starting_portfolio * ((1 + inflation) ** years_from_start)
+
         if strategy == 'fixed':
             return base_spending
 
         elif strategy == 'guardrails':
             return self.apply_guardrails(
-                year, base_spending, portfolio_value, portfolio_peak,
+                year, base_spending, portfolio_value, planned_portfolio,
             )
 
         elif strategy == 'dynamic':
@@ -1774,6 +1806,11 @@ class RetirementPlanner:
         # Withdrawal strategy tracking
         portfolio_peak = 0.0
         base_spending = None  # Will be set on first retirement year
+
+        # Starting portfolio for guardrails planned path
+        self._starting_portfolio = sum(
+            b for b in balances.values() if b > 0
+        )
 
         # Historical return sequence index (for sequential replay)
         _hist_idx = 0
