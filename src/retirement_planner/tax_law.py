@@ -648,16 +648,26 @@ def _inflate_law(base: TaxLawVersion, year: int, factor: float) -> TaxLawVersion
 # ---------------------------------------------------------------------------
 # Tax calculation functions (stateless, law-parameterized)
 # ---------------------------------------------------------------------------
-def bracket_tax(taxable_income: float, brackets: List[Bracket]) -> float:
-    """Compute tax from a list of (upper_limit, rate) brackets."""
+def bracket_tax(taxable_income: float, brackets) -> float:
+    """Compute tax from brackets.
+
+    Accepts either:
+    - List[Bracket] (from tax_law.py)
+    - List[Tuple[float, float]] (legacy format: (upper_limit, rate))
+    """
     tax = 0.0
     prev = 0.0
     for b in brackets:
         if taxable_income <= prev:
             break
-        in_bracket = min(taxable_income, b.upper) - prev
-        tax += in_bracket * b.rate
-        prev = b.upper
+        # Handle both Bracket objects and tuples
+        if isinstance(b, tuple):
+            upper, rate = b
+        else:
+            upper, rate = b.upper, b.rate
+        in_bracket = min(taxable_income, upper) - prev
+        tax += in_bracket * rate
+        prev = upper
     return tax
 
 
