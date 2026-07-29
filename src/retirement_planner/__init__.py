@@ -76,3 +76,8 @@ from .household import (
     HealthcarePhase, DEFAULT_HEALTHCARE_PHASES, calculate_healthcare_cost,
     SpendingPhaseProfile, HouseholdState,
 )
+from .explain import (
+    TaxTrace, build_tax_trace, ThresholdWarning, check_thresholds,
+    ReproducibilityMetadata, ScenarioDiff, compare_scenarios,
+    ValidationResult, validate_projection,
+)
