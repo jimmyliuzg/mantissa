@@ -1922,16 +1922,12 @@ class RetirementPlanner:
                 year, taxable_income, scenario_name,
                 inflation_rate=inflation_rate,
                 years_from_base=years_from_base)
-
-            # --- Step 7b: NIIT (Net Investment Income Tax) ---
-            investment_income = capital_gains
-            magi = ordinary + capital_gains  # MAGI approximation
-            niit = self.calculate_niit(investment_income, magi)
-            taxes += niit
+            # NIIT is already included in calculate_taxes() via tax_law
 
             total_taxes += taxes
 
             # Record this year's MAGI for future IRMAA lookback
+            magi = ordinary + capital_gains
             magi_history[year] = magi
 
             # --- Step 7c: Allocate surplus savings into accounts ---
