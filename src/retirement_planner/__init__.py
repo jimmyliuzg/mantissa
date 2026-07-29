@@ -57,3 +57,7 @@ from .tax_law import (
     calculate_aca_subsidy, calculate_estate_tax, calculate_child_tax_credit,
     calculate_qcd, determine_filing_status,
 )
+from .monthly_events import (
+    MonthlyEvent, calculate_monthly_aca_subsidy, calculate_irmaa_assessment,
+    calculate_rmd_events, process_year_events,
+)
