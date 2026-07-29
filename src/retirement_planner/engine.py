@@ -1198,6 +1198,8 @@ class RetirementPlanner:
         age: float = 0.0,
         ira_balance: float = 0.0,
         charitably_inclined: bool = False,
+        # Phase 1d: filing status override
+        filing_status=None,
     ) -> float:
         """Calculate federal + CA state taxes using versioned tax law.
 
@@ -1214,8 +1216,11 @@ class RetirementPlanner:
             fallback_inflation=inflation_rate if inflation_rate > 0 else 0.025,
         )
 
-        # Determine filing status (simplified — MFJ for now)
-        status = FilingStatus.MFJ
+        # Determine filing status
+        if filing_status is not None:
+            status = filing_status
+        else:
+            status = FilingStatus.MFJ
 
         # ---- QCD reduces AGI before deductions ----
         from .tax_law import calculate_qcd
