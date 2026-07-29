@@ -66,3 +66,7 @@ from .optimizer import (
     WithdrawalOptimizer, OptimizerConfig,
     FixedSpendingPolicy, GuardrailsPolicy, VPWPolicy, FloorCeilingPolicy,
 )
+from .portfolio import (
+    AssetClass, DEFAULT_ASSET_CLASSES, CapitalMarketModel, MarketYear,
+    BondTentPolicy, STRESS_SCENARIOS, optimize_asset_location, rebalance_portfolio,
+)
