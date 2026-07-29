@@ -102,3 +102,8 @@ from .tech_comp import (
     NQSOGrant, NQSOExercise, exercise_nqso, calculate_nqso_spread_tax,
     MegaBackdoorRoth, AfterTaxAccount,
 )
+from .ltc_solver import (
+    LTCConfig, LTCEvent, simulate_ltc_events, calculate_ltc_annual_cost,
+    ltc_probability_by_age, SolverResult, reverse_solve,
+    solve_retirement_age, solve_savings_rate, solve_spending,
+)
