@@ -1190,19 +1190,19 @@ class RetirementPlanner:
         scenario: str = "mean",
         inflation_rate: float = 0.0,
         years_from_base: int = 0,
+        # New parameters for Phase 1c
+        salt_paid: float = 0.0,
+        charitable_deductions: float = 0.0,
+        qcd_amount: float = 0.0,
+        num_children: int = 0,
+        age: float = 0.0,
+        ira_balance: float = 0.0,
+        charitably_inclined: bool = False,
     ) -> float:
         """Calculate federal + CA state taxes using versioned tax law.
 
-        Args:
-            year: Calendar year.
-            income: TaxableIncome object with ordinary, capital_gains,
-                    and tax_free fields populated.
-            scenario: Economic scenario (reserved for future use).
-            inflation_rate: Annual inflation rate for bracket indexing.
-            years_from_base: Years since the 2024 base year.
-
-        Returns:
-            Total tax liability (federal + state).
+        Now includes: NIIT, AMT, SALT cap, QCD, child tax credit,
+        and itemized vs standard deduction optimization.
         """
         from .tax_law import TaxLawRegistry, FilingStatus, bracket_tax
 
@@ -1217,11 +1217,23 @@ class RetirementPlanner:
         # Determine filing status (simplified — MFJ for now)
         status = FilingStatus.MFJ
 
-        # Standard deduction from law
+        # ---- QCD reduces AGI before deductions ----
+        from .tax_law import calculate_qcd
+        actual_qcd = calculate_qcd(ira_balance, age, charitably_inclined, law)
+        # QCD is excluded from AGI (not a deduction, just not counted as income)
+        # For simplicity, we reduce ordinary income by QCD amount
+        ordinary_for_tax = max(0.0, income.ordinary - actual_qcd)
+
+        # ---- Standard vs itemized deduction ----
         standard_deduction = law.standard_deduction.get(status, 29_200)
+        # SALT cap
+        salt_cap = law.salt_cap if law.salt_cap is not None else float('inf')
+        salt_deduction = min(salt_paid, salt_cap)
+        itemized = salt_deduction + charitable_deductions
+        deduction = max(standard_deduction, itemized)
 
         # ---- Federal ordinary income tax ----
-        ordinary_after_deduction = max(0.0, income.ordinary - standard_deduction)
+        ordinary_after_deduction = max(0.0, ordinary_for_tax - deduction)
         fed_brackets = law.federal_brackets.get(status, [])
         federal_ordinary = bracket_tax(ordinary_after_deduction, fed_brackets)
 
@@ -1252,18 +1264,23 @@ class RetirementPlanner:
 
         # ---- NIIT (Net Investment Income Tax) ----
         from .tax_law import calculate_niit
-        magi = income.ordinary + income.capital_gains
+        magi = ordinary_for_tax + income.capital_gains
         niit = calculate_niit(income.capital_gains, magi, law, status)
         federal_tax += niit
 
         # ---- AMT (Alternative Minimum Tax) ----
         from .tax_law import calculate_amt
-        amt = calculate_amt(federal_tax, income.ordinary, income.capital_gains, law, status)
+        amt = calculate_amt(federal_tax, ordinary_for_tax, income.capital_gains, law, status)
         federal_tax += amt
 
+        # ---- Child Tax Credit ----
+        from .tax_law import calculate_child_tax_credit
+        ctc = calculate_child_tax_credit(num_children, magi, law, status)
+        federal_tax = max(0.0, federal_tax - ctc)
+
         # ---- California state tax (all ordinary — CA taxes LTCG as ordinary) ----
-        ca_total = income.ordinary + income.capital_gains
-        ca_taxable = max(0.0, ca_total - standard_deduction)
+        ca_total = ordinary_for_tax + income.capital_gains
+        ca_taxable = max(0.0, ca_total - deduction)  # CA uses same standard deduction
         ca_brackets = law.ca_brackets
         ca_tax = bracket_tax(ca_taxable, ca_brackets)
 
