@@ -3,15 +3,19 @@ from datetime import date
 
 import pytest
 
-from retirement_planner.engine import (
-    RetirementPlanner,
-    _bracket_tax,
-    _CA_BRACKETS,
-    _FEDERAL_BRACKETS,
+from retirement_planner.engine import RetirementPlanner
+from retirement_planner.tax_law import (
+    TaxLawRegistry, FilingStatus, bracket_tax,
 )
 from retirement_planner.models import (
     EconomicAssumptions, Person, Scenario, TaxableIncome,
 )
+
+# Get 2024 brackets from registry
+_registry = TaxLawRegistry()
+_law_2024 = _registry.law_for_year(2024)
+_FEDERAL_BRACKETS_TUPLE = [(b.upper, b.rate) for b in _law_2024.federal_brackets[FilingStatus.MFJ]]
+_CA_BRACKETS_TUPLE = [(b.upper, b.rate) for b in _law_2024.ca_brackets]
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +97,7 @@ def test_federal_mfj_below_standard_deduction(planner):
 
 def test_federal_mfj_bracket_math_only():
     """_bracket_tax on MFJ schedule: $70,800 taxable → $8,032."""
-    tax = _bracket_tax(70_800, _FEDERAL_BRACKETS)
+    tax = bracket_tax(70_800, _FEDERAL_BRACKETS_TUPLE)
     assert tax == pytest.approx(8_032.00, abs=0.01)
 
 
@@ -107,14 +111,14 @@ def test_federal_single_100k():
     = 1,160 + 4,266 + 8,415 = 13,841
     """
     taxable = 100_000 - _SINGLE_STD_DEDUCTION
-    tax = _bracket_tax(taxable, _SINGLE_BRACKETS)
+    tax = bracket_tax(taxable, _SINGLE_BRACKETS)
     assert tax == pytest.approx(13_841.00, abs=0.01)
 
 
 def test_federal_single_low_income():
     """$20,000 income, Single → $5,400 taxable, all in 10% bracket."""
     taxable = 20_000 - _SINGLE_STD_DEDUCTION
-    tax = _bracket_tax(taxable, _SINGLE_BRACKETS)
+    tax = bracket_tax(taxable, _SINGLE_BRACKETS)
     assert tax == pytest.approx(540.00, abs=0.01)
 
 
@@ -127,7 +131,7 @@ def test_ca_tax_100k():
     20,824@1% + 28,544@2% + 21,432@4%
     = 208.24 + 570.88 + 857.28 = 1,636.40
     """
-    tax = _bracket_tax(70_800, _CA_BRACKETS)
+    tax = bracket_tax(70_800, _CA_BRACKETS_TUPLE)
     assert tax == pytest.approx(1_636.40, abs=0.01)
 
 
@@ -136,9 +140,9 @@ def test_ca_tax_100k():
 # ---------------------------------------------------------------------------
 def test_marginal_rate_at_bracket_boundary():
     """Crossing the $94,300 MFJ boundary: 12% below, 22% above."""
-    at_boundary = _bracket_tax(94_300, _FEDERAL_BRACKETS)
-    just_below = _bracket_tax(94_299, _FEDERAL_BRACKETS)
-    just_above = _bracket_tax(94_301, _FEDERAL_BRACKETS)
+    at_boundary = bracket_tax(94_300, _FEDERAL_BRACKETS_TUPLE)
+    just_below = bracket_tax(94_299, _FEDERAL_BRACKETS_TUPLE)
+    just_above = bracket_tax(94_301, _FEDERAL_BRACKETS_TUPLE)
 
     assert at_boundary - just_below == pytest.approx(0.12, abs=1e-9)
     assert just_above - at_boundary == pytest.approx(0.22, abs=1e-9)
@@ -146,9 +150,9 @@ def test_marginal_rate_at_bracket_boundary():
 
 def test_marginal_rate_first_boundary():
     """Crossing $23,200: 10% below, 12% above."""
-    at = _bracket_tax(23_200, _FEDERAL_BRACKETS)
-    assert at - _bracket_tax(23_199, _FEDERAL_BRACKETS) == pytest.approx(0.10)
-    assert _bracket_tax(23_201, _FEDERAL_BRACKETS) - at == pytest.approx(0.12)
+    at = bracket_tax(23_200, _FEDERAL_BRACKETS_TUPLE)
+    assert at - bracket_tax(23_199, _FEDERAL_BRACKETS_TUPLE) == pytest.approx(0.10)
+    assert bracket_tax(23_201, _FEDERAL_BRACKETS_TUPLE) - at == pytest.approx(0.12)
 
 
 # ---------------------------------------------------------------------------

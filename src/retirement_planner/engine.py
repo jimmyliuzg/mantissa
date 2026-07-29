@@ -345,62 +345,7 @@ class WithdrawalEngine:
 
 
 # ---------------------------------------------------------------------------
-# Tax calculation with income-type awareness
-# ---------------------------------------------------------------------------
-def _indexed_brackets(brackets, factor):
-    """Return a new bracket list with limits scaled by *factor*."""
-    if factor == 1.0:
-        return brackets
-    return [(limit * factor, rate) for limit, rate in brackets]
-
-
-def _bracket_tax(taxable_income: float, brackets: List[Tuple[float, float]]) -> float:
-    """Compute tax from a list of (upper_limit, rate) brackets."""
-    tax = 0.0
-    prev_limit = 0.0
-    for limit, rate in brackets:
-        if taxable_income <= prev_limit:
-            break
-        taxable_in_bracket = min(taxable_income, limit) - prev_limit
-        tax += taxable_in_bracket * rate
-        prev_limit = limit
-    return tax
-
-
-# 2024 MFJ ordinary income brackets
-_FEDERAL_BRACKETS: List[Tuple[float, float]] = [
-    (23_200, 0.10),
-    (94_300, 0.12),
-    (201_050, 0.22),
-    (383_900, 0.24),
-    (487_450, 0.32),
-    (731_200, 0.35),
-    (float('inf'), 0.37),
-]
-
-# 2024 long-term capital gains brackets (MFJ)
-_LTCG_BRACKETS: List[Tuple[float, float]] = [
-    (94_050, 0.00),
-    (583_750, 0.15),
-    (float('inf'), 0.20),
-]
-
-# California 2024 MFJ brackets
-_CA_BRACKETS: List[Tuple[float, float]] = [
-    (20_824, 0.01),
-    (49_368, 0.02),
-    (77_918, 0.04),
-    (108_152, 0.06),
-    (136_700, 0.08),
-    (698_274, 0.093),
-    (837_922, 0.103),
-    (1_396_546, 0.113),
-    (1_666_074, 0.123),
-    (2_732_666, 0.133),
-    (float('inf'), 0.143),
-]
-
-
+# Tax calculation — delegates to tax_law.py for versioned brackets
 # ---------------------------------------------------------------------------
 # ACA (Affordable Care Act) subsidy constants — 2024 base year
 # ---------------------------------------------------------------------------
