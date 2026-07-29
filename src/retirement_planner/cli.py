@@ -14,11 +14,7 @@ from .reports import (
 )
 from .pdf_report import generate_pdf_report
 from .sensitivity import SensitivityAnalyzer
-
-
-def _fmt_money(value: float) -> str:
-    """Format a float as $X,XXX,XXX."""
-    return f"${value:,.0f}"
+from .formatting import fmt_money as _fmt_money
 
 
 def _print_mc_results(mc_results: dict, label: str = "MONTE CARLO RESULTS"):

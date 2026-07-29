@@ -61,18 +61,10 @@ PIE_COLORS = [
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Helpers — use shared formatting
 # ---------------------------------------------------------------------------
-def _fmt_money(value: float) -> str:
-    """Format as $X,XXX,XXX."""
-    if abs(value) >= 1_000_000:
-        return f"${value / 1_000_000:,.1f}M"
-    return f"${value:,.0f}"
-
-
-def _fmt_pct(value: float) -> str:
-    """Format as XX.X%."""
-    return f"{value * 100:.1f}%"
+from .formatting import fmt_money_millions as _fmt_money
+from .formatting import fmt_pct as _fmt_pct
 
 
 def _styles():

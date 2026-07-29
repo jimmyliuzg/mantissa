@@ -4,6 +4,7 @@ Matplotlib-based chart generation for the retirement planner.
 All functions use the non-interactive Agg backend and save figures to disk.
 """
 from typing import Any, Dict, List, Optional
+from .formatting import fmt_money as _fmt_dollar
 
 
 def _require_matplotlib():
@@ -18,11 +19,6 @@ def _require_matplotlib():
             "matplotlib is required for chart generation. "
             "Install it with: pip install matplotlib"
         )
-
-
-def _fmt_dollar(x: float) -> str:
-    """Format a number as $X,XXX."""
-    return f"${x:,.0f}"
 
 
 def plot_net_worth_trajectory(
