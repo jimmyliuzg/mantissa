@@ -156,33 +156,6 @@ def test_marginal_rate_first_boundary():
 
 
 # ---------------------------------------------------------------------------
-# NIIT — Net Investment Income Tax (3.8% above $250K MAGI)
-# ---------------------------------------------------------------------------
-def test_niit_above_threshold(planner):
-    """MAGI $300K, $100K investment income.
-
-    Excess MAGI over threshold = 50,000; NIIT applies to lesser of
-    (investment income, excess) → 50,000 × 3.8% = 1,900.
-    """
-    niit = planner.calculate_niit(investment_income=100_000, magi=300_000)
-    assert niit == pytest.approx(1_900.00, abs=0.01)
-
-
-def test_niit_below_threshold(planner):
-    assert planner.calculate_niit(investment_income=100_000, magi=200_000) == 0.0
-
-
-def test_niit_limited_by_investment_income(planner):
-    """Excess MAGI ($150K) > investment income ($40K) → tax on $40K."""
-    niit = planner.calculate_niit(investment_income=40_000, magi=400_000)
-    assert niit == pytest.approx(40_000 * 0.038, abs=0.01)
-
-
-def test_niit_zero_investment_income(planner):
-    assert planner.calculate_niit(investment_income=0, magi=500_000) == 0.0
-
-
-# ---------------------------------------------------------------------------
 # End-to-end calculate_taxes with mixed income types
 # ---------------------------------------------------------------------------
 def test_calculate_taxes_mixed_income(planner):

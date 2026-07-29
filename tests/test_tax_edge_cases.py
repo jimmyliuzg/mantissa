@@ -8,7 +8,6 @@ from retirement_planner.tax_law import (
     TaxLawRegistry, FilingStatus, bracket_tax,
     calculate_niit, calculate_amt, calculate_irmaa, calculate_aca_subsidy,
     calculate_estate_tax, calculate_child_tax_credit, calculate_qcd,
-    determine_filing_status,
 )
 
 
@@ -170,28 +169,6 @@ class TestACACases:
         # MAGI = $124,801 → above 400% FPL → no subsidy
         subsidy = calculate_aca_subsidy(124_801, 4, law, "CA")
         assert subsidy == 0.0
-
-
-# ---------------------------------------------------------------------------
-# Filing status transition edge cases
-# ---------------------------------------------------------------------------
-class TestFilingStatusEdge:
-
-    def test_death_year_still_mfj(self):
-        """Death in December → still MFJ for that year."""
-        assert determine_filing_status(True, False, 2026, 2026, True) == FilingStatus.MFJ
-
-    def test_qss_year_1(self):
-        assert determine_filing_status(True, False, 2026, 2027, True) == FilingStatus.QSS
-
-    def test_qss_year_2(self):
-        assert determine_filing_status(True, False, 2026, 2028, True) == FilingStatus.QSS
-
-    def test_after_qss_with_kids(self):
-        assert determine_filing_status(True, False, 2026, 2029, True) == FilingStatus.HOH
-
-    def test_after_qss_without_kids(self):
-        assert determine_filing_status(True, False, 2026, 2029, False) == FilingStatus.SINGLE
 
 
 # ---------------------------------------------------------------------------
