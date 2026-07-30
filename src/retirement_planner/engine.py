@@ -1,9 +1,16 @@
 """
 Core retirement planning engine.
 
-Key design decisions (all monetary values are in REAL dollars unless noted):
-- Investment returns are REAL (inflation-adjusted), so expenses stay flat
-  in real terms — no inflation multiplier applied to expenses.
+Key design decisions:
+- The engine supports two monetary conventions via ``MonetaryConvention``:
+  * REAL (default): all simulation values are in constant (base-year)
+    purchasing-power dollars; investment returns are real.
+  * NOMINAL: all values are in year-of-production dollars; expenses,
+    income, and returns inflate with the general price level.
+- Tax brackets are always nominal (they come from tax_law.py as
+  actual IRS values).  In REAL mode the engine temporarily converts
+  real income to nominal before calling calculate_taxes() and converts
+  the resulting tax back to real.
 - Withdrawals follow a tax-efficient order: RMD → taxable → pre-tax → Roth.
 - Taxes distinguish ordinary income, long-term capital gains, and tax-free.
 """
@@ -18,9 +25,10 @@ from .models import (
     Scenario, Person, Account, IncomeStream, Expense,
     Mortgage, Windfall, HousingEvent, RothConversion,
     EconomicAssumptions, SocialSecurity, AgeEvent, TaxableIncome,
-    AssetAllocation, GlidepathConfig,
+    AssetAllocation, GlidepathConfig, MonetaryConvention,
 )
 
+from .monetary import MonetaryPolicy
 from .fixes import process_housing_event, process_roth_conversions, apply_medical_inflation
 from .tax_lots import TaxLotTracker, calculate_121_exclusion
 from .sim_integration import determine_annual_filing_status, calculate_401k_limit
@@ -1800,6 +1808,13 @@ class RetirementPlanner:
         withdrawal_engine = WithdrawalEngine(self.accounts, cost_basis)
         tax_law_registry = TaxLawRegistry()
 
+        # Monetary policy for convention-aware conversion
+        monetary_policy = MonetaryPolicy(
+            convention=self.scenario.monetary_convention,
+            base_year=self.start_year,
+            inflation=inflation_rate,
+        )
+
         # Track MAGI by year for IRMAA 2-year lookback
         magi_history: Dict[int, float] = {}
 
@@ -1876,6 +1891,11 @@ class RetirementPlanner:
                 else:
                     actual_rate = base_rate
 
+                # Convert real return to the active convention
+                actual_rate = monetary_policy.portfolio_return_to_convention(
+                    actual_rate, inflation_rate,
+                )
+
                 growth = balance * actual_rate
                 balances[account_id] = balance + growth
 
@@ -1891,6 +1911,11 @@ class RetirementPlanner:
             income_data = self.calculate_annual_income(year, scenario_name)
             annual_income = income_data["total"]
 
+            # In NOMINAL mode, inflate income to year-of dollars
+            annual_income = monetary_policy.adjust_for_inflation(
+                annual_income, year, inflation_rate,
+            )
+
             # Social Security
             ss_income = 0.0
             if primary_age >= self.scenario.social_security.primary_claiming_age:
@@ -1899,6 +1924,11 @@ class RetirementPlanner:
             if spouse_age >= self.scenario.social_security.spouse_claiming_age:
                 ss_income += self.calculate_social_security(
                     year, self.scenario.spouse)
+            # In NOMINAL mode, inflate SS (it already has COLA but
+            # we need the base-year → year inflation for convention)
+            ss_income = monetary_policy.adjust_for_inflation(
+                ss_income, year, inflation_rate,
+            )
             annual_income += ss_income
             total_ss += ss_income
 
@@ -1906,6 +1936,11 @@ class RetirementPlanner:
             expense_data = self.calculate_annual_expenses(
                 year, scenario_name, mortgage_balances=mortgage_balances)
             annual_expenses = expense_data["total"]
+
+            # In NOMINAL mode, inflate expenses to year-of dollars
+            annual_expenses = monetary_policy.adjust_for_inflation(
+                annual_expenses, year, inflation_rate,
+            )
 
             # Apply medical inflation to healthcare expenses
             medical_extra = apply_medical_inflation(
@@ -2000,25 +2035,48 @@ class RetirementPlanner:
                     tax_free += w.amount
             ordinary += taxable_ss  # Only the taxable portion of SS
 
+            # --- Step 6b: Convert to nominal for tax calculation ---
+            # Tax brackets are always nominal (actual IRS values).
+            # In REAL mode the engine values are in real dollars, so we
+            # must convert to nominal before computing tax, then convert
+            # the resulting tax back to real.
+            tax_ordinary_nominal = monetary_policy.to_nominal_for_tax(
+                ordinary, year, inflation_rate,
+            )
+            tax_cg_nominal = monetary_policy.to_nominal_for_tax(
+                capital_gains, year, inflation_rate,
+            )
+            tax_free_nominal = monetary_policy.to_nominal_for_tax(
+                tax_free, year, inflation_rate,
+            )
+            tax_total_nominal = (tax_ordinary_nominal
+                                 + tax_cg_nominal
+                                 + tax_free_nominal)
+
             total = ordinary + capital_gains + tax_free
-            taxable_income = TaxableIncome(
-                ordinary=ordinary,
-                capital_gains=capital_gains,
-                tax_free=tax_free,
-                total=total,
+            taxable_income_for_tax = TaxableIncome(
+                ordinary=tax_ordinary_nominal,
+                capital_gains=tax_cg_nominal,
+                tax_free=tax_free_nominal,
+                total=tax_total_nominal,
             )
 
             # --- Step 7: Taxes ---
-            taxes = self.calculate_taxes(
-                year, taxable_income, scenario_name,
+            taxes_nominal = self.calculate_taxes(
+                year, taxable_income_for_tax, scenario_name,
                 inflation_rate=inflation_rate,
                 years_from_base=years_from_base)
+            # Convert tax back to the active convention
+            taxes = monetary_policy.from_nominal_after_tax(
+                taxes_nominal, year, inflation_rate,
+            )
             # NIIT is already included in calculate_taxes() via tax_law
 
             total_taxes += taxes
 
             # Record this year's MAGI for future IRMAA lookback
-            magi = ordinary + capital_gains
+            # (MAGI is always nominal for IRS purposes)
+            magi = tax_ordinary_nominal + tax_cg_nominal
             magi_history[year] = magi
 
             # --- Step 7c: Allocate surplus savings into accounts ---
