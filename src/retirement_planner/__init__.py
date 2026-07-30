@@ -32,6 +32,7 @@ from .models import (
     Person, Account, IncomeStream, Expense, Mortgage,
     Windfall, HousingEvent, RothConversion, EconomicAssumptions,
     RSUGrant, RefresherPolicy, Bonus, EquityComp,
+    MonetaryConvention,
 )
 from .engine import RetirementPlanner
 from .simulators import MonteCarloEngine, ScenarioComparator
