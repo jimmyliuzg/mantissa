@@ -1915,20 +1915,35 @@ class RetirementPlanner:
             )
             annual_expenses += medical_extra
 
-            # --- Step 4b: IRMAA Medicare surcharges (age >= 65) ---
-            older_age = max(primary_age, spouse_age)
+            # --- Step 4b: IRMAA Medicare surcharges (per-person) ---
+            # 2-year lookback: use MAGI from 2 years prior
+            lookback_year = year - 2
+            magi_2yr_ago = magi_history.get(lookback_year, 0.0)
+
+            # Count people on Medicare (age >= 65 with Medicare coverage)
+            num_medicare = 0
+            if self.scenario.primary.coverage_at_age(primary_age) == "medicare":
+                num_medicare += 1
+            if self.scenario.spouse.coverage_at_age(spouse_age) == "medicare":
+                num_medicare += 1
+
             irmaa_amount = 0.0
-            if older_age >= 65:
-                # 2-year lookback: use MAGI from 2 years prior
-                lookback_year = year - 2
-                magi_2yr_ago = magi_history.get(lookback_year, 0.0)
-                irmaa_amount = tax_law_irmaa(magi_2yr_ago, law, num_people=2)
+            if num_medicare > 0:
+                # IRS uses combined household MAGI for IRMAA tiers
+                irmaa_amount = tax_law_irmaa(magi_2yr_ago, law, num_people=num_medicare)
                 annual_expenses += irmaa_amount
 
-            # --- Step 4c: ACA subsidy (pre-Medicare, age < 65) ---
-            if younger_age < 65:
+            # --- Step 4c: ACA subsidy (per-person, pre-Medicare) ---
+            # Only people under 65 with ACA coverage count for ACA eligibility
+            aca_family_size = 0
+            if primary_age < 65 and self.scenario.primary.coverage_at_age(primary_age) == "aca":
+                aca_family_size += 1
+            if spouse_age < 65 and self.scenario.spouse.coverage_at_age(spouse_age) == "aca":
+                aca_family_size += 1
+
+            if aca_family_size > 0:
                 aca_subsidy = tax_law_aca(
-                    annual_income, self.scenario.family_size, law, self.scenario.state)
+                    annual_income, aca_family_size, law, self.scenario.state)
                 annual_expenses = max(0.0, annual_expenses - aca_subsidy)
                 total_aca_subsidy += aca_subsidy
 
@@ -2174,11 +2189,17 @@ class RetirementPlanner:
             income = self.calculate_annual_income(year, scenario_name)
             expenses = self.calculate_annual_expenses(year, scenario_name)
 
-            # ACA subsidy (pre-Medicare, age < 65)
+            # ACA subsidy (pre-Medicare, per-person)
+            aca_family_size = 0
+            if primary_age < 65 and self.scenario.primary.coverage_at_age(primary_age) == "aca":
+                aca_family_size += 1
+            if spouse_age < 65 and self.scenario.spouse.coverage_at_age(spouse_age) == "aca":
+                aca_family_size += 1
+
             aca_subsidy = 0.0
-            if younger_age < 65:
+            if aca_family_size > 0:
                 aca_subsidy = self.calculate_aca_subsidy(
-                    income["total"], self.scenario.family_size, self.scenario.state)
+                    income["total"], aca_family_size, self.scenario.state)
 
             # Build TaxableIncome (simplified — all income as ordinary
             # for deterministic projection; real sim handles this properly)

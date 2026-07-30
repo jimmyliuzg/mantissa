@@ -4,7 +4,23 @@ Data models for the retirement planner.
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 from datetime import date
+from enum import Enum
 import json
+
+
+class MonetaryConvention(Enum):
+    """Whether simulation values are expressed in nominal or real dollars.
+
+    NOMINAL — All values are in year-of-production dollars.  Expenses,
+    income, and investment returns inflate with the general price level.
+
+    REAL — All values are in base-year (purchasing-power) dollars.
+    Expenses stay flat in real terms; investment returns are
+    inflation-adjusted.  Taxes are computed by temporarily converting
+    to nominal so that IRS bracket thresholds remain correct.
+    """
+    NOMINAL = "nominal"   # All values in year-of dollars
+    REAL = "real"         # All values in base-year dollars
 
 
 @dataclass
@@ -76,6 +92,20 @@ class Person:
     longevity_age: int = 90
     social_security_benefit: float = 0.0
     ss_claiming_age: int = 67
+    coverage_type: str = "auto"  # "auto", "employer", "aca", "medicare", "none"
+
+    def coverage_at_age(self, age: int) -> str:
+        """Determine healthcare coverage type for this person.
+
+        If coverage_type is "auto", defaults to Medicare when age >= 65,
+        otherwise ACA.  Explicit values ("employer", "aca", "medicare",
+        "none") override the age-based default.
+        """
+        if self.coverage_type != "auto":
+            return self.coverage_type
+        if age >= 65:
+            return "medicare"
+        return "aca"
 
 
 @dataclass
@@ -338,7 +368,10 @@ class Scenario:
     # unless they set contribution_priority explicitly or use the legacy
     # monthly_contribution field.
     savings_order: List[str] = field(default_factory=list)
-    
+    # Monetary convention: NOMINAL (all values in year-of dollars) or
+    # REAL (all values in base-year purchasing-power dollars).
+    monetary_convention: MonetaryConvention = MonetaryConvention.REAL
+
     def to_dict(self) -> dict:
         """Convert to JSON-serializable dict."""
         return {

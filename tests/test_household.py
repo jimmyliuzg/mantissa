@@ -1,4 +1,6 @@
 """Tests for household.py — mortality, survivor, healthcare, spending phases."""
+from datetime import date
+
 import pytest
 from retirement_planner.household import (
     MortalityModel, HouseholdLifetime, sample_household_lifetimes,
@@ -6,6 +8,7 @@ from retirement_planner.household import (
     HealthcarePhase, DEFAULT_HEALTHCARE_PHASES, calculate_healthcare_cost,
     SpendingPhaseProfile, HouseholdState,
 )
+from retirement_planner.models import Person
 
 
 # ---------------------------------------------------------------------------
@@ -213,3 +216,144 @@ class TestHouseholdState:
         s.spouse_age = 70
         s._update_spending_phase()
         assert s.spending_phase == "go_go"
+
+
+# ---------------------------------------------------------------------------
+# Person.coverage_at_age — per-person healthcare coverage
+# ---------------------------------------------------------------------------
+class TestCoverageAtAge:
+
+    def test_auto_medicare_at_65(self):
+        """Auto coverage → Medicare when age >= 65."""
+        p = Person(name="A", birth_date=date(1960, 1, 1),
+                    retirement_date=date(2025, 1, 1))
+        assert p.coverage_at_age(65) == "medicare"
+        assert p.coverage_at_age(70) == "medicare"
+
+    def test_auto_aca_under_65(self):
+        """Auto coverage → ACA when age < 65."""
+        p = Person(name="A", birth_date=date(1970, 1, 1),
+                    retirement_date=date(2035, 1, 1))
+        assert p.coverage_at_age(50) == "aca"
+        assert p.coverage_at_age(64) == "aca"
+
+    def test_explicit_employer_overrides_auto(self):
+        """Explicit 'employer' overrides auto Medicare at age 67."""
+        p = Person(name="A", birth_date=date(1960, 1, 1),
+                    retirement_date=date(2025, 1, 1),
+                    coverage_type="employer")
+        assert p.coverage_at_age(67) == "employer"
+        assert p.coverage_at_age(50) == "employer"
+
+    def test_explicit_medicare_at_young_age(self):
+        """Explicit 'medicare' works even below 65 (e.g. disability)."""
+        p = Person(name="A", birth_date=date(1980, 1, 1),
+                    retirement_date=date(2045, 1, 1),
+                    coverage_type="medicare")
+        assert p.coverage_at_age(50) == "medicare"
+
+    def test_explicit_none(self):
+        """Explicit 'none' means no coverage at any age."""
+        p = Person(name="A", birth_date=date(1970, 1, 1),
+                    retirement_date=date(2035, 1, 1),
+                    coverage_type="none")
+        assert p.coverage_at_age(40) == "none"
+        assert p.coverage_at_age(70) == "none"
+
+    def test_explicit_aca_at_70(self):
+        """Explicit 'aca' keeps ACA even past 65."""
+        p = Person(name="A", birth_date=date(1955, 1, 1),
+                    retirement_date=date(2020, 1, 1),
+                    coverage_type="aca")
+        assert p.coverage_at_age(70) == "aca"
+
+
+# ---------------------------------------------------------------------------
+# Mixed-age couple coverage scenarios
+# ---------------------------------------------------------------------------
+class TestMixedAgeCoverage:
+    """Simulate mixed-age couples to verify per-person IRMAA and ACA."""
+
+    def test_medicare_plus_aca(self):
+        """Person A 67 (Medicare) + Person B 62 (ACA) → correct coverage."""
+        from retirement_planner.engine import RetirementPlanner
+        from retirement_planner.models import (
+            EconomicAssumptions, Scenario,
+        )
+        from datetime import date
+
+        # Person A born 1959 (age 67 in 2026), Person B born 1964 (age 62 in 2026)
+        primary = Person(
+            name="Primary",
+            birth_date=date(1959, 1, 1),
+            retirement_date=date(2024, 1, 1),
+            longevity_age=90,
+        )
+        spouse = Person(
+            name="Spouse",
+            birth_date=date(1964, 1, 1),
+            retirement_date=date(2029, 1, 1),
+            longevity_age=90,
+        )
+        # Both use auto coverage
+        assert primary.coverage_at_age(67) == "medicare"
+        assert spouse.coverage_at_age(62) == "aca"
+
+    def test_employer_overrides_medicare_plus_aca(self):
+        """Person A 67 (employer) + Person B 62 (ACA) → employer overrides."""
+        from datetime import date
+
+        primary = Person(
+            name="Primary",
+            birth_date=date(1959, 1, 1),
+            retirement_date=date(2024, 1, 1),
+            longevity_age=90,
+            coverage_type="employer",
+        )
+        spouse = Person(
+            name="Spouse",
+            birth_date=date(1964, 1, 1),
+            retirement_date=date(2029, 1, 1),
+            longevity_age=90,
+        )
+        # Employer overrides Medicare for primary
+        assert primary.coverage_at_age(67) == "employer"
+        assert spouse.coverage_at_age(62) == "aca"
+
+    def test_both_medicare(self):
+        """Both age >= 65 with auto → both Medicare."""
+        from datetime import date
+
+        primary = Person(
+            name="Primary",
+            birth_date=date(1955, 1, 1),
+            retirement_date=date(2020, 1, 1),
+            longevity_age=90,
+        )
+        spouse = Person(
+            name="Spouse",
+            birth_date=date(1957, 1, 1),
+            retirement_date=date(2022, 1, 1),
+            longevity_age=90,
+        )
+        assert primary.coverage_at_age(71) == "medicare"
+        assert spouse.coverage_at_age(69) == "medicare"
+
+    def test_both_aca(self):
+        """Both under 65 with auto → both ACA."""
+        from datetime import date
+
+        primary = Person(
+            name="Primary",
+            birth_date=date(1970, 1, 1),
+            retirement_date=date(2035, 1, 1),
+            longevity_age=90,
+        )
+        spouse = Person(
+            name="Spouse",
+            birth_date=date(1972, 1, 1),
+            retirement_date=date(2037, 1, 1),
+            longevity_age=90,
+        )
+        assert primary.coverage_at_age(56) == "aca"
+        assert spouse.coverage_at_age(54) == "aca"
