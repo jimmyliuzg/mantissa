@@ -9,6 +9,7 @@ Supports two return-generation methods:
 from typing import Dict, List, Optional
 from itertools import islice, cycle
 import random
+import numpy as np
 
 from .engine import RetirementPlanner
 from .historical_data import HISTORICAL_YEARS, _HISTORICAL_SNP500_VALUES
@@ -29,6 +30,7 @@ class MonteCarloEngine:
         return_volatility: float = 0.15,
         method: str = "gaussian",
         historical_returns: Optional[List[float]] = None,
+        rng=None,
     ) -> Dict:
         """Run one year-by-year simulation.
 
@@ -41,7 +43,7 @@ class MonteCarloEngine:
             # via a thin wrapper that overrides the volatility-based return.
             return self._run_historical_simulation(historical_returns, scenario)
 
-        return self.planner.run_single_simulation(scenario, return_volatility)
+        return self.planner.run_single_simulation(scenario, return_volatility, rng=rng)
 
     def _run_historical_simulation(
         self,
@@ -70,6 +72,7 @@ class MonteCarloEngine:
         scenario: str = "mean",
         return_volatility: float = 0.15,
         method: str = "gaussian",
+        seed: Optional[int] = None,
     ) -> Dict:
         """
         Run Monte Carlo simulation and return statistics.
@@ -85,12 +88,14 @@ class MonteCarloEngine:
             Dictionary with success rate, percentiles, etc.
         """
         results = []
+        rng = np.random.default_rng(seed)
+        historical_rng = random.Random(seed)
 
         if method == "historical":
             num_data_points = len(HISTORICAL_YEARS)
             for _ in range(num_simulations):
                 # Pick a random starting year index into the historical data
-                start_idx = random.randint(0, num_data_points - 1)
+                start_idx = historical_rng.randint(0, num_data_points - 1)
                 # Need enough returns to cover the full simulation horizon
                 # (typically ~60 years from now to longevity age)
                 seq = self._get_return_sequence(start_idx, num_years=100)
@@ -98,12 +103,15 @@ class MonteCarloEngine:
                     scenario=scenario,
                     method="historical",
                     historical_returns=seq,
+                    rng=rng,
                 )
                 results.append(result)
         else:
             # Gaussian method (original behavior)
             for _ in range(num_simulations):
-                result = self.planner.run_single_simulation(scenario, return_volatility)
+                result = self.planner.run_single_simulation(
+                    scenario, return_volatility, rng=rng
+                )
                 results.append(result)
 
         # Calculate statistics

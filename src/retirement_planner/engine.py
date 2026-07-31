@@ -137,9 +137,11 @@ class WithdrawalEngine:
     """
 
     def __init__(self, accounts: Dict[str, Account],
-                 cost_basis: CostBasisTracker):
+                 cost_basis: CostBasisTracker,
+                 tax_lots: Optional[TaxLotTracker] = None):
         self.accounts = accounts
         self.cost_basis = cost_basis
+        self.tax_lots = tax_lots
         self._withdrawals: List[WithdrawalResult] = []
 
     @property
@@ -190,6 +192,7 @@ class WithdrawalEngine:
         year: int,
         primary_age: int,
         spouse_age: int,
+        sale_date: Optional[date] = None,
     ) -> List[WithdrawalResult]:
         """Withdraw from accounts in tax-efficient order until *needed* is met.
 
@@ -198,17 +201,15 @@ class WithdrawalEngine:
         """
         self.clear()
         remaining = needed
-        older_age = max(primary_age, spouse_age)
-
         # --- Step 1: Force RMDs from pre-tax accounts (age 73+) ---
-        if older_age >= RMD_START_AGE:
-            remaining = self._withdraw_rmds(balances, older_age, remaining)
+        remaining = self._withdraw_rmds(balances, primary_age, spouse_age, remaining)
 
         # --- Step 2: Taxable brokerage ---
         remaining = self._withdraw_from_category(
             balances, remaining,
             category_filter=lambda a: a.tax_treatment == "taxable",
             tax_treatment="capital_gains",
+            sale_date=sale_date,
         )
 
         # --- Step 3: Pre-tax (401k, traditional IRA) ---
@@ -233,26 +234,39 @@ class WithdrawalEngine:
     def _withdraw_rmds(
         self,
         balances: Dict[str, float],
-        age: int,
+        primary_age: int,
+        spouse_age: int,
         remaining: float,
     ) -> float:
         """Force RMDs from all pre-tax accounts, return remaining shortfall.
 
-        Ensures total RMD withdrawn meets the aggregate requirement.
-        If an account can't cover its full RMD, the shortfall is
-        redistributed proportionally to other accounts.
+        Calculate RMDs by owner, aggregating traditional IRA balances.
+        Mandatory distributions are separate from spending need; surplus
+        is reinvested into a liquid taxable or checking account.
         """
         # Phase 1: Calculate required RMD per account
-        rmds: Dict[str, float] = {}
+        groups: Dict[tuple, List[Tuple[str, float]]] = {}
         for account_id, account in self.accounts.items():
             if account.tax_treatment != "pre_tax":
                 continue
             balance = balances.get(account_id, 0.0)
             if balance <= 0:
                 continue
-            rmd = self.calculate_rmd(balance, age)
-            if rmd > 0:
-                rmds[account_id] = rmd
+            owner = (account.owner or "primary").lower()
+            owner_age = spouse_age if owner == "spouse" else primary_age
+            if owner_age < RMD_START_AGE:
+                continue
+            group = "ira" if account.account_type in {"trad_ira", "traditional_ira"} else account_id
+            groups.setdefault((owner, group), []).append((account_id, balance))
+
+        rmds: Dict[str, float] = {}
+        for (owner, _group), members in groups.items():
+            age = spouse_age if owner == "spouse" else primary_age
+            total_balance = sum(balance for _, balance in members)
+            total_rmd = self.calculate_rmd(total_balance, age)
+            for aid, balance in members:
+                if total_balance > 0 and total_rmd > 0:
+                    rmds[aid] = total_rmd * balance / total_balance
 
         if not rmds:
             return remaining
@@ -266,11 +280,8 @@ class WithdrawalEngine:
 
         total_capped = sum(capped.values())
 
-        # Phase 3: If total is short, scale up proportionally from accounts
-        # that have room (this handles edge cases where total_capped < total_required)
-        # In practice, total_capped should equal total_required since RMD <= balance
-
         # Phase 4: Execute withdrawals
+        original_need = remaining
         for account_id, amount in capped.items():
             if amount <= 0:
                 continue
@@ -288,6 +299,24 @@ class WithdrawalEngine:
             ))
             remaining = max(0.0, remaining - actual)
 
+        surplus = max(0.0, total_capped - original_need)
+        if surplus > 0:
+            destination = next((aid for aid, account in self.accounts.items()
+                                if account.tax_treatment == "taxable" and account.liquid), None)
+            if destination is None:
+                destination = next((aid for aid, account in self.accounts.items()
+                                    if account.account_type == "checking" and account.liquid), None)
+            if destination is not None:
+                balances[destination] = balances.get(destination, 0.0) + surplus
+                self._withdrawals.append(WithdrawalResult(
+                    account_id=destination,
+                    account_type=self.accounts[destination].account_type,
+                    amount=surplus,
+                    tax_treatment="rmd_reinvested",
+                    taxable_amount=0.0,
+                    capital_gain=0.0,
+                ))
+
         return remaining
 
     def _withdraw_from_category(
@@ -296,6 +325,7 @@ class WithdrawalEngine:
         remaining: float,
         category_filter,
         tax_treatment: str,
+        sale_date: Optional[date] = None,
     ) -> float:
         """Withdraw from accounts matching *category_filter* until remaining is 0."""
         for account_id, account in self.accounts.items():
@@ -313,9 +343,18 @@ class WithdrawalEngine:
             capital_gain = 0.0
             taxable_amount = 0.0
             if tax_treatment == "capital_gains":
-                basis_used = self.cost_basis.debit_basis(account_id, withdraw)
-                capital_gain = max(0.0, withdraw - basis_used)
-                taxable_amount = capital_gain
+                if self.tax_lots is not None and self.tax_lots.total_shares(account_id) > 0:
+                    current_price = balance / self.tax_lots.total_shares(account_id)
+                    liquidation = self.tax_lots.liquidate_with_price(
+                        account_id, withdraw / current_price, current_price,
+                        sale_date=sale_date
+                    )
+                    capital_gain = liquidation.total_gain
+                    taxable_amount = capital_gain
+                else:
+                    basis_used = self.cost_basis.debit_basis(account_id, withdraw)
+                    capital_gain = withdraw - basis_used
+                    taxable_amount = capital_gain
             elif tax_treatment == "ordinary":
                 taxable_amount = withdraw
             # tax_free: taxable_amount stays 0
@@ -387,6 +426,8 @@ class WithdrawalEngine:
             if account.tax_treatment == "taxable":
                 current_basis = self.cost_basis.get_basis(account_id, 0.0)
                 self.cost_basis.set_basis(account_id, current_basis + total)
+                if self.tax_lots is not None:
+                    self.tax_lots.add_purchase(account_id, total, 1.0, date.today())
 
         return contributions
 
@@ -488,6 +529,9 @@ class RetirementPlanner:
                 employer_match_limit=acc_config.get("employer_match_limit", 0.0),
                 contribution_priority=acc_config.get("contribution_priority", 0),
                 annual_contribution_cap=acc_config.get("annual_contribution_cap", 0.0),
+                expense_ratio=acc_config.get("expense_ratio", 0.0),
+                equity_pct=acc_config.get("equity_pct"),
+                owner=acc_config.get("owner", "primary"),
             ))
 
         # Resolve savings allocation priorities:
@@ -822,15 +866,17 @@ class RetirementPlanner:
         Returns: equity_rate * equity_pct + bond_rate * bond_pct,
         minus the account's expense ratio.
 
-        Bond rate: general_inflation + 0.01 (real bond return ≈ 1%
-        above inflation).
-        Equity rate: account.growth_rate (the real equity return).
+        Account growth rates are real rates; convert both asset classes
+        together only when the active convention is NOMINAL.
         """
         rates = self.scenario.economic.get_rate("mean")
         inflation = rates["general_inflation"]
 
-        bond_rate = inflation + 0.01  # Real bond return
-        equity_rate = account.growth_rate  # Real equity return
+        bond_rate = 0.01
+        equity_rate = account.growth_rate
+        if self.scenario.monetary_convention == MonetaryConvention.NOMINAL:
+            bond_rate = (1.0 + bond_rate) * (1.0 + inflation) - 1.0
+            equity_rate = (1.0 + equity_rate) * (1.0 + inflation) - 1.0
 
         gross_rate = (equity_rate * allocation.equity_pct
                       + bond_rate * allocation.bond_pct)
@@ -854,9 +900,19 @@ class RetirementPlanner:
         elif account.growth_rate == 0:
             rate = 0
         else:
-            rate = account.growth_rate
+            owner_age = self._account_owner_age(account, year)
+            allocation = self.get_equity_allocation(owner_age)
+            if account.equity_pct is not None:
+                allocation = AssetAllocation(account.equity_pct, 1.0 - account.equity_pct)
+            rate = self.get_growth_rate_for_allocation(account, allocation)
 
         return account.project_balance(years, rate)
+
+    def _account_owner_age(self, account: Account, year: int) -> int:
+        owner = (account.owner or "primary").lower()
+        spouse_name = self.scenario.spouse.name.lower()
+        person = self.scenario.spouse if owner in {"spouse", spouse_name} else self.scenario.primary
+        return year - person.birth_date.year
 
     def calculate_net_worth(self, year: int, scenario: str = "mean") -> Dict:
         """Calculate net worth at a given year."""
@@ -1779,6 +1835,7 @@ class RetirementPlanner:
         self,
         scenario_name: str = "mean",
         return_volatility: float = 0.15,
+        rng=None,
     ) -> Dict:
         """Run a single year-by-year projection with proper cash flow.
 
@@ -1814,13 +1871,17 @@ class RetirementPlanner:
         # equals current balance (all contributions up to now).
         # A real implementation would track actual contributions.
         cost_basis = CostBasisTracker()
+        tax_lots = TaxLotTracker()
         for account_id, account in self.accounts.items():
             if account.tax_treatment == "taxable":
                 cost_basis.set_basis(account_id, account.balance)
+                # Legacy configs provide aggregate balances, so seed one
+                # basis lot at $1/share and retain the aggregate fallback.
+                tax_lots.add_purchase(account_id, account.balance, 1.0, date.today())
 
         rates = self.scenario.economic.get_rate(scenario_name)
         inflation_rate = rates["general_inflation"]
-        withdrawal_engine = WithdrawalEngine(self.accounts, cost_basis)
+        withdrawal_engine = WithdrawalEngine(self.accounts, cost_basis, tax_lots)
         tax_law_registry = TaxLawRegistry()
 
         # Monetary policy for convention-aware conversion
@@ -1883,7 +1944,9 @@ class RetirementPlanner:
                     base_rate = 0
                 else:
                     # Use equity glidepath if configured
-                    allocation = self.get_equity_allocation(primary_age)
+                    allocation = self.get_equity_allocation(
+                        self._account_owner_age(account, year)
+                    )
                     # Account-level override
                     if account.equity_pct is not None:
                         bond_pct = 1.0 - account.equity_pct
@@ -1902,7 +1965,8 @@ class RetirementPlanner:
                     # Use pre-computed historical return sequence
                     actual_rate = self._historical_return_override[_hist_idx]
                 elif return_volatility > 0:
-                    actual_rate = np.random.normal(base_rate, return_volatility)
+                    generator = rng if rng is not None else np.random.default_rng()
+                    actual_rate = generator.normal(base_rate, return_volatility)
                 else:
                     actual_rate = base_rate
 
@@ -2029,6 +2093,7 @@ class RetirementPlanner:
             if shortfall > 0:
                 withdrawals = withdrawal_engine.execute_withdrawals(
                     shortfall, balances, year, primary_age, spouse_age,
+                    sale_date=date(year, 12, 31),
                 )
 
             # --- Step 6: Build TaxableIncome from all sources ---

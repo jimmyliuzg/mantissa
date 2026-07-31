@@ -1,5 +1,9 @@
 """Mantissa CLI — command-line interface for the retirement planner."""
 import click
+import json
+import csv
+import io
+from pathlib import Path
 from tabulate import tabulate
 
 from .engine import RetirementPlanner
@@ -12,7 +16,7 @@ from .reports import (
     export_csv,
     export_markdown,
 )
-from .pdf_report import generate_pdf_report
+
 from .sensitivity import SensitivityAnalyzer
 from .formatting import fmt_money as _fmt_money
 
@@ -39,6 +43,130 @@ def _print_mc_results(mc_results: dict, label: str = "MONTE CARLO RESULTS"):
 def main():
     """Mantissa — Open-source retirement planner with Monte Carlo simulation."""
     pass
+
+
+def _write_output(content: str, output=None):
+    if output:
+        path = Path(output)
+        if path.exists():
+            raise click.ClickException(f"Refusing to overwrite existing file: {path}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+        click.echo(f"Saved to {path}")
+    else:
+        click.echo(content, nl=not content.endswith("\n"))
+
+
+def _starter_config() -> dict:
+    return {
+        "name": "My Retirement Plan",
+        "description": "Starter Mantissa scenario",
+        "primary": {
+            "name": "Primary Person", "birth_date": "1970-01-01",
+            "retirement_date": "2035-01-01", "longevity_age": 95,
+        },
+        "spouse": {
+            "name": "Spouse", "birth_date": "1970-01-01",
+            "retirement_date": "2035-01-01", "longevity_age": 95,
+        },
+        "economic": {"inflation": 0.025, "medical_inflation": 0.04,
+                      "housing_appreciation": 0.035},
+        "accounts": [], "income_streams": [], "expenses": [], "mortgages": [],
+        "monetary_convention": "real",
+    }
+
+
+@main.command()
+@click.option("--output", "-o", default="my-plan.json", type=click.Path())
+def init(output):
+    """Create a starter scenario configuration."""
+    _write_output(json.dumps(_starter_config(), indent=2) + "\n", output)
+
+
+@main.command()
+@click.option("--config", "-c", required=True, type=click.Path(exists=True))
+def validate(config):
+    """Validate a scenario configuration before simulation."""
+    try:
+        planner = RetirementPlanner.from_config(config)
+    except (KeyError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    if not planner.accounts:
+        click.echo("Warning: configuration has no accounts")
+    click.echo("Configuration is valid")
+
+
+@main.command()
+@click.option("--config", "-c", required=True, type=click.Path(exists=True))
+@click.option("--format", "-f", "fmt", default="table",
+              type=click.Choice(["json", "markdown", "table"]))
+def inspect(config, fmt):
+    """Inspect parsed assumptions and account ownership."""
+    planner = RetirementPlanner.from_config(config)
+    s = planner.scenario
+    data = {
+        "name": s.name,
+        "primary": s.primary.name,
+        "spouse": s.spouse.name,
+        "monetary_convention": s.monetary_convention.value,
+        "accounts": [{"id": a.id, "type": a.account_type,
+                      "tax_treatment": a.tax_treatment, "owner": a.owner,
+                      "balance": a.balance} for a in s.accounts],
+        "income_streams": len(s.income_streams),
+        "expenses": len(s.expenses),
+    }
+    if fmt == "json":
+        click.echo(json.dumps(data, indent=2, default=str))
+    elif fmt == "markdown":
+        click.echo("# Scenario Inspect\n\n" + "\n".join(
+            f"- **{key}:** {value}" for key, value in data.items()))
+    else:
+        click.echo(tabulate([[k, v] for k, v in data.items()],
+                            headers=["Field", "Value"], tablefmt="rounded_grid"))
+
+
+@main.command()
+@click.option("--config", "-c", required=True, type=click.Path(exists=True))
+@click.option("--format", "-f", "fmt", default="table",
+              type=click.Choice(["json", "csv", "markdown", "table"]))
+@click.option("--output", "-o", default=None, type=click.Path())
+def project(config, fmt, output):
+    """Run a deterministic annual projection without Monte Carlo noise."""
+    rows = RetirementPlanner.from_config(config).project_cash_flow()
+    if fmt == "json":
+        content = json.dumps(rows, indent=2, default=str)
+    elif fmt == "csv":
+        if rows:
+            buf = io.StringIO()
+            writer = csv.DictWriter(buf, fieldnames=rows[0].keys())
+            writer.writeheader()
+            writer.writerows(rows)
+            content = buf.getvalue()
+        else:
+            content = ""
+    elif fmt == "markdown":
+        content = _export_markdown_str(rows, "Deterministic Projection")
+    else:
+        fields = ["year", "income", "expenses", "taxes", "net_worth"]
+        content = tabulate([[r.get(f, "") for f in fields] for r in rows],
+                           headers=fields, tablefmt="rounded_grid")
+    _write_output(content, output)
+
+
+@main.command()
+@click.option("--config", "-c", required=True, type=click.Path(exists=True))
+@click.option("--year", type=int, required=True)
+def explain(config, year):
+    """Explain the deterministic projection for one year."""
+    rows = RetirementPlanner.from_config(config).project_cash_flow()
+    row = next((r for r in rows if r["year"] == year), None)
+    if row is None:
+        raise click.ClickException(f"Year {year} is outside the projection")
+    click.echo(f"Year {year}: ages {row['primary_age']}/{row['spouse_age']}")
+    click.echo(f"Income: ${row['income']:,.0f}")
+    click.echo(f"Expenses: ${row['expenses']:,.0f}")
+    click.echo(f"Taxes: ${row['taxes']:,.0f}")
+    click.echo(f"Net worth: ${row['net_worth']:,.0f}")
 
 
 def _format_equity_breakdown(planner) -> str:
@@ -102,7 +230,8 @@ def _format_equity_breakdown(planner) -> str:
     type=click.Choice(["mean", "optimistic", "pessimistic"]),
 )
 @click.option("--output", "-o", default=None, type=click.Path())
-def run(config, simulations, method, scenario, output):
+@click.option("--seed", default=None, type=int, help="Seed for reproducible simulations.")
+def run(config, simulations, method, scenario, output, seed):
     """Run Monte Carlo simulation and display results."""
     planner = RetirementPlanner.from_config(config)
     mc = MonteCarloEngine(planner)
@@ -112,6 +241,7 @@ def run(config, simulations, method, scenario, output):
         num_simulations=simulations,
         scenario=scenario,
         method=method,
+        seed=seed,
     )
 
     _print_mc_results(mc_results)
@@ -180,6 +310,10 @@ def report(config, fmt, output, simulations, show_equity):
               type=click.Choice(["mean", "optimistic", "pessimistic"]))
 def pdf(config, output, simulations, method, scenario):
     """Generate a PDF retirement plan report (Boldin-style)."""
+    try:
+        from .pdf_report import generate_pdf_report
+    except ImportError as exc:
+        raise click.ClickException("PDF support requires the optional 'reportlab' dependency") from exc
     planner = RetirementPlanner.from_config(config)
     mc = MonteCarloEngine(planner)
 

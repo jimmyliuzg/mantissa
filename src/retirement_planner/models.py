@@ -82,6 +82,21 @@ class GlidepathConfig:
     tent_equity_pct: float = 0.30  # 30% equity during tent
     tent_ramp_years: int = 3  # Years to ramp back after tent
 
+    def __post_init__(self):
+        if not self.equity_by_age:
+            raise ValueError("equity_by_age must contain at least one age anchor")
+        for age, equity in self.equity_by_age.items():
+            if not isinstance(age, int) or age < 0:
+                raise ValueError(f"glidepath age {age!r} must be a non-negative integer")
+            if not 0.0 <= equity <= 1.0:
+                raise ValueError(f"equity at age {age} ({equity}) must be between 0 and 1")
+        if self.pre_retirement_years < 0 or self.post_retirement_years < 0:
+            raise ValueError("glidepath retirement windows must be non-negative")
+        if self.tent_ramp_years < 0:
+            raise ValueError("tent_ramp_years must be non-negative")
+        if not 0.0 <= self.tent_equity_pct <= 1.0:
+            raise ValueError("tent_equity_pct must be between 0 and 1")
+
 
 @dataclass
 class Person:
@@ -132,6 +147,7 @@ class Account:
     asset_class: Optional[str] = None  # "equity", "bond", "mixed", or None (auto)
     expense_ratio: float = 0.0  # Annual fee as decimal (e.g., 0.001 = 0.1%)
     equity_pct: Optional[float] = None  # None = use glidepath default
+    owner: str = "primary"  # Legacy configs default to the primary person.
 
     def project_balance(self, years: int, rate: float) -> float:
         return self.balance * (1 + rate) ** years

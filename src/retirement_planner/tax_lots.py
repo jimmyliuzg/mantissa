@@ -73,6 +73,8 @@ class LiquidationResult:
     short_term_gain: float
     long_term_gain: float
     total_gain: float
+    requested_shares: float = 0.0
+    unfilled_shares: float = 0.0
 
     @property
     def tax_character(self) -> str:
@@ -160,6 +162,8 @@ class TaxLotTracker:
         """Liquidate shares with gain calculation using current price."""
         if sale_date is None:
             sale_date = date.today()
+        if shares_to_sell < 0:
+            raise ValueError("shares_to_sell must be non-negative")
 
         available = list(self.lots.get(account_id, []))
         if not available:
@@ -167,6 +171,8 @@ class TaxLotTracker:
                 lots_sold=[], total_shares=0, total_proceeds=0,
                 total_cost_basis=0, short_term_gain=0,
                 long_term_gain=0, total_gain=0,
+                requested_shares=shares_to_sell,
+                unfilled_shares=shares_to_sell,
             )
 
         # Sort lots by algorithm
@@ -227,6 +233,8 @@ class TaxLotTracker:
             short_term_gain=short_term_gain,
             long_term_gain=long_term_gain,
             total_gain=total_gain,
+            requested_shares=shares_to_sell,
+            unfilled_shares=max(0.0, remaining),
         )
 
     def sell_specific(
