@@ -30,7 +30,7 @@ from .models import (
 
 from .monetary import MonetaryPolicy
 from .fixes import process_housing_event, process_roth_conversions, apply_medical_inflation
-from .tax_lots import TaxLotTracker, calculate_121_exclusion
+from .tax_lots import calculate_121_exclusion
 from .projection.services import make_year_context, make_state
 from .sim_integration import determine_annual_filing_status, calculate_401k_limit
 from .tax_law import (
@@ -96,7 +96,11 @@ class WithdrawalStrategy(Enum):
 # ---------------------------------------------------------------------------
 @dataclass
 class CostBasisTracker:
-    """Tracks cost basis per account for capital gains calculations."""
+    """Tracks aggregate taxable-account basis.
+
+    Core projections intentionally use aggregate basis, not synthetic shares.
+    Default policy assumes initial taxable balance is entirely basis.
+    """
     basis_by_account: Dict[str, float] = field(default_factory=dict)
 
     def get_basis(self, account_id: str, default: float = 0.0) -> float:
@@ -138,11 +142,9 @@ class WithdrawalEngine:
     """
 
     def __init__(self, accounts: Dict[str, Account],
-                 cost_basis: CostBasisTracker,
-                 tax_lots: Optional[TaxLotTracker] = None):
+                 cost_basis: CostBasisTracker):
         self.accounts = accounts
         self.cost_basis = cost_basis
-        self.tax_lots = tax_lots
         self._withdrawals: List[WithdrawalResult] = []
 
     @property
@@ -344,18 +346,9 @@ class WithdrawalEngine:
             capital_gain = 0.0
             taxable_amount = 0.0
             if tax_treatment == "capital_gains":
-                if self.tax_lots is not None and self.tax_lots.total_shares(account_id) > 0:
-                    current_price = balance / self.tax_lots.total_shares(account_id)
-                    liquidation = self.tax_lots.liquidate_with_price(
-                        account_id, withdraw / current_price, current_price,
-                        sale_date=sale_date
-                    )
-                    capital_gain = liquidation.total_gain
-                    taxable_amount = capital_gain
-                else:
-                    basis_used = self.cost_basis.debit_basis(account_id, withdraw)
-                    capital_gain = withdraw - basis_used
-                    taxable_amount = capital_gain
+                basis_used = self.cost_basis.debit_basis(account_id, withdraw)
+                capital_gain = withdraw - basis_used
+                taxable_amount = capital_gain
             elif tax_treatment == "ordinary":
                 taxable_amount = withdraw
             # tax_free: taxable_amount stays 0
@@ -427,8 +420,7 @@ class WithdrawalEngine:
             if account.tax_treatment == "taxable":
                 current_basis = self.cost_basis.get_basis(account_id, 0.0)
                 self.cost_basis.set_basis(account_id, current_basis + total)
-                if self.tax_lots is not None:
-                    self.tax_lots.add_purchase(account_id, total, 1.0, date.today())
+
 
         return contributions
 
@@ -1876,17 +1868,14 @@ class RetirementPlanner:
         # equals current balance (all contributions up to now).
         # A real implementation would track actual contributions.
         cost_basis = CostBasisTracker()
-        tax_lots = TaxLotTracker()
         for account_id, account in self.accounts.items():
             if account.tax_treatment == "taxable":
                 cost_basis.set_basis(account_id, account.balance)
-                # Legacy configs provide aggregate balances, so seed one
-                # basis lot at $1/share and retain the aggregate fallback.
-                tax_lots.add_purchase(account_id, account.balance, 1.0, date.today())
+                # Aggregate-basis policy: initial basis equals balance.
 
         rates = self.scenario.economic.get_rate(scenario_name)
         inflation_rate = rates["general_inflation"]
-        withdrawal_engine = WithdrawalEngine(self.accounts, cost_basis, tax_lots)
+        withdrawal_engine = WithdrawalEngine(self.accounts, cost_basis)
         tax_law_registry = TaxLawRegistry()
 
         # Monetary policy for convention-aware conversion
