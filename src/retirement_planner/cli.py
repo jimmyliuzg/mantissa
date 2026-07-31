@@ -19,6 +19,7 @@ from .reports import (
 
 from .sensitivity import SensitivityAnalyzer
 from .formatting import fmt_money as _fmt_money
+from .config.validation import validate_config, schema_dict
 
 
 def _print_mc_results(mc_results: dict, label: str = "MONTE CARLO RESULTS"):
@@ -57,6 +58,19 @@ def _write_output(content: str, output=None):
         click.echo(content, nl=not content.endswith("\n"))
 
 
+def _load_raw_config(path: str, strict: bool = False):
+    try:
+        with open(path) as handle:
+            raw = json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise click.ClickException(f"Unable to read config: {exc}") from exc
+    result = validate_config(raw, strict=strict)
+    if result.errors:
+        detail = "\n".join(f"  {i.path}: {i.message}" for i in result.errors)
+        raise click.ClickException("Invalid configuration:\n" + detail)
+    return raw, result
+
+
 def _starter_config() -> dict:
     return {
         "name": "My Retirement Plan",
@@ -85,15 +99,25 @@ def init(output):
 
 @main.command()
 @click.option("--config", "-c", required=True, type=click.Path(exists=True))
-def validate(config):
+@click.option("--strict", is_flag=True, default=False)
+def validate(config, strict):
     """Validate a scenario configuration before simulation."""
-    try:
-        planner = RetirementPlanner.from_config(config)
-    except (KeyError, ValueError, TypeError, json.JSONDecodeError) as exc:
-        raise click.ClickException(str(exc)) from exc
-    if not planner.accounts:
+    _, result = _load_raw_config(config, strict=strict)
+    if result.warnings:
+        for issue in result.warnings:
+            click.echo(f"Warning: {issue.path}: {issue.message}")
+    if not result.valid:
+        raise click.ClickException("Configuration is invalid")
+    if not json.load(open(config)).get("accounts", []):
         click.echo("Warning: configuration has no accounts")
     click.echo("Configuration is valid")
+
+
+@main.command(name="schema")
+@click.option("--output", "-o", default=None, type=click.Path())
+def schema(output):
+    """Print or export the supported configuration schema."""
+    _write_output(json.dumps(schema_dict(), indent=2) + "\n", output)
 
 
 @main.command()
