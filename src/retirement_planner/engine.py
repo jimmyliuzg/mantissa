@@ -31,6 +31,7 @@ from .models import (
 from .monetary import MonetaryPolicy
 from .fixes import process_housing_event, process_roth_conversions, apply_medical_inflation
 from .tax_lots import TaxLotTracker, calculate_121_exclusion
+from .projection.services import make_year_context, make_state
 from .sim_integration import determine_annual_filing_status, calculate_401k_limit
 from .tax_law import (
     TaxLawRegistry, FilingStatus,
@@ -1914,10 +1915,16 @@ class RetirementPlanner:
                     + self.scenario.primary.longevity_age + 1)
 
         for year in range(self.start_year, max_year):
-            primary_age = year - self.scenario.primary.birth_date.year
-            spouse_age = year - self.scenario.spouse.birth_date.year
-            younger_age = min(primary_age, spouse_age)
-            years_from_base = year - self.start_year
+            context = make_year_context(
+                year, self.start_year,
+                self.scenario.primary.birth_date.year,
+                self.scenario.spouse.birth_date.year,
+            )
+            primary_age = context.primary_age
+            spouse_age = context.spouse_age
+            younger_age = context.younger_age
+            years_from_base = context.years_from_base
+            yearly_state = make_state(context, balances, mortgage_balances)
 
             # --- Filing status ---
             filing_status = determine_annual_filing_status(
@@ -2052,6 +2059,7 @@ class RetirementPlanner:
                 annual_expenses += irmaa_amount
 
             # --- Step 4c: ACA subsidy (per-person, pre-Medicare) ---
+            aca_subsidy = 0.0
             # Only people under 65 with ACA coverage count for ACA eligibility
             aca_family_size = 0
             if primary_age < 65 and self.scenario.primary.coverage_at_age(primary_age) == "aca":
@@ -2207,6 +2215,18 @@ class RetirementPlanner:
                 b for b in mortgage_balances.values() if b > 0)
             net_worth = total_assets - total_liabs
 
+            # Shared projection-state boundary. The legacy result contract
+            # remains unchanged while yearly data becomes inspectable.
+            yearly_state.income = income_data
+            yearly_state.expenses = expense_data
+            yearly_state.withdrawals = withdrawals
+            yearly_state.taxes = taxes
+            yearly_state.healthcare = {
+                "aca_subsidy": aca_subsidy,
+                "irmaa": irmaa_amount,
+            }
+            yearly_state.events.append({"type": "year_complete"})
+
             if net_worth > peak_nw:
                 peak_nw = net_worth
 
@@ -2319,10 +2339,16 @@ class RetirementPlanner:
                     + self.scenario.primary.longevity_age + 1)
 
         for year in range(self.start_year, max_year):
-            primary_age = year - self.scenario.primary.birth_date.year
-            spouse_age = year - self.scenario.spouse.birth_date.year
-            younger_age = min(primary_age, spouse_age)
-            years_from_base = year - self.start_year
+            context = make_year_context(
+                year, self.start_year,
+                self.scenario.primary.birth_date.year,
+                self.scenario.spouse.birth_date.year,
+            )
+            primary_age = context.primary_age
+            spouse_age = context.spouse_age
+            younger_age = context.younger_age
+            years_from_base = context.years_from_base
+            yearly_state = make_state(context)
 
             if (primary_age > self.scenario.primary.longevity_age
                     and spouse_age > self.scenario.spouse.longevity_age):
@@ -2356,6 +2382,11 @@ class RetirementPlanner:
                 inflation_rate=inflation_rate,
                 years_from_base=years_from_base)
             net_worth = self.calculate_net_worth(year, scenario_name)
+            yearly_state.income = income
+            yearly_state.expenses = expenses
+            yearly_state.taxes = taxes
+            yearly_state.healthcare = {"aca_subsidy": aca_subsidy}
+            yearly_state.events.append({"type": "year_complete"})
 
             # Estate tax (at end of life, applied once)
             younger_longevity = (self.scenario.primary.longevity_age
