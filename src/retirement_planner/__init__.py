@@ -44,13 +44,19 @@ from .reports import (
     export_csv,
     export_markdown,
 )
-from .pdf_report import generate_pdf_report
-from .charts import (
-    plot_net_worth_trajectory,
-    plot_mc_fan_chart,
-    plot_income_vs_expenses,
-    plot_tax_breakdown,
-)
+try:
+    from .pdf_report import generate_pdf_report
+except ImportError:
+    generate_pdf_report = None
+try:
+    from .charts import (
+        plot_net_worth_trajectory,
+        plot_mc_fan_chart,
+        plot_income_vs_expenses,
+        plot_tax_breakdown,
+    )
+except ImportError:
+    pass
 from .sensitivity import SensitivityAnalyzer
 from .tax_law import (
     TaxLawVersion, TaxLawRegistry, FilingStatus,
