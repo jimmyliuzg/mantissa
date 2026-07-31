@@ -197,6 +197,9 @@ class FloorCeilingPolicy:
 @dataclass
 class OptimizerConfig:
     """Configuration for the withdrawal optimizer."""
+    # Phase 3.2: recommendations are not decision-safe until feasibility and
+    # engine-backed tax evaluation are complete.
+    experimental: bool = True
     # ACA MAGI targets (annual income thresholds for subsidy optimization)
     aca_target_MAGI: Optional[float] = None  # e.g. 200% FPL for family
     irmaa_thresholds: List[float] = field(default_factory=list)  # e.g. [206000, 258000]
@@ -220,6 +223,11 @@ class WithdrawalOptimizer:
 
     def __init__(self, config: Optional[OptimizerConfig] = None):
         self.config = config or OptimizerConfig()
+
+    @property
+    def status(self) -> str:
+        """Public safety status for callers and reports."""
+        return "experimental" if self.config.experimental else "production"
 
     def generate_candidates(
         self,
@@ -377,7 +385,11 @@ class WithdrawalOptimizer:
             selected=best.decision,
             selected_label=best.label,
             alternatives=candidates,
-            reasons=[f"Selected {best.label} (score={best.score:.0f})"],
+            reasons=[
+                f"Selected {best.label} (score={best.score:.0f})",
+                *( ["Optimizer recommendations are experimental"]
+                   if self.config.experimental else [] ),
+            ],
         )
 
         return best.decision, trace
