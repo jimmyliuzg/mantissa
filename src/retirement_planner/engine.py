@@ -488,6 +488,7 @@ class RetirementPlanner:
     def from_config(cls, config_path: str) -> 'RetirementPlanner':
         """Load planner from JSON config file."""
         import json
+        from .config.validation import validate_config
         try:
             with open(config_path) as f:
                 config = json.load(f)
@@ -495,6 +496,9 @@ class RetirementPlanner:
             raise json.JSONDecodeError(
                 f"Invalid JSON in config file '{config_path}': {e.msg}",
                 e.doc, e.pos)
+
+        validation = validate_config(config)
+        validation.raise_for_errors()
         
         # Parse config into Scenario
         # This is a simplified parser - full implementation would handle all fields
