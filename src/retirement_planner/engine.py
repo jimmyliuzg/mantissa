@@ -702,6 +702,20 @@ class RetirementPlanner:
             cola_rate=ss_config.get("cola_rate", 0.0254),
         )
 
+        # Parse glidepath config
+        glidepath = None
+        gp_config = config.get("glidepath")
+        if gp_config:
+            glidepath = GlidepathConfig(
+                equity_by_age={
+                    int(k): v for k, v in gp_config.get("equity_by_age", {}).items()
+                },
+                pre_retirement_years=gp_config.get("pre_retirement_years", 5),
+                post_retirement_years=gp_config.get("post_retirement_years", 5),
+                tent_equity_pct=gp_config.get("tent_equity_pct", 0.30),
+                tent_ramp_years=gp_config.get("tent_ramp_years", 3),
+            )
+
         scenario = Scenario(
             name=config.get("name", "Default Scenario"),
             description=config.get("description", ""),
@@ -717,6 +731,7 @@ class RetirementPlanner:
             roth_conversions=roth_conversions,
             age_events=age_events,
             social_security=social_security,
+            glidepath=glidepath,
             legacy_goal=config.get("legacy_goal", 2_000_000),
             state=config.get("state", "CA"),
             savings_order=savings_order,
