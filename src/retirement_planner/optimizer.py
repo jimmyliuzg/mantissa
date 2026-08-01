@@ -74,6 +74,20 @@ class CandidateDecision:
     decision: YearDecision
     label: str          # e.g. "bracket_fill_24pct", "aca_target_150pct_fpl"
     score: float = 0.0  # objective value (lower = better)
+    feasibility: Optional["FeasibilityResult"] = None
+
+
+@dataclass
+class FeasibilityResult:
+    """Constraint evaluation for one candidate decision."""
+    feasible: bool
+    cash_shortfall: float = 0.0
+    rmd_shortfall: float = 0.0
+    violations: List[str] = field(default_factory=list)
+
+    @property
+    def rejection_reasons(self) -> List[str]:
+        return list(self.violations)
 
 
 # ---------------------------------------------------------------------------
@@ -247,10 +261,28 @@ class WithdrawalOptimizer:
         candidates = []
 
         # Candidate 1: RMD only (baseline)
+        pretax_accounts = [
+            (k, v) for k, v in accounts.items()
+            if v['type'] in ('401k', 'trad_ira') and v['balance'] > 0
+        ]
+        pretax_rmds = {
+            k: min(v['balance'], rmd_required / max(1, len(pretax_accounts)))
+            for k, v in pretax_accounts
+        }
+        taxable_accounts = [
+            (k, v) for k, v in accounts.items()
+            if v['type'] == 'brokerage' and v['balance'] > 0
+        ]
+        remaining_cash = max(0.0, spending_target - sum(pretax_rmds.values()))
+        taxable_cash = min(
+            remaining_cash, sum(v['balance'] for _, v in taxable_accounts)
+        )
         c1 = YearDecision(
-            pretax_withdrawals={k: min(v['balance'], rmd_required / max(1, len([a for a in accounts.values() if a['type'] in ('401k', 'trad_ira')])))
-                                for k, v in accounts.items()
-                                if v['type'] in ('401k', 'trad_ira') and v['balance'] > 0},
+            taxable_withdrawals={
+                k: min(v['balance'], taxable_cash / max(1, len(taxable_accounts)))
+                for k, v in taxable_accounts
+            },
+            pretax_withdrawals=pretax_rmds,
             spending_target=spending_target,
         )
         c1.compute_totals()
@@ -331,6 +363,48 @@ class WithdrawalOptimizer:
                 ))
 
         return candidates
+
+    def evaluate_feasibility(
+        self,
+        decision: YearDecision,
+        accounts: Dict[str, dict],
+        spending_target: float,
+        rmd_required: float = 0.0,
+    ) -> FeasibilityResult:
+        """Check cash, account-balance, and RMD constraints."""
+        decision.compute_totals()
+        violations: List[str] = []
+        cash_shortfall = max(0.0, spending_target - decision.total_cash_in)
+        if cash_shortfall > 0.01:
+            violations.append(f"cash shortfall: ${cash_shortfall:,.2f}")
+
+        withdrawals = {}
+        for mapping in (
+            decision.taxable_withdrawals,
+            decision.pretax_withdrawals,
+            decision.roth_withdrawals,
+        ):
+            for account_id, amount in mapping.items():
+                withdrawals[account_id] = withdrawals.get(account_id, 0.0) + amount
+        for account_id, amount in withdrawals.items():
+            account = accounts.get(account_id)
+            if account is None:
+                violations.append(f"unknown withdrawal account: {account_id}")
+            elif amount < 0:
+                violations.append(f"negative withdrawal: {account_id}")
+            elif amount > account.get("balance", 0.0) + 0.01:
+                violations.append(f"withdrawal exceeds balance: {account_id}")
+
+        rmd_paid = sum(decision.pretax_withdrawals.values())
+        rmd_shortfall = max(0.0, rmd_required - rmd_paid)
+        if rmd_shortfall > 0.01:
+            violations.append(f"RMD shortfall: ${rmd_shortfall:,.2f}")
+        return FeasibilityResult(
+            feasible=not violations,
+            cash_shortfall=cash_shortfall,
+            rmd_shortfall=rmd_shortfall,
+            violations=violations,
+        )
 
     def select_best(
         self,

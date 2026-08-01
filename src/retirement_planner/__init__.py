@@ -69,7 +69,7 @@ from .monthly_events import (
     calculate_rmd_events, process_year_events,
 )
 from .optimizer import (
-    YearDecision, CandidateDecision, DecisionTrace,
+    YearDecision, CandidateDecision, FeasibilityResult, DecisionTrace,
     WithdrawalOptimizer, OptimizerConfig,
     FixedSpendingPolicy, GuardrailsPolicy, VPWPolicy, FloorCeilingPolicy,
 )
