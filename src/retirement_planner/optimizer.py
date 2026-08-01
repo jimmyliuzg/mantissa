@@ -411,6 +411,9 @@ class WithdrawalOptimizer:
         candidates: List[CandidateDecision],
         year: int,
         age: int,
+        accounts: Optional[Dict[str, dict]] = None,
+        spending_target: Optional[float] = None,
+        rmd_required: float = 0.0,
     ) -> CandidateDecision:
         """Select the best candidate from a list.
 
@@ -422,7 +425,26 @@ class WithdrawalOptimizer:
                 decision=YearDecision(), label="no_candidates", score=float('inf')
             )
 
-        for c in candidates:
+        if accounts is not None and spending_target is not None:
+            for candidate in candidates:
+                candidate.feasibility = self.evaluate_feasibility(
+                    candidate.decision, accounts, spending_target, rmd_required,
+                )
+
+        feasible = [c for c in candidates if c.feasibility is None or c.feasibility.feasible]
+        if not feasible:
+            return CandidateDecision(
+                decision=YearDecision(spending_target=spending_target or 0.0),
+                label="no_feasible_candidates",
+                score=float('inf'),
+                feasibility=FeasibilityResult(
+                    feasible=False,
+                    cash_shortfall=spending_target or 0.0,
+                    violations=["no feasible candidate"],
+                ),
+            )
+
+        for c in feasible:
             d = c.decision
             # Score = total ordinary income (proxy for tax cost)
             # Lower is better, but penalize if spending isn't met
@@ -431,7 +453,7 @@ class WithdrawalOptimizer:
             score += d.roth_conversions.__len__() * 1000  # Slight penalty for complexity
             c.score = score
 
-        return min(candidates, key=lambda c: c.score)
+        return min(feasible, key=lambda c: c.score)
 
     def optimize_year(
         self,
@@ -452,18 +474,24 @@ class WithdrawalOptimizer:
             rmd_required, bracket_top, ordinary_income,
         )
 
-        best = self.select_best(candidates, year, age)
+        best = self.select_best(
+            candidates, year, age, accounts, spending_target, rmd_required,
+        )
 
+        reasons = [f"Selected {best.label} (score={best.score:.0f})"]
+        if best.feasibility and not best.feasibility.feasible:
+            reasons.extend(best.feasibility.rejection_reasons)
+        if best.feasibility and best.feasibility.feasible:
+            reasons.append("Selected candidate satisfies cash, balance, and RMD constraints")
         trace = DecisionTrace(
             year=year,
             selected=best.decision,
             selected_label=best.label,
             alternatives=candidates,
-            reasons=[
-                f"Selected {best.label} (score={best.score:.0f})",
-                *( ["Optimizer recommendations are experimental"]
-                   if self.config.experimental else [] ),
-            ],
+            reasons=reasons + (
+                ["Optimizer recommendations are experimental"]
+                if self.config.experimental else []
+            ),
         )
 
         return best.decision, trace
