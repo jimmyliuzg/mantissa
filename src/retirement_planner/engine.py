@@ -2421,11 +2421,25 @@ class RetirementPlanner:
     # ------------------------------------------------------------------
     def project_cash_flow(self, scenario_name: str = "mean") -> List[Dict]:
         """Generate year-by-year cash flow projection (deterministic)."""
+        from .approximations import (
+            ApproximationTracker, AGGREGATE_BASIS_WARNING,
+            DETERMINISTIC_TAXES_WARNING, DETERMINISTIC_RETURNS_WARNING,
+        )
+
         projections = []
         cost_basis = CostBasisTracker()
+        has_taxable = False
         for account_id, account in self.accounts.items():
             if account.tax_treatment == "taxable":
                 cost_basis.set_basis(account_id, account.balance)
+                has_taxable = True
+
+        # Track approximations for this projection run
+        tracker = ApproximationTracker()
+        tracker.add(DETERMINISTIC_RETURNS_WARNING)
+        tracker.add(DETERMINISTIC_TAXES_WARNING)
+        if has_taxable:
+            tracker.add(AGGREGATE_BASIS_WARNING)
 
         rates = self.scenario.economic.get_rate(scenario_name)
         inflation_rate = rates["general_inflation"]
@@ -2482,6 +2496,7 @@ class RetirementPlanner:
             yearly_state.expenses = expenses
             yearly_state.taxes = taxes
             yearly_state.healthcare = {"aca_subsidy": aca_subsidy}
+            yearly_state.approximations = list(tracker.for_year(year))
             yearly_state.events.append({"type": "year_complete"})
 
             # Estate tax (at end of life, applied once)
@@ -2509,6 +2524,9 @@ class RetirementPlanner:
                 "net_worth": net_worth["net_worth"],
                 "total_assets": net_worth["total_assets"],
                 "total_liabilities": net_worth["total_liabilities"],
+                "approximations": [
+                    a.as_dict() for a in tracker.for_year(year)
+                ],
             })
 
         return projections

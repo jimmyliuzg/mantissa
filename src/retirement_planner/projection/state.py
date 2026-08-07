@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..approximations import ApproximationWarning
 
 
 @dataclass
@@ -26,6 +29,7 @@ class SimulationState:
     healthcare: Dict[str, Any] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
     events: List[Dict[str, Any]] = field(default_factory=list)
+    approximations: List["ApproximationWarning"] = field(default_factory=list)
 
     def total_assets(self) -> float:
         return sum(value for value in self.balances.values() if value > 0)
@@ -55,6 +59,10 @@ class SimulationState:
             "healthcare": self.healthcare,
             "warnings": list(self.warnings),
             "events": list(self.events),
+            "approximations": [
+                w.as_dict() if hasattr(w, "as_dict") else w
+                for w in self.approximations
+            ],
             "total_assets": self.total_assets(),
             "total_liabilities": self.total_liabilities(),
             "net_worth": self.net_worth(),
