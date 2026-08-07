@@ -115,3 +115,8 @@ from .ltc_solver import (
     ltc_probability_by_age, SolverResult, reverse_solve,
     solve_retirement_age, solve_savings_rate, solve_spending,
 )
+from .approximations import (
+    ApproximationCategory, ApproximationWarning, ApproximationTracker,
+    AGGREGATE_BASIS_WARNING, DETERMINISTIC_TAXES_WARNING,
+    EXPERIMENTAL_OPTIMIZER_WARNING, DETERMINISTIC_RETURNS_WARNING,
+)

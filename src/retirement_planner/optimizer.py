@@ -150,6 +150,7 @@ class DecisionTrace:
     aca_subsidy: float = 0.0
     irmaa_cost: float = 0.0
     rmd_forced: float = 0.0
+    approximations: List = field(default_factory=list)  # List[ApproximationWarning]
 
     def explain(self) -> str:
         """Human-readable explanation of why this decision was made."""
@@ -162,6 +163,11 @@ class DecisionTrace:
             lines.append(f"  ACA subsidy preserved: ${self.aca_subsidy:,.0f}")
         if self.irmaa_cost > 0:
             lines.append(f"  IRMAA surcharge: ${self.irmaa_cost:,.0f}")
+        if self.approximations:
+            lines.append("  Approximations:")
+            for a in self.approximations:
+                msg = str(a) if hasattr(a, "__str__") else str(a)
+                lines.append(f"    {msg}")
         return "\n".join(lines)
 
 
@@ -597,5 +603,10 @@ class WithdrawalOptimizer:
             irmaa_cost=tax_eval.irmaa_cost if tax_eval else 0.0,
             rmd_forced=rmd_required,
         )
+
+        # Emit approximation warning for experimental optimizer
+        if self.config.experimental:
+            from .approximations import EXPERIMENTAL_OPTIMIZER_WARNING
+            trace.approximations.append(EXPERIMENTAL_OPTIMIZER_WARNING)
 
         return best.decision, trace
