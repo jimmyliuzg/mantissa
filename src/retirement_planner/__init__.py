@@ -34,7 +34,7 @@ from .models import (
     RSUGrant, RefresherPolicy, Bonus, EquityComp,
     MonetaryConvention,
 )
-from .engine import RetirementPlanner
+from .engine import RetirementPlanner, EngineTaxEvaluator
 from .simulators import MonteCarloEngine, ScenarioComparator
 from .reports import (
     generate_summary_report,
@@ -72,6 +72,7 @@ from .optimizer import (
     YearDecision, CandidateDecision, FeasibilityResult, DecisionTrace,
     WithdrawalOptimizer, OptimizerConfig,
     FixedSpendingPolicy, GuardrailsPolicy, VPWPolicy, FloorCeilingPolicy,
+    TaxEvaluation, TaxEvaluator,
 )
 from .portfolio import (
     AssetClass, DEFAULT_ASSET_CLASSES, CapitalMarketModel, MarketYear,

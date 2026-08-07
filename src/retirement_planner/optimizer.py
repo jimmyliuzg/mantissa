@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Callable, Dict, List, Optional, Protocol, Tuple
+from typing import Callable, Dict, List, Optional, Protocol, Tuple, runtime_checkable
 
 
 # ---------------------------------------------------------------------------
@@ -88,6 +88,51 @@ class FeasibilityResult:
     @property
     def rejection_reasons(self) -> List[str]:
         return list(self.violations)
+
+
+# ---------------------------------------------------------------------------
+# Engine-backed tax evaluation — replaces proxy scoring
+# ---------------------------------------------------------------------------
+@dataclass
+class TaxEvaluation:
+    """Result of engine-backed tax/ACA/IRMAA evaluation for a candidate."""
+    total_tax: float = 0.0         # federal + state tax (marginal delta)
+    aca_subsidy: float = 0.0       # ACA premium subsidy preserved (higher = better)
+    irmaa_cost: float = 0.0        # IRMAA Medicare surcharges (higher = worse)
+    niit: float = 0.0              # net investment income tax
+    total_cost: float = 0.0        # combined score (tax + irmaa - aca_subsidy)
+
+
+@runtime_checkable
+class TaxEvaluator(Protocol):
+    """Interface for engine-backed evaluation of candidate decisions.
+
+    The optimizer calls this to score candidates using real tax, ACA,
+    and IRMAA calculations instead of proxy heuristics.
+    """
+
+    def evaluate(
+        self,
+        decision: "YearDecision",
+        year: int,
+        age: int,
+        ordinary_income_baseline: float,
+        family_size: int = 2,
+    ) -> TaxEvaluation:
+        """Evaluate the tax/ACA/IRMAA cost of a candidate decision.
+
+        Args:
+            decision: The candidate withdrawal/conversion decision.
+            year: Calendar year.
+            age: Primary filer's age.
+            ordinary_income_baseline: Income from other sources (wages, SS, etc.)
+                before optimizer withdrawals/conversions.
+            family_size: Household size for ACA subsidy (default 2 for MFJ).
+
+        Returns:
+            TaxEvaluation with computed costs.
+        """
+        ...
 
 
 # ---------------------------------------------------------------------------
@@ -225,6 +270,8 @@ class OptimizerConfig:
     harvest_0pct_gains: bool = True
     # Lookahead horizon for evaluation (years)
     lookahead_years: int = 10
+    # Engine-backed tax evaluator (when set, replaces proxy scoring)
+    evaluator: Optional["TaxEvaluator"] = None
 
 
 class WithdrawalOptimizer:
@@ -371,7 +418,7 @@ class WithdrawalOptimizer:
         spending_target: float,
         rmd_required: float = 0.0,
     ) -> FeasibilityResult:
-        """Check cash, account-balance, and RMD constraints."""
+        """Check cash, account-balance, RMD, and Roth-conversion constraints."""
         decision.compute_totals()
         violations: List[str] = []
         cash_shortfall = max(0.0, spending_target - decision.total_cash_in)
@@ -399,6 +446,16 @@ class WithdrawalOptimizer:
         rmd_shortfall = max(0.0, rmd_required - rmd_paid)
         if rmd_shortfall > 0.01:
             violations.append(f"RMD shortfall: ${rmd_shortfall:,.2f}")
+
+        # Roth conversion limit (IRS contribution limit applies;
+        # conversions have no hard cap but optimizer caps them)
+        roth_total = sum(decision.roth_conversions.values())
+        if roth_total > self.config.max_roth_conversion + 0.01:
+            violations.append(
+                f"Roth conversion ${roth_total:,.2f} exceeds limit "
+                f"${self.config.max_roth_conversion:,.2f}"
+            )
+
         return FeasibilityResult(
             feasible=not violations,
             cash_shortfall=cash_shortfall,
@@ -414,10 +471,16 @@ class WithdrawalOptimizer:
         accounts: Optional[Dict[str, dict]] = None,
         spending_target: Optional[float] = None,
         rmd_required: float = 0.0,
+        ordinary_income_baseline: float = 0.0,
+        family_size: int = 2,
     ) -> CandidateDecision:
         """Select the best candidate from a list.
 
-        Scoring: minimize tax cost + IRMAA penalty + lost ACA subsidy,
+        When an engine-backed evaluator is configured, scores candidates
+        using real tax, ACA, and IRMAA calculations.  Otherwise falls
+        back to a proxy heuristic (total_ordinary_income * 0.3).
+
+        Scoring: minimize tax cost + IRMAA penalty - ACA subsidy preserved,
         subject to meeting spending needs.
         """
         if not candidates:
@@ -444,16 +507,40 @@ class WithdrawalOptimizer:
                 ),
             )
 
+        evaluator = self.config.evaluator
         for c in feasible:
             d = c.decision
-            # Score = total ordinary income (proxy for tax cost)
-            # Lower is better, but penalize if spending isn't met
-            score = d.total_ordinary_income * 0.3  # Tax cost proxy
-            score += d.realized_ltcg * 0.15  # LTCG tax cost
-            score += d.roth_conversions.__len__() * 1000  # Slight penalty for complexity
-            c.score = score
+            d.compute_totals()
+
+            if evaluator is not None:
+                # Engine-backed scoring: real tax + ACA + IRMAA
+                try:
+                    tax_eval = evaluator.evaluate(
+                        d, year, age, ordinary_income_baseline, family_size,
+                    )
+                    # Score = total cost (tax + IRMAA - subsidy preserved)
+                    c.score = tax_eval.total_cost
+                    # Attach evaluation to trace metadata
+                    c._tax_evaluation = tax_eval  # type: ignore[attr-defined]
+                except Exception:
+                    # Fallback to proxy if evaluator fails
+                    c.score = self._proxy_score(d)
+            else:
+                # Proxy heuristic (legacy path)
+                c.score = self._proxy_score(d)
 
         return min(feasible, key=lambda c: c.score)
+
+    @staticmethod
+    def _proxy_score(d: YearDecision) -> float:
+        """Proxy score for fallback when no evaluator is available.
+
+        Lower is better.  Approximates tax cost from income levels.
+        """
+        score = d.total_ordinary_income * 0.3
+        score += d.realized_ltcg * 0.15
+        score += len(d.roth_conversions) * 1000
+        return score
 
     def optimize_year(
         self,
@@ -464,6 +551,7 @@ class WithdrawalOptimizer:
         rmd_required: float,
         bracket_top: float,
         ordinary_income: float,
+        family_size: int = 2,
     ) -> Tuple[YearDecision, DecisionTrace]:
         """Run one year of optimization.
 
@@ -476,6 +564,8 @@ class WithdrawalOptimizer:
 
         best = self.select_best(
             candidates, year, age, accounts, spending_target, rmd_required,
+            ordinary_income_baseline=ordinary_income,
+            family_size=family_size,
         )
 
         reasons = [f"Selected {best.label} (score={best.score:.0f})"]
@@ -483,6 +573,16 @@ class WithdrawalOptimizer:
             reasons.extend(best.feasibility.rejection_reasons)
         if best.feasibility and best.feasibility.feasible:
             reasons.append("Selected candidate satisfies cash, balance, and RMD constraints")
+
+        # Populate trace with tax evaluation data if available
+        tax_eval = getattr(best, '_tax_evaluation', None)
+        if tax_eval is not None:
+            reasons.append(
+                f"Engine evaluation: tax=${tax_eval.total_tax:,.0f}, "
+                f"ACA subsidy=${tax_eval.aca_subsidy:,.0f}, "
+                f"IRMAA=${tax_eval.irmaa_cost:,.0f}"
+            )
+
         trace = DecisionTrace(
             year=year,
             selected=best.decision,
@@ -492,6 +592,10 @@ class WithdrawalOptimizer:
                 ["Optimizer recommendations are experimental"]
                 if self.config.experimental else []
             ),
+            tax_cost=tax_eval.total_tax if tax_eval else 0.0,
+            aca_subsidy=tax_eval.aca_subsidy if tax_eval else 0.0,
+            irmaa_cost=tax_eval.irmaa_cost if tax_eval else 0.0,
+            rmd_forced=rmd_required,
         )
 
         return best.decision, trace
