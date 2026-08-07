@@ -7,7 +7,7 @@ import pytest
 from retirement_planner.engine import RetirementPlanner
 
 
-FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
+FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "..", "fixtures")
 
 
 @pytest.fixture
@@ -105,7 +105,7 @@ class TestIncomeWithEquity:
         """Config with only monthly_amount (no equity) still works."""
         config_path = os.path.join(FIXTURES_DIR, "../fixtures/../")  # Use sample_config
         # Fall back to the sample config which has no equity
-        sample_path = os.path.join(os.path.dirname(__file__), "..", "examples", "sample_config.json")
+        sample_path = os.path.join(os.path.dirname(__file__), "..", "..", "examples", "sample_config.json")
         if os.path.exists(sample_path):
             planner = RetirementPlanner.from_config(sample_path)
             income = planner.calculate_annual_income(2026)
