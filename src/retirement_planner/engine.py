@@ -14,6 +14,7 @@ Key design decisions:
 - Withdrawals follow a tax-efficient order: RMD → taxable → pre-tax → Roth.
 - Taxes distinguish ordinary income, long-term capital gains, and tax-free.
 """
+from __future__ import annotations
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, date
 import math
@@ -457,6 +458,112 @@ _ACA_SILVER_PREMIUMS: Dict[str, Dict[int, float]] = {
 _ESTATE_TAX_RATE = 0.40
 _ESTATE_EXEMPTION_SINGLE = 13_610_000   # $13.61M per person (2024)
 _ESTATE_EXEMPTION_MFJ = 27_220_000      # $27.22M combined (2024)
+
+
+# ---------------------------------------------------------------------------
+# Engine-backed tax evaluator — implements TaxEvaluator protocol
+# ---------------------------------------------------------------------------
+class EngineTaxEvaluator:
+    """Concrete evaluator that uses the engine's tax, ACA, and IRMAA methods.
+
+    This replaces the optimizer's proxy scoring with real calculations.
+    Instantiated by the engine and passed to the optimizer via config.
+    """
+
+    def __init__(self, engine: "RetirementPlanner"):
+        self._engine = engine
+
+    def evaluate(
+        self,
+        decision: "YearDecision",
+        year: int,
+        age: int,
+        ordinary_income_baseline: float,
+        family_size: int = 2,
+    ) -> "TaxEvaluation":
+        """Compute tax, ACA, and IRMAA costs for a candidate decision."""
+        from .optimizer import TaxEvaluation
+        from .models import TaxableIncome
+
+        decision.compute_totals()
+
+        # Additional ordinary income from this decision (pre-tax withdrawals + Roth conversions)
+        additional_ordinary = (
+            sum(decision.pretax_withdrawals.values())
+            + sum(decision.roth_conversions.values())
+        )
+
+        # Total ordinary income = baseline + optimizer additions
+        total_ordinary = ordinary_income_baseline + additional_ordinary
+
+        # Build TaxableIncome for engine calculation
+        ti = TaxableIncome(
+            ordinary=total_ordinary,
+            capital_gains=decision.realized_ltcg,
+            tax_free=sum(decision.roth_withdrawals.values()),
+            total=total_ordinary + decision.realized_ltcg,
+        )
+
+        # Baseline tax (without this decision)
+        baseline_ti = TaxableIncome(
+            ordinary=ordinary_income_baseline,
+            capital_gains=0.0,
+            tax_free=0.0,
+            total=ordinary_income_baseline,
+        )
+
+        inflation_rate = 0.0
+        years_from_base = max(0, year - self._engine.start_year)
+        try:
+            rates = self._engine.scenario.economic.get_rate("mean")
+            inflation_rate = rates.get("general_inflation", 0.0)
+        except (AttributeError, KeyError):
+            pass
+
+        # Tax with decision
+        tax_with = self._engine.calculate_taxes(
+            year, ti, "mean",
+            inflation_rate=inflation_rate,
+            years_from_base=years_from_base,
+        )
+        # Baseline tax (no optimizer action)
+        tax_without = self._engine.calculate_taxes(
+            year, baseline_ti, "mean",
+            inflation_rate=inflation_rate,
+            years_from_base=years_from_base,
+        )
+        marginal_tax = max(0.0, tax_with - tax_without)
+
+        # ACA subsidy (pre-Medicare only)
+        aca_subsidy = 0.0
+        if age < 65:
+            aca_subsidy = self._engine.calculate_aca_subsidy(
+                total_ordinary, family_size, self._engine.scenario.state,
+            )
+
+        # IRMAA (2-year lookback, Medicare age 65+)
+        irmaa_cost = 0.0
+        if age >= 65:
+            # Use current year MAGI as proxy for 2-year-ago MAGI
+            irmaa_cost = self._engine.calculate_irmaa(total_ordinary, age)
+
+        # NIIT
+        niit = 0.0
+        if decision.realized_ltcg > 0:
+            magi = total_ordinary + decision.realized_ltcg
+            niit = self._engine.calculate_niit(decision.realized_ltcg, magi)
+
+        # Combined score: tax + IRMAA + NIIT - ACA subsidy preserved
+        # (negative ACA subsidy means lost subsidy = cost)
+        total_cost = marginal_tax + irmaa_cost + niit - aca_subsidy
+
+        return TaxEvaluation(
+            total_tax=marginal_tax,
+            aca_subsidy=aca_subsidy,
+            irmaa_cost=irmaa_cost,
+            niit=niit,
+            total_cost=total_cost,
+        )
 
 
 # ---------------------------------------------------------------------------
