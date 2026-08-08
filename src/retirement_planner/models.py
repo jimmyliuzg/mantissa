@@ -313,7 +313,14 @@ class SocialSecurity:
 
 @dataclass
 class EconomicAssumptions:
-    """Macroeconomic rates with optimistic/pessimistic ranges."""
+    """Macroeconomic rates with optimistic/pessimistic ranges.
+
+    Capital market assumptions:
+    - equity_real_return: long-run real equity return (default 6%)
+    - bond_real_return: long-run real bond return (default 2.5%)
+    These replace the old hardcoded bond_rate=0.01 and per-account
+    growth_rate as the source of truth for investment returns.
+    """
     general_inflation: float = 0.0254
     general_inflation_optimistic: float = 0.0203
     general_inflation_pessimistic: float = 0.0305
@@ -329,6 +336,14 @@ class EconomicAssumptions:
     housing_appreciation: float = 0.044
     housing_appreciation_optimistic: float = 0.0528
     housing_appreciation_pessimistic: float = 0.0352
+
+    # Capital market assumptions (real, pre-tax)
+    equity_real_return: float = 0.06
+    equity_real_return_optimistic: float = 0.08
+    equity_real_return_pessimistic: float = 0.04
+    bond_real_return: float = 0.025
+    bond_real_return_optimistic: float = 0.035
+    bond_real_return_pessimistic: float = 0.015
     
     def get_rate(self, scenario: str = "mean") -> Dict[str, float]:
         if scenario == "optimistic":
@@ -337,6 +352,8 @@ class EconomicAssumptions:
                 "ss_cola": self.ss_cola_optimistic,
                 "medical_inflation": self.medical_inflation_optimistic,
                 "housing_appreciation": self.housing_appreciation_optimistic,
+                "equity_real_return": self.equity_real_return_optimistic,
+                "bond_real_return": self.bond_real_return_optimistic,
             }
         elif scenario == "pessimistic":
             return {
@@ -344,6 +361,8 @@ class EconomicAssumptions:
                 "ss_cola": self.ss_cola_pessimistic,
                 "medical_inflation": self.medical_inflation_pessimistic,
                 "housing_appreciation": self.housing_appreciation_pessimistic,
+                "equity_real_return": self.equity_real_return_pessimistic,
+                "bond_real_return": self.bond_real_return_pessimistic,
             }
         else:
             return {
@@ -351,6 +370,8 @@ class EconomicAssumptions:
                 "ss_cola": self.ss_cola,
                 "medical_inflation": self.medical_inflation,
                 "housing_appreciation": self.housing_appreciation,
+                "equity_real_return": self.equity_real_return,
+                "bond_real_return": self.bond_real_return,
             }
 
 
