@@ -672,6 +672,13 @@ class RetirementPlanner:
             housing_appreciation=econ_config.get("housing_appreciation", 0.044),
             housing_appreciation_optimistic=econ_config.get("housing_appreciation_optimistic", 0.0528),
             housing_appreciation_pessimistic=econ_config.get("housing_appreciation_pessimistic", 0.0352),
+            # Capital market assumptions (Phase 2.4)
+            equity_real_return=econ_config.get("equity_real_return", 0.06),
+            equity_real_return_optimistic=econ_config.get("equity_real_return_optimistic", 0.08),
+            equity_real_return_pessimistic=econ_config.get("equity_real_return_pessimistic", 0.04),
+            bond_real_return=econ_config.get("bond_real_return", 0.025),
+            bond_real_return_optimistic=econ_config.get("bond_real_return_optimistic", 0.035),
+            bond_real_return_pessimistic=econ_config.get("bond_real_return_pessimistic", 0.015),
         )
 
         # Parse income streams
@@ -970,14 +977,22 @@ class RetirementPlanner:
         Returns: equity_rate * equity_pct + bond_rate * bond_pct,
         minus the account's expense ratio.
 
-        Account growth rates are real rates; convert both asset classes
-        together only when the active convention is NOMINAL.
+        Uses scenario-level capital market assumptions by default.
+        If account.growth_rate is set, it overrides the equity rate
+        for backward compatibility with legacy configs.
         """
         rates = self.scenario.economic.get_rate("mean")
         inflation = rates["general_inflation"]
 
-        bond_rate = 0.01
-        equity_rate = account.growth_rate
+        # Scenario-level capital market assumptions
+        bond_rate = rates["bond_real_return"]
+        equity_rate = rates["equity_real_return"]
+
+        # Per-account override: if growth_rate is set, use it as equity rate
+        # (backward compatibility with configs that specify a single blended rate)
+        if account.growth_rate != 0:
+            equity_rate = account.growth_rate
+
         if self.scenario.monetary_convention == MonetaryConvention.NOMINAL:
             bond_rate = (1.0 + bond_rate) * (1.0 + inflation) - 1.0
             equity_rate = (1.0 + equity_rate) * (1.0 + inflation) - 1.0

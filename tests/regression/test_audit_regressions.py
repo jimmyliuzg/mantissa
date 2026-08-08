@@ -73,8 +73,10 @@ def test_real_and_nominal_allocation_returns_are_distinct_and_consistent():
     alloc = AssetAllocation(0.5, 0.5)
     real = make_planner([account], MonetaryConvention.REAL)
     nominal = make_planner([account], MonetaryConvention.NOMINAL)
-    assert real.get_growth_rate_for_allocation(account, alloc) == pytest.approx(0.045)
-    expected_nominal = 0.5 * ((1.08 * 1.025) - 1) + 0.5 * ((1.01 * 1.025) - 1)
+    # equity_rate=0.08 (from account.growth_rate), bond_rate=0.025 (scenario default)
+    # 0.5 * 0.08 + 0.5 * 0.025 = 0.0525
+    assert real.get_growth_rate_for_allocation(account, alloc) == pytest.approx(0.0525)
+    expected_nominal = 0.5 * ((1.08 * 1.025) - 1) + 0.5 * ((1.025 * 1.025) - 1)
     assert nominal.get_growth_rate_for_allocation(account, alloc) == pytest.approx(expected_nominal)
 
 
@@ -82,7 +84,9 @@ def test_deterministic_projection_uses_account_allocation_override():
     account = Account("a", "Bonds", "brokerage", "taxable", 100_000,
                       growth_rate=0.08, equity_pct=0.0, expense_ratio=0.001)
     planner = make_planner([account])
-    expected_rate = 0.01 - 0.001
+    # equity_pct=0.0 → 100% bonds. bond_rate=0.025 (scenario default).
+    # account.growth_rate=0.08 used as equity_rate, but allocation is 0% equity.
+    expected_rate = 0.025 - 0.001
     assert planner.get_account_balance("a", planner.start_year + 1) == pytest.approx(
         100_000 * (1 + expected_rate)
     )
