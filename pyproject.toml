@@ -37,9 +37,12 @@ classifiers = [
 dependencies = [
     "click>=8.0",
     "tabulate>=0.9",
-    "matplotlib>=3.7",
-    "reportlab>=4.0",
 ]
+
+[project.optional-dependencies]
+charts = ["matplotlib>=3.7"]
+pdf = ["reportlab>=4.0"]
+all = ["matplotlib>=3.7", "reportlab>=4.0"]
 
 [project.scripts]
 mantissa = "retirement_planner.cli:main"

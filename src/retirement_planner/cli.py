@@ -482,3 +482,63 @@ def _export_markdown_str(rows: list, title: str = "Retirement Plan Report") -> s
     for row in rows:
         lines.append("| " + " | ".join(str(row[h]) for h in headers) + " |")
     return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# doctor — dependency and environment checks
+# ---------------------------------------------------------------------------
+OPTIONAL_DEPS = {
+    "matplotlib": {
+        "package": "matplotlib",
+        "feature": "charts",
+        "install": "pip install mantissa[charts]",
+    },
+    "reportlab": {
+        "package": "reportlab",
+        "feature": "pdf",
+        "install": "pip install mantissa[pdf]",
+    },
+}
+
+
+@main.command()
+def doctor():
+    """Check environment and optional dependency availability."""
+    import importlib
+    import importlib.metadata
+    import sys
+
+    click.echo("Mantissa Doctor")
+    click.echo(f"  Python: {sys.version.split()[0]}")
+    click.echo()
+
+    # Core dependencies
+    click.echo("Core dependencies:")
+    for pkg in ["click", "tabulate"]:
+        try:
+            mod = importlib.import_module(pkg)
+            version = importlib.metadata.version(pkg)
+            click.echo(f"  ✓ {pkg} ({version})")
+        except (ImportError, importlib.metadata.PackageNotFoundError):
+            click.echo(f"  ✗ {pkg} — MISSING (required)")
+    click.echo()
+
+    # Optional dependencies
+    click.echo("Optional dependencies:")
+    all_ok = True
+    for name, info in OPTIONAL_DEPS.items():
+        try:
+            mod = importlib.import_module(name)
+            version = importlib.metadata.version(info["package"])
+            click.echo(f"  ✓ {name} ({version}) — {info['feature']}")
+        except (ImportError, importlib.metadata.PackageNotFoundError):
+            click.echo(f"  ✗ {name} — not installed")
+            click.echo(f"    Install: {info['install']}")
+            all_ok = False
+    click.echo()
+
+    if all_ok:
+        click.echo("All optional dependencies are installed.")
+    else:
+        click.echo("Some optional features are unavailable.")
+        click.echo("Install all: pip install mantissa[all]")
