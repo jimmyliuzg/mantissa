@@ -32,8 +32,10 @@ FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "..", "fixtures")
 
 def make_planner(accounts=None, expenses=None, mortgages=None, ss=None,
                  income_streams=None):
-    primary = Person("Primary", date(1970, 1, 1), date(2030, 1, 1), 95)
-    spouse = Person("Spouse", date(1972, 1, 1), date(2030, 1, 1), 95)
+    primary = Person("Primary", date(1970, 1, 1), date(2030, 1, 1), 95,
+                     coverage_type="none")
+    spouse = Person("Spouse", date(1972, 1, 1), date(2030, 1, 1), 95,
+                    coverage_type="none")
     scenario = Scenario(
         name="fixes", description="", primary=primary, spouse=spouse,
         economic=EconomicAssumptions(),
@@ -294,7 +296,7 @@ class TestHousingTradeUpMC:
         accounts = [
             Account("home", "Home", "real_estate", "taxable", 1_000_000,
                     liquid=False, growth_rate=0.03),
-            Account("brokerage", "Brokerage", "brokerage", "taxable", 300_000),
+            Account("brokerage", "Brokerage", "brokerage", "taxable", 800_000),
         ]
         mortgage = Mortgage(
             id="m_home", name="Home Mortgage", property_id="home",

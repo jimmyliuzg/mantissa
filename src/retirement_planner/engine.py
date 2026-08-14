@@ -18,6 +18,7 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, date
 import math
+import warnings
 import numpy as np
 from dataclasses import dataclass, field
 from enum import Enum
@@ -637,30 +638,47 @@ class RetirementPlanner:
         # This is a simplified parser - full implementation would handle all fields
         from datetime import date
         
+        primary_cfg = config["primary"]
+        spouse_cfg = config["spouse"]
+        for who, pcfg in (("primary", primary_cfg), ("spouse", spouse_cfg)):
+            if "social_security_benefit" in pcfg or "ss_claiming_age" in pcfg:
+                warnings.warn(
+                    f"{who}.social_security_benefit / ss_claiming_age are "
+                    f"legacy fields not honored by the engine — configure "
+                    f"'social_security' (benefits at 67 + claiming age) "
+                    f"instead; the settings are ignored.", UserWarning)
         primary = Person(
-            name=config["primary"]["name"],
-            birth_date=date.fromisoformat(config["primary"]["birth_date"]),
-            retirement_date=date.fromisoformat(config["primary"]["retirement_date"]),
-            longevity_age=config["primary"].get("longevity_age", 90),
+            name=primary_cfg["name"],
+            birth_date=date.fromisoformat(primary_cfg["birth_date"]),
+            retirement_date=date.fromisoformat(primary_cfg["retirement_date"]),
+            longevity_age=primary_cfg.get("longevity_age", 90),
         )
         
         spouse = Person(
-            name=config["spouse"]["name"],
-            birth_date=date.fromisoformat(config["spouse"]["birth_date"]),
-            retirement_date=date.fromisoformat(config["spouse"]["retirement_date"]),
-            longevity_age=config["spouse"].get("longevity_age", 90),
+            name=spouse_cfg["name"],
+            birth_date=date.fromisoformat(spouse_cfg["birth_date"]),
+            retirement_date=date.fromisoformat(spouse_cfg["retirement_date"]),
+            longevity_age=spouse_cfg.get("longevity_age", 90),
         )
         
         # Parse accounts
         accounts = []
         for acc_config in config.get("accounts", []):
+            for dead in ("growth_rate_optimistic", "growth_rate_pessimistic",
+                         "asset_class"):
+                if dead in acc_config:
+                    warnings.warn(
+                        f"account '{acc_config.get('id')}': '{dead}' is not "
+                        f"honored by the engine (use 'economic' rates or "
+                        f"'equity_pct'); the setting is ignored.",
+                        UserWarning)
             accounts.append(Account(
                 id=acc_config["id"],
                 name=acc_config["name"],
                 account_type=acc_config["type"],
                 tax_treatment=acc_config.get("tax_treatment", "taxable"),
                 balance=acc_config["balance"],
-                growth_rate=acc_config.get("growth_rate", 0.088),
+                growth_rate=acc_config.get("growth_rate"),
                 monthly_contribution=acc_config.get("monthly_contribution", 0.0),
                 employer_match=acc_config.get("employer_match", 0.0),
                 employer_match_limit=acc_config.get("employer_match_limit", 0.0),
@@ -669,6 +687,12 @@ class RetirementPlanner:
                 expense_ratio=acc_config.get("expense_ratio", 0.0),
                 equity_pct=acc_config.get("equity_pct"),
                 owner=acc_config.get("owner", "primary"),
+                # Vehicles depreciate by default; everything else stays
+                # liquid/stable unless the config says otherwise.
+                is_depreciating=acc_config.get(
+                    "is_depreciating",
+                    acc_config["type"] == "vehicle"),
+                liquid=acc_config.get("liquid", True),
             ))
 
         # Resolve savings allocation priorities:
@@ -786,6 +810,13 @@ class RetirementPlanner:
             if base_salary and monthly_amount == 0:
                 monthly_amount = base_salary["annual"] / 12
 
+            if ic.get("is_ss") or ic.get("is_passive"):
+                warnings.warn(
+                    f"income_stream '{ic.get('id')}': 'is_ss'/'is_passive' "
+                    f"are legacy fields not honored by the engine (all "
+                    f"streams are treated as ordinary income); ignored.",
+                    UserWarning)
+
             income_streams.append(IncomeStream(
                 id=ic["id"],
                 name=ic["name"],
@@ -806,6 +837,16 @@ class RetirementPlanner:
         # Parse expenses
         expenses = []
         for ec in config.get("expenses", []):
+            if ec.get("growth_rate") and ec.get("real_growth_rate"):
+                warnings.warn(
+                    f"expense '{ec.get('id')}': both 'growth_rate' and "
+                    f"'real_growth_rate' set — 'real_growth_rate' wins.",
+                    UserWarning)
+            if ec.get("min_reduction"):
+                warnings.warn(
+                    f"expense '{ec.get('id')}': 'min_reduction' (stress-"
+                    f"testing) is not wired to any simulation path; "
+                    f"ignored.", UserWarning)
             one_time_date = ec.get("one_time_date")
             expenses.append(Expense(
                 id=ec["id"],
@@ -914,12 +955,19 @@ class RetirementPlanner:
 
         # Parse social security
         ss_config = config.get("social_security", {})
+        if "family_size" in config:
+            warnings.warn(
+                "'family_size' is superseded by 'dependents' (ACA family "
+                "size is now dynamic: spouses + children under 26); the "
+                "setting is ignored.", UserWarning)
         social_security = SocialSecurity(
             primary_benefit_at_67=ss_config.get("primary_benefit_at_67", 3000),
             primary_claiming_age=ss_config.get("primary_claiming_age", 67),
             spouse_benefit_at_67=ss_config.get("spouse_benefit_at_67", 2500),
             spouse_claiming_age=ss_config.get("spouse_claiming_age", 67),
-            cola_rate=ss_config.get("cola_rate", 0.0254),
+            # Single source for SS COLA: economic.ss_cola feeds
+            # SocialSecurity.cola_rate unless overridden explicitly.
+            cola_rate=ss_config.get("cola_rate", economic.ss_cola),
         )
 
         # Parse glidepath config
@@ -1059,7 +1107,7 @@ class RetirementPlanner:
 
         # Per-account override: if growth_rate is set, use it as equity rate
         # (backward compatibility with configs that specify a single blended rate)
-        if account.growth_rate != 0:
+        if account.growth_rate is not None and account.growth_rate != 0:
             equity_rate = account.growth_rate
 
         if self.scenario.monetary_convention == MonetaryConvention.NOMINAL:
@@ -1073,13 +1121,24 @@ class RetirementPlanner:
 
     def _account_growth_rate(self, account: Account, year: int,
                              rates: Dict) -> float:
-        """Deterministic annual growth rate for an account (no volatility)."""
+        """Deterministic annual growth rate for an account (no volatility).
+
+        Mirrors the Monte Carlo growth step: allocation rates are already
+        convention-adjusted inside get_growth_rate_for_allocation; the
+        non-allocation rates (real estate, depreciating assets, cash) are
+        real and get converted exactly once.
+        """
+        policy = MonetaryPolicy(
+            convention=self.scenario.monetary_convention,
+            base_year=self.start_year,
+            inflation=rates["general_inflation"],
+        )
         if account.account_type == "real_estate":
-            return rates["housing_appreciation"]
+            rate = rates["housing_appreciation"]
         elif account.is_depreciating:
-            return -0.04
+            rate = -0.04
         elif account.growth_rate == 0:
-            return 0
+            rate = 0
         else:
             owner_age = self._account_owner_age(account, year)
             allocation = self.get_equity_allocation(owner_age)
@@ -1087,6 +1146,8 @@ class RetirementPlanner:
                 allocation = AssetAllocation(
                     account.equity_pct, 1.0 - account.equity_pct)
             return self.get_growth_rate_for_allocation(account, allocation)
+        return policy.portfolio_return_to_convention(
+            rate, rates["general_inflation"])
 
     def get_account_balance(self, account_id: str, year: int,
                             scenario: str = "mean") -> float:
@@ -1467,9 +1528,15 @@ class RetirementPlanner:
                     # expenses stay flat in real terms.
                     amount = monthly * 12
                     # Explicit real growth (e.g. childcare costs outpace
-                    # general inflation)
-                    if expense.real_growth_rate:
-                        amount *= (1 + expense.real_growth_rate) ** (
+                    # general inflation).  real_growth_rate wins; the
+                    # legacy growth_rate is treated as REAL growth too
+                    # (matching Account.growth_rate semantics).
+                    growth_rate = (
+                        expense.real_growth_rate
+                        if expense.real_growth_rate
+                        else expense.growth_rate)
+                    if growth_rate:
+                        amount *= (1 + growth_rate) ** (
                             year - expense.start_date.year)
                     # Prorate partial start/end years (end-exclusive)
                     amount *= _year_active_fraction(
@@ -1686,10 +1753,14 @@ class RetirementPlanner:
         federal_tax = max(0.0, federal_tax - ctc)
 
         # ---- California state tax (all ordinary — CA taxes LTCG as ordinary) ----
-        ca_total = ordinary_for_tax + income.capital_gains
-        ca_taxable = max(0.0, ca_total - deduction)  # CA uses same standard deduction
-        ca_brackets = law.ca_brackets
-        ca_tax = bracket_tax(ca_taxable, ca_brackets)
+        # Only CA has modeled brackets; other states pay no state income
+        # tax in this engine (better than charging CA tax in TX).
+        ca_tax = 0.0
+        if str(getattr(self.scenario, "state", "CA")).upper() == "CA":
+            ca_total = ordinary_for_tax + income.capital_gains
+            ca_taxable = max(0.0, ca_total - deduction)  # CA uses same standard deduction
+            ca_brackets = law.ca_brackets
+            ca_tax = bracket_tax(ca_taxable, ca_brackets)
 
         return federal_tax + ca_tax
 
@@ -2188,6 +2259,7 @@ class RetirementPlanner:
         scenario_name: str = "mean",
         return_volatility: float = 0.15,
         rng=None,
+        collect_projections: bool = False,
     ) -> Dict:
         """Run a single year-by-year projection with proper cash flow.
 
@@ -2199,6 +2271,10 @@ class RetirementPlanner:
            tax-free income.
         5. Tax-efficient withdrawals (RMD → taxable → pre-tax → Roth).
         6. Windfall events.
+
+        With *collect_projections* the per-year rows (income, expenses,
+        taxes, ACA subsidy, net worth) are returned under "projections"
+        — used by the MC↔deterministic parity harness.
         """
         total_taxes = 0.0
         total_ss = 0.0
@@ -2207,6 +2283,7 @@ class RetirementPlanner:
         total_estate_tax = 0.0
         peak_nw = 0.0
         out_of_savings_year = None
+        projections = [] if collect_projections else None
 
         # Starting balances
         balances: Dict[str, float] = {}
@@ -2406,7 +2483,10 @@ class RetirementPlanner:
             # general inflation, compounded from the current cost level.
             excess = rates.get("medical_inflation", 0.034) - rates.get(
                 "general_inflation", 0.025)
-            annual_expenses += self._medical_inflation_extra(year, excess)
+            annual_expenses += monetary_policy.adjust_for_inflation(
+                self._medical_inflation_extra(year, excess),
+                year, inflation_rate,
+            )
 
             # --- Step 4b: IRMAA Medicare surcharges (per-person) ---
             # 2-year lookback: use MAGI from 2 years prior
@@ -2442,11 +2522,12 @@ class RetirementPlanner:
             total_portfolio_value = sum(b for b in balances.values() if b > 0)
 
             if primary_retired and spouse_retired:
-                # Anchor the strategy on THIS year's planned expenses, not
+                # Anchor the strategy on THIS year's planned expenses
+                # (post-inflation, post medical-excess, post IRMAA), not
                 # a year-1 snapshot: when expense streams end (mortgage
                 # payoff, childcare, lease), spending must follow them.
                 annual_expenses = self.apply_withdrawal_strategy(
-                    year, expense_data["total"], total_portfolio_value,
+                    year, annual_expenses, total_portfolio_value,
                     portfolio_peak, expense_data,
                 )
 
@@ -2512,12 +2593,19 @@ class RetirementPlanner:
                 cost_basis.basis_by_account.clear()
                 cost_basis.basis_by_account.update(basis_snapshot)
 
-                # ACA subsidy on trial withdrawal-inclusive MAGI
+                # ACA subsidy on trial withdrawal-inclusive MAGI.  The
+                # subsidy can only offset the healthcare premium (the
+                # ACA-eligible medical spend), not every expense — a
+                # household's out-of-pocket is never reduced below
+                # expenses minus the premium it actually replaces.
                 if aca_family_size > 0:
                     aca_subsidy = tax_law_aca(
                         trial_magi, aca_family_size, law, self.scenario.state)
+                premium_base = monetary_policy.adjust_for_inflation(
+                    self._medical_expenses_base(year), year, inflation_rate)
+                subsidy_used = min(aca_subsidy, premium_base)
                 expenses_after_subsidy = max(
-                    0.0, annual_expenses - aca_subsidy)
+                    0.0, annual_expenses - subsidy_used)
 
                 # --- Build TaxableIncome from trial withdrawals ---
                 # SS taxable portion (income BEFORE SS was added, but
@@ -2535,16 +2623,38 @@ class RetirementPlanner:
 
                 non_ss_income = income_data["total"]  # wages + other non-SS income
                 # Provisional income for SS taxation includes capital
-                # gains; ordinary income does not.
-                other_income = (non_ss_income + _roth_conversion_income
-                                + withdrawal_ordinary + withdrawal_cg)
+                # gains; ordinary income does not.  Non-SS base-year
+                # income inflates in NOMINAL mode (withdrawal/conversion
+                # flows are already year-of dollars).
+                if (self.scenario.monetary_convention
+                        == MonetaryConvention.NOMINAL):
+                    inflate = ((1.0 + inflation_rate)
+                               ** (year - self.start_year))
+                    other_income = ((non_ss_income + _roth_conversion_income)
+                                    * inflate + withdrawal_ordinary
+                                    + withdrawal_cg)
+                else:
+                    other_income = (non_ss_income + _roth_conversion_income
+                                    + withdrawal_ordinary + withdrawal_cg)
                 taxable_ss = self.calculate_ss_taxable(ss_income, other_income)
 
                 # Ordinary income = non-SS wages/withdrawals/conversions +
-                # taxable SS portion (capital gains stay separate)
-                ordinary = (non_ss_income + _roth_conversion_income
-                            + withdrawal_ordinary + taxable_ss)
-                capital_gains = withdrawal_cg
+                # taxable SS portion (capital gains stay separate).
+                # calculate_annual_income returns base-year dollars: in
+                # NOMINAL mode inflate the base-year components to
+                # year-of dollars (withdrawal/conversion flows are
+                # already year-of).
+                if (self.scenario.monetary_convention
+                        == MonetaryConvention.NOMINAL):
+                    inflate = ((1.0 + inflation_rate)
+                               ** (year - self.start_year))
+                    ordinary = ((non_ss_income + _roth_conversion_income)
+                                * inflate + withdrawal_ordinary + taxable_ss)
+                    capital_gains = withdrawal_cg
+                else:
+                    ordinary = (non_ss_income + _roth_conversion_income
+                                + withdrawal_ordinary + taxable_ss)
+                    capital_gains = withdrawal_cg
 
                 # Convert to nominal for tax calculation (tax brackets are
                 # always nominal; REAL-mode values convert, then back).
@@ -2694,6 +2804,18 @@ class RetirementPlanner:
             }
             yearly_state.events.append({"type": "year_complete"})
 
+            if projections is not None:
+                projections.append({
+                    "year": year,
+                    "income": annual_income,
+                    "expenses": annual_expenses,
+                    "taxes": taxes,
+                    "aca_subsidy": aca_subsidy,
+                    "net_worth": net_worth,
+                    "total_assets": total_assets,
+                    "total_liabilities": total_liabs,
+                })
+
             if net_worth > peak_nw:
                 peak_nw = net_worth
 
@@ -2738,6 +2860,7 @@ class RetirementPlanner:
             "lifetime_ss": total_ss,
             "lifetime_contributions": total_contributions,
             "out_of_savings_year": out_of_savings_year,
+            **({"projections": projections} if projections is not None else {}),
         }
 
     # ------------------------------------------------------------------
@@ -2820,6 +2943,11 @@ class RetirementPlanner:
 
         rates = self.scenario.economic.get_rate(scenario_name)
         inflation_rate = rates["general_inflation"]
+        monetary_policy = MonetaryPolicy(
+            convention=self.scenario.monetary_convention,
+            base_year=self.start_year,
+            inflation=inflation_rate,
+        )
         total_estate_tax = 0.0
 
         # Track mortgage balances so deterministic net worth matches the
@@ -2835,6 +2963,7 @@ class RetirementPlanner:
         balances: Dict[str, float] = {}
         for account_id, account in self.accounts.items():
             balances[account_id] = account.balance
+        income_history: Dict[int, float] = {}  # IRMAA 2-year lookback
         event_mortgage_terms: Dict[str, tuple] = {}
         mortgage_property_map = {
             m.id: m.property_id for m in self.scenario.mortgages
@@ -2876,8 +3005,7 @@ class RetirementPlanner:
             income = self.calculate_annual_income(year, scenario_name)
 
             # Social Security (mirrors the Monte Carlo path: per-person
-            # claiming age with COLA).  Deterministic runs are in real
-            # dollars, so no inflation adjustment is applied.
+            # claiming age with COLA).
             ss_income = 0.0
             ss = self.scenario.social_security
             if ss:
@@ -2887,17 +3015,32 @@ class RetirementPlanner:
                 if spouse_age >= ss.spouse_claiming_age:
                     ss_income += self.calculate_social_security(
                         year, self.scenario.spouse)
+            # In NOMINAL mode, inflate income and SS to year-of dollars
+            # (MC parity; REAL mode is identity).
+            income["total"] = monetary_policy.adjust_for_inflation(
+                income["total"], year, inflation_rate)
+            ss_income = monetary_policy.adjust_for_inflation(
+                ss_income, year, inflation_rate)
             if ss_income > 0:
                 income["total"] += ss_income
                 income["by_source"]["Social Security"] = ss_income
+
+            income_history[year] = income["total"]
 
             expenses = self.calculate_annual_expenses(
                 year, scenario_name, mortgage_balances=mortgage_balances,
                 event_mortgage_terms=event_mortgage_terms)
 
+            # In NOMINAL mode, inflate expenses to year-of dollars
+            # (MC parity; REAL mode is identity).
+            expenses["total"] = monetary_policy.adjust_for_inflation(
+                expenses["total"], year, inflation_rate)
+
             # Medical inflation excess — parity with the Monte Carlo path.
-            expenses["total"] += self._medical_inflation_extra(
-                year, rates["medical_inflation"] - inflation_rate)
+            expenses["total"] += monetary_policy.adjust_for_inflation(
+                self._medical_inflation_extra(
+                    year, rates["medical_inflation"] - inflation_rate),
+                year, inflation_rate)
 
             # ACA subsidy (pre-Medicare, per-person)
             aca_family_size = 0
@@ -2907,6 +3050,23 @@ class RetirementPlanner:
                 aca_family_size += 1
             # Children under 26 ride on the parents' ACA plan
             aca_family_size += self._dependents_under_26(year)
+
+            # IRMAA Medicare surcharges (2-year lookback on MAGI — the
+            # deterministic path uses income-only MAGI; MC includes
+            # withdrawals).  Mirrors the Monte Carlo step 4b.
+            num_medicare = 0
+            if self.scenario.primary.coverage_at_age(primary_age) == "medicare":
+                num_medicare += 1
+            if self.scenario.spouse.coverage_at_age(spouse_age) == "medicare":
+                num_medicare += 1
+            if num_medicare > 0:
+                irmaa_amount = tax_law_irmaa(
+                    income_history.get(year - 2, 0.0),
+                    TaxLawRegistry().law_for_year(year),
+                    num_people=num_medicare,
+                )
+                expenses["total"] += monetary_policy.adjust_for_inflation(
+                    irmaa_amount, year, inflation_rate)
 
             aca_subsidy = 0.0
             if aca_family_size > 0:
@@ -2918,12 +3078,28 @@ class RetirementPlanner:
                     income["total"], aca_family_size, law, self.scenario.state)
 
             # Build TaxableIncome (simplified — all income as ordinary
-            # for deterministic projection; real sim handles this properly)
+            # for deterministic projection; real sim handles this
+            # properly).  Social Security is partially taxable: only the
+            # provisional-income share counts as ordinary (MC parity).
+            ss_in_total = income.get("by_source", {}).get(
+                "Social Security", 0.0)
+            non_ss = income["total"] - ss_in_total
+            taxable_ss = self.calculate_ss_taxable(ss_in_total, non_ss)
+            ordinary_for_tax = non_ss + taxable_ss
+            # Tax brackets are nominal: in REAL mode convert income to
+            # nominal; in NOMINAL mode income is already year-of dollars
+            # (inflated above).
+            if (self.scenario.monetary_convention
+                    == MonetaryConvention.NOMINAL):
+                income_for_tax = ordinary_for_tax
+            else:
+                income_for_tax = monetary_policy.to_nominal_for_tax(
+                    ordinary_for_tax, year, inflation_rate)
             ti = TaxableIncome(
-                ordinary=income["total"],
+                ordinary=income_for_tax,
                 capital_gains=0.0,
                 tax_free=0.0,
-                total=income["total"],
+                total=income_for_tax,
             )
             # Child Tax Credit: dependents under 17
             num_children = sum(
@@ -2934,6 +3110,10 @@ class RetirementPlanner:
                 inflation_rate=inflation_rate,
                 years_from_base=years_from_base,
                 num_children=num_children)
+            # Taxes are computed on nominal income: convert back to the
+            # active convention (REAL mode deflates — MC parity).
+            taxes = monetary_policy.from_nominal_after_tax(
+                taxes, year, inflation_rate)
 
             # Housing events (sale/purchase/trade-up) — same in-place
             # semantics as the Monte Carlo path.

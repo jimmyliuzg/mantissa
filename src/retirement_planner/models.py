@@ -131,7 +131,9 @@ class Account:
     account_type: str  # 401k, roth_ira, trad_ira, brokerage, hsa, checking, real_estate, vehicle, other
     tax_treatment: str  # pre_tax, roth, taxable, tax_exempt
     balance: float
-    growth_rate: float = 0.088
+    growth_rate: Optional[float] = None  # None = use CMA (equity/bond real
+    # returns); 0 = cash (no growth); any other value = blended equity
+    # override (legacy per-account rate)
     growth_rate_optimistic: float = 0.1056
     growth_rate_pessimistic: float = 0.070
     monthly_contribution: float = 0.0  # Legacy — superseded by cash-flow allocation
@@ -231,6 +233,8 @@ class Expense:
     end_date: date
     growth_rate: float = 0.0
     real_growth_rate: float = 0.0  # real (inflation-adjusted) growth per year
+    # NOTE: growth_rate is treated as REAL growth too (matching
+    # Account.growth_rate); real_growth_rate wins when both are set.
     is_one_time: bool = False
     one_time_amount: float = 0.0
     one_time_date: Optional[date] = None
