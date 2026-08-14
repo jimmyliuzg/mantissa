@@ -55,7 +55,8 @@ _SCHEMA_KEYS = {
     "age_events", "dependents",
     "social_security", "glidepath", "withdrawal_strategy", "withdrawal_rate",
     "guardrail_floor_pct", "guardrail_ceiling_pct", "legacy_goal", "state",
-    "family_size", "savings_order", "monetary_convention", "_comment",
+    "family_size", "savings_order", "monetary_convention", "stress_level",
+    "_comment",
 }
 
 
@@ -214,6 +215,8 @@ def validate_config(config: dict, strict: bool = False) -> ValidationResult:
     convention = config.get("monetary_convention")
     if convention is not None and convention not in ("real", "nominal"):
         _issue(result, "$.monetary_convention", "must be 'real' or 'nominal'", code="enum")
+    if "stress_level" in config:
+        _number(result, config["stress_level"], "$.stress_level", 0, 1)
     return result
 
 

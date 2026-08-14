@@ -549,12 +549,29 @@ class TestDeadFieldsWarn:
         caught = self._load(patch)
         assert any("real_growth_rate" in str(w.message) for w in caught)
 
-    def test_min_reduction_warns(self):
-        caught = self._load(lambda c: c["expenses"].append(
-            {"id": "e", "name": "E", "monthly_amount": 100,
-             "start_date": "2026-01-01", "end_date": "2090-12-31",
-             "min_reduction": 0.5}))
-        assert any("min_reduction" in str(w.message) for w in caught)
+    def test_min_reduction_wired_under_stress(self):
+        """min_reduction is live: under stress, discretionary expenses
+        are cut by min_reduction × stress_level in BOTH paths."""
+        import sys
+        sys.path.insert(0, "tests/regression")
+        from test_config_coverage import base_planner
+
+        p = base_planner()
+        for e in p.scenario.expenses:
+            e.min_reduction = 0.5
+            e.is_must_spend = False  # make them discretionary
+        base_det = {r["year"]: r["expenses"] for r in p.project_cash_flow()}
+        stress_det = {r["year"]: r["expenses"]
+                      for r in p.project_cash_flow(stress_level=1.0)}
+        assert any(stress_det[y] < base_det[y] for y in base_det)
+
+        import numpy as np
+        base_mc = p.run_single_simulation(
+            return_volatility=0.0, rng=np.random.default_rng(1))
+        stress_mc = p.run_single_simulation(
+            return_volatility=0.0, rng=np.random.default_rng(1),
+            stress_level=1.0)
+        assert stress_mc["final_net_worth"] > base_mc["final_net_worth"]
 
     def test_is_ss_warns(self):
         caught = self._load(lambda c: c["income_streams"].append(

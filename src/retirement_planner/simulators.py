@@ -31,6 +31,7 @@ class MonteCarloEngine:
         method: str = "gaussian",
         historical_returns: Optional[List[float]] = None,
         rng=None,
+        stress_level: float = 0.0,
     ) -> Dict:
         """Run one year-by-year simulation.
 
@@ -41,14 +42,17 @@ class MonteCarloEngine:
             # Monkey-patch the planner's annual return generation for this sim.
             # We pass the pre-computed return sequence into run_single_simulation
             # via a thin wrapper that overrides the volatility-based return.
-            return self._run_historical_simulation(historical_returns, scenario)
+            return self._run_historical_simulation(
+                historical_returns, scenario, stress_level=stress_level)
 
-        return self.planner.run_single_simulation(scenario, return_volatility, rng=rng)
+        return self.planner.run_single_simulation(
+            scenario, return_volatility, rng=rng, stress_level=stress_level)
 
     def _run_historical_simulation(
         self,
         historical_returns: List[float],
         scenario: str = "mean",
+        stress_level: float = 0.0,
     ) -> Dict:
         """Run a simulation using pre-computed sequential historical returns.
 
@@ -59,7 +63,8 @@ class MonteCarloEngine:
         """
         self.planner._historical_return_override = historical_returns
         try:
-            return self.planner.run_single_simulation(scenario, return_volatility=0.0)
+            return self.planner.run_single_simulation(
+                scenario, return_volatility=0.0, stress_level=stress_level)
         finally:
             self.planner._historical_return_override = None
 
@@ -73,6 +78,7 @@ class MonteCarloEngine:
         return_volatility: float = 0.15,
         method: str = "gaussian",
         seed: Optional[int] = None,
+        stress_level: float = 0.0,
     ) -> Dict:
         """
         Run Monte Carlo simulation and return statistics.
@@ -83,6 +89,9 @@ class MonteCarloEngine:
             return_volatility: Standard deviation of returns (used for gaussian)
             method: "gaussian" for random normal returns, "historical" to
                     replay actual S&P 500 annual return sequences
+            seed: RNG seed for reproducibility
+            stress_level: 0.0 (normal) to 1.0 (max discretionary cuts —
+                    expenses cut by min_reduction × stress_level)
 
         Returns:
             Dictionary with success rate, percentiles, etc.
@@ -104,13 +113,15 @@ class MonteCarloEngine:
                     method="historical",
                     historical_returns=seq,
                     rng=rng,
+                    stress_level=stress_level,
                 )
                 results.append(result)
         else:
             # Gaussian method (original behavior)
             for _ in range(num_simulations):
                 result = self.planner.run_single_simulation(
-                    scenario, return_volatility, rng=rng
+                    scenario, return_volatility, rng=rng,
+                    stress_level=stress_level,
                 )
                 results.append(result)
 

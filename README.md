@@ -193,7 +193,26 @@ Replays historical-style return sequences to expose sequence-of-returns risk.
 
 ### Stress Scenarios
 
-Includes deterministic scenarios such as the dot-com decline, global financial crisis, high inflation, early-retirement crash, and lost decade.
+Stress testing models a behavioral pullback: at stress level *s* (0..1),
+every discretionary expense (`is_must_spend: false`) is cut by
+`min_reduction × s` (e.g. a travel budget with `min_reduction: 0.92` is
+cut up to 92% at full stress).  Must-spend items (housing, groceries
+floor, LTC) are untouched.
+
+```bash
+# Sweep stress levels and compare success rates
+mantissa stress -c plan.json -n 500
+
+# Single stress level on a normal run
+mantissa run -c plan.json -n 1000 --stress 0.5
+
+# Or bake it into the config
+# "stress_level": 0.5
+```
+
+The `stress` command also lists which expenses get cut and by how much.
+Stress affects both Monte Carlo and the deterministic projection, so
+the two paths stay consistent.
 
 ## Withdrawal and Tax Planning
 

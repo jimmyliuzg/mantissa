@@ -253,19 +253,25 @@ def _format_equity_breakdown(planner) -> str:
     "--scenario", "-s", default="mean",
     type=click.Choice(["mean", "optimistic", "pessimistic"]),
 )
+@click.option("--stress", default=None, type=float,
+              help="Stress level 0-1: cut discretionary expenses by "
+                   "min_reduction x stress (0 = normal, 1 = max).")
 @click.option("--output", "-o", default=None, type=click.Path())
 @click.option("--seed", default=None, type=int, help="Seed for reproducible simulations.")
-def run(config, simulations, method, scenario, output, seed):
+def run(config, simulations, method, scenario, output, seed, stress):
     """Run Monte Carlo simulation and display results."""
     planner = RetirementPlanner.from_config(config)
     mc = MonteCarloEngine(planner)
 
-    click.echo(f"Running {simulations:,} simulations ({method}, {scenario})...")
+    stress_level = stress if stress is not None else planner.stress_level
+    click.echo(f"Running {simulations:,} simulations ({method}, {scenario})"
+               f"{' @ stress ' + str(stress_level) if stress_level else ''}...")
     mc_results = mc.run(
         num_simulations=simulations,
         scenario=scenario,
         method=method,
         seed=seed,
+        stress_level=stress_level,
     )
 
     _print_mc_results(mc_results)
@@ -277,21 +283,79 @@ def run(config, simulations, method, scenario, output, seed):
 
 @main.command()
 @click.option("--config", "-c", required=True, type=click.Path(exists=True))
+@click.option("--simulations", "-n", default=500, type=int)
+@click.option("--levels", "-l", default="0,0.25,0.5,0.75,1",
+              help="Comma-separated stress levels to test.")
+@click.option("--method", "-m", default="gaussian",
+              type=click.Choice(["gaussian", "historical"]))
+@click.option("--scenario", "-s", default="mean",
+              type=click.Choice(["mean", "optimistic", "pessimistic"]))
+@click.option("--seed", default=None, type=int)
+def stress(config, simulations, levels, method, scenario, seed):
+    """Stress-test the plan: MC success across discretionary-cut levels.
+
+    At each level, non-essential expenses (is_must_spend=false) are cut
+    by their min_reduction x level.  Shows how much the plan cushions
+    a spending pullback — and which expenses get cut.
+    """
+    try:
+        level_list = [float(v.strip()) for v in levels.split(",")]
+    except ValueError:
+        raise click.BadParameter(
+            f"Invalid levels: {levels}. Must be comma-separated numbers.")
+    planner = RetirementPlanner.from_config(config)
+    mc = MonteCarloEngine(planner)
+
+    discretionary = [
+        e for e in planner.scenario.expenses
+        if not e.is_must_spend and not e.is_one_time
+        and e.min_reduction > 0
+    ]
+    if discretionary:
+        click.echo("Discretionary expenses (cut under stress):")
+        for e in sorted(discretionary, key=lambda x: -x.min_reduction):
+            click.echo(f"  {e.name}: -{e.min_reduction*100:.0f}% max cut")
+        click.echo()
+    else:
+        click.echo("No discretionary expenses with min_reduction set — "
+                   "stress levels will have no effect.\n")
+
+    click.echo(f"Running {simulations:,} simulations per level...")
+    headers = ["Stress", "Success", "Median NW", "P10 NW", "OOS Rate"]
+    rows = []
+    for level in level_list:
+        r = mc.run(num_simulations=simulations, scenario=scenario,
+                   method=method, seed=seed, stress_level=level)
+        rows.append([
+            f"{level:.0%}",
+            f"{r['success_rate']*100:.1f}%",
+            _fmt_money(r["median_final_nw"]),
+            _fmt_money(r["p10_final_nw"]),
+            f"{r['out_of_savings_rate']*100:.1f}%",
+        ])
+    click.echo(tabulate(rows, headers=headers, tablefmt="rounded_grid"))
+
+
+@main.command()
+@click.option("--config", "-c", required=True, type=click.Path(exists=True))
 @click.option(
     "--format", "-f", "fmt", default="markdown",
     type=click.Choice(["json", "csv", "markdown"]),
 )
 @click.option("--output", "-o", default=None, type=click.Path())
 @click.option("--simulations", "-n", default=1000, type=int)
+@click.option("--stress", default=None, type=float,
+              help="Stress level 0-1: cut discretionary expenses.")
 @click.option("--show-equity", is_flag=True, default=False,
               help="Include equity vesting breakdown in report.")
-def report(config, fmt, output, simulations, show_equity):
+def report(config, fmt, output, simulations, stress, show_equity):
     """Generate a retirement plan report."""
     planner = RetirementPlanner.from_config(config)
     mc = MonteCarloEngine(planner)
 
-    cash_flow = planner.project_cash_flow()
-    mc_results = mc.run(num_simulations=simulations)
+    stress_level = stress if stress is not None else planner.stress_level
+    cash_flow = planner.project_cash_flow(stress_level=stress_level)
+    mc_results = mc.run(num_simulations=simulations, stress_level=stress_level)
 
     summary = generate_summary_report(mc_results, cash_flow)
     cf_report = generate_cash_flow_report(cash_flow)
@@ -332,7 +396,9 @@ def report(config, fmt, output, simulations, show_equity):
               type=click.Choice(["gaussian", "historical"]))
 @click.option("--scenario", "-s", default="mean",
               type=click.Choice(["mean", "optimistic", "pessimistic"]))
-def pdf(config, output, simulations, method, scenario):
+@click.option("--stress", default=None, type=float,
+              help="Stress level 0-1: cut discretionary expenses.")
+def pdf(config, output, simulations, method, scenario, stress):
     """Generate a PDF retirement plan report (Boldin-style)."""
     try:
         from .pdf_report import generate_pdf_report
@@ -341,13 +407,15 @@ def pdf(config, output, simulations, method, scenario):
     planner = RetirementPlanner.from_config(config)
     mc = MonteCarloEngine(planner)
 
+    stress_level = stress if stress is not None else planner.stress_level
     click.echo(f"Running {simulations:,} simulations ({method}, {scenario})...")
     mc_results = mc.run(
         num_simulations=simulations,
         scenario=scenario,
         method=method,
+        stress_level=stress_level,
     )
-    cash_flow = planner.project_cash_flow(scenario)
+    cash_flow = planner.project_cash_flow(scenario, stress_level=stress_level)
 
     output = output or "report.pdf"
     click.echo("Generating PDF report...")

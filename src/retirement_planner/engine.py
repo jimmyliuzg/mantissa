@@ -618,6 +618,10 @@ class RetirementPlanner:
         # When set by MonteCarloEngine for historical simulations, the planner
         # uses this list of sequential returns instead of random gaussian draws.
         self._historical_return_override: Optional[List[float]] = None
+        # Stress level (0..1): discretionary expenses are cut by
+        # min_reduction × stress_level (behavioral response to market
+        # stress).  CLI --stress and the `stress` command set it.
+        self.stress_level = 0.0
     @classmethod
     def from_config(cls, config_path: str) -> 'RetirementPlanner':
         """Load planner from JSON config file."""
@@ -842,11 +846,6 @@ class RetirementPlanner:
                     f"expense '{ec.get('id')}': both 'growth_rate' and "
                     f"'real_growth_rate' set — 'real_growth_rate' wins.",
                     UserWarning)
-            if ec.get("min_reduction"):
-                warnings.warn(
-                    f"expense '{ec.get('id')}': 'min_reduction' (stress-"
-                    f"testing) is not wired to any simulation path; "
-                    f"ignored.", UserWarning)
             one_time_date = ec.get("one_time_date")
             expenses.append(Expense(
                 id=ec["id"],
@@ -1008,8 +1007,12 @@ class RetirementPlanner:
             withdrawal_strategy=config.get("withdrawal_strategy", "fixed"),
             withdrawal_rate=config.get("withdrawal_rate", 0.04),
         )
-        
-        return cls(scenario)
+
+        planner = cls(scenario)
+        # Optional stress level baked into the config (0..1); CLI --stress
+        # overrides it per run.
+        planner.stress_level = max(0.0, min(1.0, config.get("stress_level", 0.0)))
+        return planner
 
     # ------------------------------------------------------------------
     # Equity glidepath / asset allocation
@@ -1499,7 +1502,9 @@ class RetirementPlanner:
         Args:
             year: Calendar year.
             scenario: Economic scenario (for age-event overrides only).
-            stress_level: 0.0 = normal, 1.0 = max stress.
+            stress_level: 0.0 = normal, 1.0 = max stress (clamped) —
+                discretionary expenses (is_must_spend=False) are cut by
+                min_reduction x stress_level.
             mortgage_balances: Optional dict of mortgage.id -> remaining
                 balance.  When provided, each year's payment is amortized:
                 interest = balance * rate, principal = payment - interest,
@@ -1507,6 +1512,7 @@ class RetirementPlanner:
                 zero stop generating expenses.  When None, payments are
                 modeled flat (legacy behavior).
         """
+        stress_level = max(0.0, min(1.0, stress_level))
         total_expenses = 0
         expenses_by_category = {}
         expense_mods = self.calculate_age_events(year)
@@ -2260,6 +2266,7 @@ class RetirementPlanner:
         return_volatility: float = 0.15,
         rng=None,
         collect_projections: bool = False,
+        stress_level: Optional[float] = None,
     ) -> Dict:
         """Run a single year-by-year projection with proper cash flow.
 
@@ -2284,6 +2291,11 @@ class RetirementPlanner:
         peak_nw = 0.0
         out_of_savings_year = None
         projections = [] if collect_projections else None
+        # Stress level: 0 = normal, 1 = max discretionary cuts
+        # (None → planner-level default set via CLI --stress).
+        if stress_level is None:
+            stress_level = getattr(self, "stress_level", 0.0)
+        stress_level = max(0.0, min(1.0, stress_level))
 
         # Starting balances
         balances: Dict[str, float] = {}
@@ -2472,7 +2484,8 @@ class RetirementPlanner:
 
             # --- Step 4: Expenses ---
             expense_data = self.calculate_annual_expenses(
-                year, scenario_name, mortgage_balances=mortgage_balances,
+                year, scenario_name, stress_level=stress_level,
+                mortgage_balances=mortgage_balances,
                 event_mortgage_terms=event_mortgage_terms,)
             annual_expenses = expense_data["total"]
 
@@ -2921,8 +2934,16 @@ class RetirementPlanner:
     # ------------------------------------------------------------------
     # Deterministic cash flow projection
     # ------------------------------------------------------------------
-    def project_cash_flow(self, scenario_name: str = "mean") -> List[Dict]:
-        """Generate year-by-year cash flow projection (deterministic)."""
+    def project_cash_flow(self, scenario_name: str = "mean",
+                          stress_level: Optional[float] = None) -> List[Dict]:
+        """Generate year-by-year cash flow projection (deterministic).
+
+        *stress_level* (0..1) cuts discretionary expenses by
+        min_reduction × stress_level — same semantics as the MC path.
+        """
+        if stress_level is None:
+            stress_level = getattr(self, "stress_level", 0.0)
+        stress_level = max(0.0, min(1.0, stress_level))
         from .approximations import (
             ApproximationTracker, AGGREGATE_BASIS_WARNING,
             DETERMINISTIC_TAXES_WARNING, DETERMINISTIC_RETURNS_WARNING,
@@ -3030,7 +3051,8 @@ class RetirementPlanner:
             income_history[year] = income["total"]
 
             expenses = self.calculate_annual_expenses(
-                year, scenario_name, mortgage_balances=mortgage_balances,
+                year, scenario_name, stress_level=stress_level,
+                mortgage_balances=mortgage_balances,
                 event_mortgage_terms=event_mortgage_terms)
 
             # In NOMINAL mode, inflate expenses to year-of dollars
