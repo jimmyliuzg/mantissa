@@ -2409,8 +2409,10 @@ class RetirementPlanner:
                 if (self._historical_return_override is not None
                         and _hist_idx < len(self._historical_return_override)
                         and account.account_type not in ("real_estate",)):
-                    # Historical sequences are NOMINAL market returns:
-                    # in REAL mode deflate them to constant dollars.
+                    # Historical sequences are NOMINAL S&P 500 total
+                    # returns (despite the historical_data docstring
+                    # claiming "real" — 2021 = +28.7% is the nominal
+                    # value): deflate to constant dollars in REAL mode.
                     actual_rate = self._historical_return_override[_hist_idx]
                     if (self.scenario.monetary_convention
                             == MonetaryConvention.REAL):

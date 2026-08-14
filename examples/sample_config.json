@@ -1,35 +1,30 @@
 {
   "name": "Default Retirement Plan",
   "description": "A baseline retirement plan with reasonable assumptions based on historical data and forward-looking estimates.",
-  
   "_comment": "All return rates are REAL (inflation-adjusted). Medical inflation is NOMINAL.",
-  
   "primary": {
     "name": "Primary Person",
     "birth_date": "1990-01-01",
     "retirement_date": "2030-01-01",
     "longevity_age": 90
   },
-  
   "spouse": {
     "name": "Spouse",
     "birth_date": "1990-01-01",
     "retirement_date": "2030-01-01",
     "longevity_age": 90
   },
-  
   "economic": {
-    "_comment": "Conservative defaults — use historical medians, not optimistic projections",
+    "_comment": "Conservative defaults \u2014 use historical medians, not optimistic projections",
     "inflation": 0.025,
     "medical_inflation": 0.04,
     "housing_appreciation": 0.035,
     "investment_return_mean": 0.07,
     "investment_return_volatility": 0.15
   },
-  
   "accounts": [
     {
-      "_comment": "Diversified portfolio — adjust to your allocation",
+      "_comment": "Diversified portfolio \u2014 adjust to your allocation",
       "id": "401k_primary",
       "name": "401k - Primary",
       "type": "401k",
@@ -94,7 +89,6 @@
       "growth_rate": 0.015
     }
   ],
-  
   "income_streams": [
     {
       "id": "salary_primary",
@@ -117,10 +111,9 @@
       "is_w2": true
     }
   ],
-  
   "expenses": [
     {
-      "_comment": "Conservative estimate — verify against your actual spending",
+      "_comment": "Conservative estimate \u2014 verify against your actual spending",
       "id": "living",
       "name": "All Living Expenses",
       "monthly_amount": 5000,
@@ -137,8 +130,7 @@
       "end_date": "2080-01-01",
       "category": "discretionary",
       "is_must_spend": false,
-      "min_reduction": 0.7,
-      "_comment": "Can cut 70% in stress scenarios — vacations are flexible"
+      "_comment": "Can cut 70% in stress scenarios \u2014 vacations are flexible"
     },
     {
       "id": "hobbies",
@@ -148,7 +140,6 @@
       "end_date": "2080-01-01",
       "category": "discretionary",
       "is_must_spend": false,
-      "min_reduction": 0.5,
       "_comment": "Can cut 50% in stress scenarios"
     },
     {
@@ -159,17 +150,16 @@
       "end_date": "2080-01-01",
       "category": "medical",
       "is_must_spend": true,
-      "_comment": "Base healthcare — age events will increase this at 65"
+      "_comment": "Base healthcare \u2014 age events will increase this at 65"
     }
   ],
-
   "age_events": [
     {
       "trigger_age": 65,
       "expense_id": "healthcare",
       "new_monthly_amount": 2500,
       "duration_years": -1,
-      "_comment": "Healthcare costs jump at 65 — Medicare gaps, supplemental insurance"
+      "_comment": "Healthcare costs jump at 65 \u2014 Medicare gaps, supplemental insurance"
     },
     {
       "trigger_age": 75,
@@ -179,13 +169,10 @@
       "_comment": "Long-term care and increased medical needs at 75+"
     }
   ],
-  
   "mortgages": [],
   "windfalls": [],
-  
   "legacy_goal": 1000000,
   "state": "CA",
-  
   "_notes": {
     "investment_returns": "7% real is the historical S&P 500 average (1926-2023). Use 6% for conservative planning, 5% for very conservative.",
     "expense_tracking": "Track your actual spending for 6+ months before planning. Budgeting tools often underestimate actual spending.",

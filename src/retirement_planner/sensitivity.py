@@ -30,27 +30,32 @@ class SensitivityAnalyzer:
         original_value = self._get_variable_value(variable, self.planner.scenario)
         results = []
 
-        for value in values:
-            self._set_variable(variable, value, self.planner.scenario)
+        try:
+            for value in values:
+                self._set_variable(variable, value, self.planner.scenario)
 
-            success_count = 0
-            total_final_nw = 0.0
+                success_count = 0
+                total_final_nw = 0.0
 
-            for _ in range(num_simulations):
-                sim = self.planner.run_single_simulation()
-                if sim["success"]:
-                    success_count += 1
-                total_final_nw += sim["final_net_worth"]
+                for _ in range(num_simulations):
+                    sim = self.planner.run_single_simulation()
+                    if sim["success"]:
+                        success_count += 1
+                    total_final_nw += sim["final_net_worth"]
 
-            results.append({
-                "variable": variable,
-                "value": value,
-                "success_rate": success_count / num_simulations,
-                "avg_final_nw": total_final_nw / num_simulations,
-                "num_simulations": num_simulations,
-            })
-
-        self._set_variable(variable, original_value, self.planner.scenario)
+                results.append({
+                    "variable": variable,
+                    "value": value,
+                    "success_rate": success_count / num_simulations,
+                    "avg_final_nw": total_final_nw / num_simulations,
+                    "num_simulations": num_simulations,
+                })
+        finally:
+            # Always restore the scenario, even on exceptions.  The
+            # per-account snapshot matters: accounts may carry different
+            # growth rates (e.g. money_market 0.04 vs 401k 0.07) that a
+            # single-value restore would flatten.
+            self._restore_variable(variable, original_value, self.planner.scenario)
         return results
 
     def _set_variable(self, variable: str, value: float, scenario) -> None:
@@ -77,6 +82,18 @@ class SensitivityAnalyzer:
         else:
             raise ValueError(f"Unsupported sensitivity variable: {variable!r}")
 
+    def _restore_variable(self, variable: str, original, scenario) -> None:
+        """Restore the scenario to its pre-analysis state.
+
+        For 'investment_return_mean' the snapshot is a per-account dict
+        (accounts may carry different rates); other variables restore a
+        scalar.
+        """
+        if variable == "investment_return_mean":
+            for account in scenario.accounts:
+                if account.account_type not in ("real_estate", "vehicle", "checking"):
+                    account.growth_rate = original.get(account.id)
+
     def _get_variable_value(self, variable: str, scenario) -> float:
         """Get the current value of a variable on the scenario object."""
         if variable == "inflation":
@@ -86,9 +103,10 @@ class SensitivityAnalyzer:
         elif variable == "housing_appreciation":
             return scenario.economic.housing_appreciation
         elif variable == "investment_return_mean":
-            for account in scenario.accounts:
-                if account.account_type not in ("real_estate", "vehicle", "checking"):
-                    return account.growth_rate
-            return 0.0
+            return {
+                account.id: account.growth_rate
+                for account in scenario.accounts
+                if account.account_type not in ("real_estate", "vehicle", "checking")
+            }
         else:
             raise ValueError(f"Unsupported sensitivity variable: {variable!r}")

@@ -1,8 +1,10 @@
 """
 Historical market return data for Monte Carlo simulations.
 
-Uses actual S&P 500 real (inflation-adjusted) annual returns from 1926-2023.
-Source: Ibbotson Associates / Morningstar SBBI data.
+S&P 500 annual total returns (NOMINAL, price + dividends), 1926-2023.
+Values match the standard nominal total-return series (e.g. 2021 =
++28.7%, 2008 = -37.0%, 2022 = -18.1% — all nominal).  The engine
+converts to real in REAL mode.
 
 Instead of generating random gaussian returns, simulations can replay
 historical return sequences. This captures sequence-of-returns risk
@@ -11,7 +13,7 @@ than independent random draws.
 """
 from typing import Dict, Optional
 
-# S&P 500 real (inflation-adjusted) annual returns, 1926-2023
+# S&P 500 nominal total returns (price + dividends), 1926-2023
 HISTORICAL_SNP500_REAL_RETURNS: Dict[int, float] = {
     1926: 0.058, 1927: 0.286, 1928: 0.380, 1929: -0.312, 1930: -0.257,
     1931: -0.439, 1932: -0.098, 1933: 0.540, 1934: -0.014, 1935: 0.472,

@@ -654,9 +654,11 @@ def _section_assumptions(styles: dict, scenario) -> list:
     elements.append(Paragraph("Accounts", styles["SubHead"]))
     acct_rows = [["Account", "Type", "Tax Treatment", "Balance", "Growth Rate"]]
     for a in scenario.accounts:
+        growth = (f"{a.growth_rate:.1%}" if a.growth_rate is not None
+                  else "CMA")  # None = capital-market assumptions
         acct_rows.append([
             a.name, a.account_type.title(), a.tax_treatment,
-            _fmt_money(a.balance), _fmt_pct(a.growth_rate),
+            _fmt_money(a.balance), growth,
         ])
     t = _make_table(acct_rows, col_widths=[1.5 * inch, 1.2 * inch, 1.2 * inch, 1.3 * inch, 1.2 * inch])
     elements.append(t)
