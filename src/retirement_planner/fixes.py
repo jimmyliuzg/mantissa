@@ -38,36 +38,38 @@ def process_housing_event(
     cost_basis: float,  # basis in property being sold
     filing_status: str = "MFJ",
     state: str = "CA",
+    mortgage_property_map: Optional[Dict[str, str]] = None,
+    event_mortgage_terms: Optional[Dict[str, tuple]] = None,
 ) -> HousingEventResult:
-    """Process a housing event (buy/sell/refinance).
+    """Process a housing event (buy/sell/refinance) in place.
 
-    Handles:
-    - Sale: adds proceeds to account, pays off mortgage, calculates gain
-    - Purchase: creates real_estate balance, deducts down payment, creates mortgage
-    - Refinance: replaces mortgage balance
+    Mutates *balances* and *mortgage_balances* directly.  Handles:
+    - Sale: pays off only the mortgage(s) secured by ``event.property_id``
+      (all mortgages when property_id is empty), routes net proceeds to
+      ``goes_to_account``, and removes the property balance.
+    - Purchase: funds the down payment from ``funding_account``, adds the
+      new property value, and registers a new amortizing mortgage in
+      *event_mortgage_terms* (rate, monthly payment, start date).
     """
     event_year = event.event_date.year
     if event_year != year:
         return HousingEventResult(
-            event_id=event.event_id, event_type="none",
+            event_id=event.id, event_type="none",
             account_delta=0, mortgage_delta=0, gain_realized=0,
             tax_due=0, property_account_change=0,
         )
 
     account_delta = 0.0
-    mortgage_delta = 0.0
     gain_realized = 0.0
     tax_due = 0.0
-    property_change = 0.0
     event_type = "none"
 
     # SALE
     if event.sale_price > 0:
         event_type = "sale"
-        proceeds = event.sale_price
 
         # Capital gain (IRC §121 exclusion: $250k single / $500k MFJ)
-        gross_gain = proceeds - cost_basis
+        gross_gain = event.sale_price - cost_basis
         if filing_status in ("MFJ", "QSS"):
             exclusion = 500_000
         else:
@@ -77,44 +79,75 @@ def process_housing_event(
 
         # Tax on gain (simplified — 15% LTCG + CA ~9.3%)
         if taxable_gain > 0:
-            federal_ltcg = taxable_gain * 0.15
-            ca_tax = taxable_gain * 0.093  # CA taxes gains as ordinary
-            tax_due = federal_ltcg + ca_tax
+            tax_due = taxable_gain * 0.15 + taxable_gain * 0.093
 
-        # Proceeds go to target account
-        goes_to = getattr(event, 'goes_to_account', 'joint_brokerage')
-        account_delta = proceeds - tax_due
+        proceeds = event.sale_price - tax_due
 
-        # Pay off mortgage
-        for mort_id, mort_balance in mortgage_balances.items():
-            if mort_balance > 0:
-                mortgage_delta -= mort_balance
+        # Pay off only the mortgage(s) secured by this property
+        payoff = 0.0
+        for mort_id, mort_balance in list(mortgage_balances.items()):
+            if mort_balance <= 0:
+                continue
+            if event.property_id and mortgage_property_map:
+                if mortgage_property_map.get(mort_id) != event.property_id:
+                    continue
+            payoff += mort_balance
+            mortgage_balances[mort_id] = 0.0
 
-        # Remove property
-        property_change = -cost_basis  # remove from real_estate
+        # Net proceeds (after payoff) go to the target account
+        net = proceeds - payoff
+        goes_to = event.goes_to_account or "joint_brokerage"
+        balances[goes_to] = balances.get(goes_to, 0.0) + net
+        account_delta += net
+
+        # Remove the sold property from balances
+        if event.property_id:
+            old_balance = balances.get(event.property_id, 0.0)
+            balances[event.property_id] = max(0.0, old_balance - event.sale_price)
+        else:
+            balances.pop("real_estate", None)
 
     # PURCHASE
     if event.purchase_price > 0:
-        event_type = "purchase"
+        event_type = "trade_up" if event_type == "sale" else "purchase"
 
-        # Down payment from source account
-        funding = getattr(event, 'funding_account', 'joint_brokerage')
-        account_delta = -event.down_payment
+        funding = event.funding_account or "joint_brokerage"
+        down = min(event.down_payment, balances.get(funding, 0.0))
+        balances[funding] = balances.get(funding, 0.0) - down
+        account_delta -= down
 
-        # Create/increase real_estate account
-        property_change = event.purchase_price
+        # Add the new property value
+        prop_id = event.property_id or f"property_{event.id}"
+        balances[prop_id] = balances.get(prop_id, 0.0) + event.purchase_price
 
-        # New mortgage
-        mortgage_delta = event.mortgage_amount
+        # Register the new mortgage for monthly amortization
+        if event.mortgage_amount > 0:
+            mort_id = event.new_mortgage_id or f"{event.id}_mortgage"
+            mortgage_balances[mort_id] = event.mortgage_amount
+            if event_mortgage_terms is not None:
+                rate = event.mortgage_rate
+                monthly_rate = rate / 12
+                n = max(1, event.mortgage_term_years * 12)
+                if monthly_rate > 0:
+                    annuity = (1 + monthly_rate) ** n
+                    payment = (
+                        event.mortgage_amount * monthly_rate * annuity
+                        / (annuity - 1) if annuity != 1
+                        else event.mortgage_amount / n
+                    )
+                else:
+                    payment = event.mortgage_amount / n
+                event_mortgage_terms[mort_id] = (
+                    rate, payment, event.event_date)
 
     return HousingEventResult(
-        event_id=event.event_id,
+        event_id=event.id,
         event_type=event_type,
         account_delta=account_delta,
-        mortgage_delta=mortgage_delta,
+        mortgage_delta=0.0,
         gain_realized=gain_realized,
         tax_due=tax_due,
-        property_account_change=property_change,
+        property_account_change=0.0,
     )
 
 

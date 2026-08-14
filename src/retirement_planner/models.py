@@ -230,6 +230,7 @@ class Expense:
     start_date: date
     end_date: date
     growth_rate: float = 0.0
+    real_growth_rate: float = 0.0  # real (inflation-adjusted) growth per year
     is_one_time: bool = False
     one_time_amount: float = 0.0
     one_time_date: Optional[date] = None
@@ -274,7 +275,14 @@ class Windfall:
 
 @dataclass
 class HousingEvent:
-    """Housing purchase/sale event."""
+    """Housing purchase/sale event.
+
+    A trade-up is modeled as a single event with both sale_price and
+    purchase_price set.  The sale pays off the mortgage(s) secured by
+    *property_id* and routes net proceeds to *goes_to_account*; the
+    purchase funds the down payment from *funding_account*, adds the new
+    property value, and registers a new amortizing mortgage.
+    """
     id: str
     name: str
     event_date: date
@@ -284,6 +292,10 @@ class HousingEvent:
     mortgage_amount: float = 0.0
     mortgage_rate: float = 0.05
     mortgage_term_years: int = 30
+    property_id: str = ""           # account id of the property sold/bought
+    goes_to_account: str = "joint_brokerage"
+    funding_account: str = "joint_brokerage"
+    new_mortgage_id: str = ""
 
 
 @dataclass

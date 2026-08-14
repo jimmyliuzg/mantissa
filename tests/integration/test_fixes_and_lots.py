@@ -6,6 +6,7 @@ from retirement_planner.fixes import (
     RothConversionResult, process_roth_conversions,
     apply_medical_inflation, process_medical_expenses,
 )
+from retirement_planner.models import HousingEvent
 from retirement_planner.tax_lots import (
     TaxLot, TaxLotTracker, LiquidationResult,
     calculate_121_exclusion,
@@ -17,29 +18,54 @@ from retirement_planner.tax_lots import (
 # ---------------------------------------------------------------------------
 class TestHousingEvents:
 
+    def _event(self, **kw):
+        defaults = dict(
+            id="e1", name="Event", event_date=date(2030, 6, 1),
+            sale_price=0.0, purchase_price=0.0, down_payment=0.0,
+            mortgage_amount=0.0, mortgage_rate=0.05,
+            mortgage_term_years=30, property_id="",
+            goes_to_account="joint_brokerage",
+            funding_account="joint_brokerage", new_mortgage_id="",
+        )
+        defaults.update(kw)
+        return HousingEvent(**defaults)
+
     def test_sale_pays_off_mortgage(self):
-        event = type('Event', (), {
-            'event_id': 'e1', 'event_date': date(2030, 6, 1),
-            'sale_price': 800_000, 'purchase_price': 0,
-            'goes_to_account': 'brokerage',
-        })()
-        balances = {"brokerage": 100_000}
+        event = self._event(sale_price=800_000, goes_to_account="brokerage",
+                            property_id="home")
+        balances = {"brokerage": 100_000, "home": 700_000}
         mortgage = {"mortgage1": 200_000}
 
         result = process_housing_event(
             event, 2030, balances, mortgage,
             cost_basis=500_000, filing_status="MFJ",
+            mortgage_property_map={"mortgage1": "home"},
         )
         assert result.event_type == "sale"
-        assert result.mortgage_delta < 0  # mortgage paid off
+        assert mortgage["mortgage1"] == 0  # mortgage paid off
         assert result.gain_realized == 300_000  # 800K - 500K basis
+        # proceeds (800K) - payoff (200K) → brokerage
+        assert balances["brokerage"] == pytest.approx(100_000 + 600_000)
+        # property removed
+        assert balances["home"] == 0
+
+    def test_sale_only_pays_matching_mortgage(self):
+        event = self._event(sale_price=800_000, property_id="home",
+                            goes_to_account="brokerage")
+        balances = {"brokerage": 0, "home": 700_000}
+        mortgage = {"m_primary": 200_000, "m_rental": 150_000}
+        result = process_housing_event(
+            event, 2030, balances, mortgage,
+            cost_basis=500_000, filing_status="MFJ",
+            mortgage_property_map={
+                "m_primary": "home", "m_rental": "rental"},
+        )
+        assert result.event_type == "sale"
+        assert mortgage["m_primary"] == 0
+        assert mortgage["m_rental"] == 150_000  # untouched
 
     def test_sale_121_exclusion(self):
-        event = type('Event', (), {
-            'event_id': 'e1', 'event_date': date(2030, 6, 1),
-            'sale_price': 900_000, 'purchase_price': 0,
-            'goes_to_account': 'brokerage',
-        })()
+        event = self._event(sale_price=900_000)
         # Sold for $900K, basis $500K → $400K gain
         # §121 excludes $400K (under $500K MFJ limit)
         result = process_housing_event(
@@ -49,11 +75,7 @@ class TestHousingEvents:
         assert result.tax_due == 0  # fully excluded
 
     def test_sale_over_121_limit(self):
-        event = type('Event', (), {
-            'event_id': 'e1', 'event_date': date(2030, 6, 1),
-            'sale_price': 1_200_000, 'purchase_price': 0,
-            'goes_to_account': 'brokerage',
-        })()
+        event = self._event(sale_price=1_200_000)
         # Sold for $1.2M, basis $500K → $700K gain
         # §121 excludes $500K, taxable $200K
         result = process_housing_event(
@@ -64,31 +86,34 @@ class TestHousingEvents:
         assert result.tax_due > 0  # tax on $200K gain
 
     def test_purchase_creates_mortgage(self):
-        event = type('Event', (), {
-            'event_id': 'e2', 'event_date': date(2028, 1, 1),
-            'sale_price': 0, 'purchase_price': 800_000,
-            'down_payment': 200_000, 'mortgage_amount': 600_000,
-            'funding_account': 'brokerage',
-        })()
+        event = self._event(
+            event_date=date(2028, 1, 1), purchase_price=800_000,
+            down_payment=200_000, mortgage_amount=600_000,
+            funding_account="brokerage", property_id="home",
+        )
         balances = {"brokerage": 300_000}
         mortgage = {}
+        terms = {}
 
         result = process_housing_event(
             event, 2028, balances, mortgage,
-            cost_basis=0,
+            cost_basis=0, event_mortgage_terms=terms,
         )
         assert result.event_type == "purchase"
-        assert result.account_delta == -200_000  # down payment
-        assert result.mortgage_delta == 600_000  # new mortgage
-        assert result.property_account_change == 800_000  # new property
+        assert balances["brokerage"] == 100_000  # down payment deducted
+        assert balances["home"] == 800_000  # new property added
+        assert mortgage["e1_mortgage"] == 600_000  # new mortgage
+        rate, payment, start = terms["e1_mortgage"]
+        assert rate == 0.05
+        # 600K @ 5% 30yr ≈ 3,221/mo
+        assert payment == pytest.approx(3_220.93, rel=1e-3)
 
     def test_wrong_year_noop(self):
-        event = type('Event', (), {
-            'event_id': 'e1', 'event_date': date(2030, 6, 1),
-            'sale_price': 800_000, 'purchase_price': 0,
-        })()
-        result = process_housing_event(event, 2029, {}, {}, 500_000)
+        event = self._event(sale_price=800_000)
+        balances = {"home": 700_000}
+        result = process_housing_event(event, 2029, balances, {}, 500_000)
         assert result.event_type == "none"
+        assert balances == {"home": 700_000}
 
 
 # ---------------------------------------------------------------------------

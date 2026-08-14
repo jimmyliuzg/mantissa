@@ -814,6 +814,7 @@ class RetirementPlanner:
                 start_date=date.fromisoformat(ec["start_date"]),
                 end_date=date.fromisoformat(ec["end_date"]),
                 growth_rate=ec.get("growth_rate", 0.0),
+                real_growth_rate=ec.get("real_growth_rate", 0.0),
                 is_one_time=ec.get("is_one_time", False),
                 one_time_amount=ec.get("one_time_amount", 0.0),
                 one_time_date=date.fromisoformat(one_time_date) if one_time_date else None,
@@ -862,6 +863,10 @@ class RetirementPlanner:
                 mortgage_amount=he.get("mortgage_amount", 0.0),
                 mortgage_rate=he.get("mortgage_rate", 0.05),
                 mortgage_term_years=he.get("mortgage_term_years", 30),
+                property_id=he.get("property_id", ""),
+                goes_to_account=he.get("goes_to_account", "joint_brokerage"),
+                funding_account=he.get("funding_account", "joint_brokerage"),
+                new_mortgage_id=he.get("new_mortgage_id", ""),
             ))
 
         # Parse Roth conversions
@@ -1331,6 +1336,7 @@ class RetirementPlanner:
         scenario: str = "mean",
         stress_level: float = 0.0,
         mortgage_balances: Optional[Dict[str, float]] = None,
+        event_mortgage_terms: Optional[Dict[str, tuple]] = None,
     ) -> Dict:
         """Calculate total expenses for a year.
 
@@ -1370,6 +1376,11 @@ class RetirementPlanner:
                     # NO inflation multiplier — returns are real, so
                     # expenses stay flat in real terms.
                     amount = monthly * 12
+                    # Explicit real growth (e.g. childcare costs outpace
+                    # general inflation)
+                    if expense.real_growth_rate:
+                        amount *= (1 + expense.real_growth_rate) ** (
+                            year - expense.start_date.year)
                     # Prorate partial start/end years (end-exclusive)
                     amount *= _year_active_fraction(
                         expense.start_date, expense.end_date, year)
@@ -1411,6 +1422,38 @@ class RetirementPlanner:
                         mortgage.start_date, mortgage.end_date, year)
                 total_expenses += amount
                 expenses_by_category[f"Mortgage - {mortgage.name}"] = amount
+
+        # Mortgages created by housing events (not in scenario.mortgages):
+        # amortize from the event date using the payment computed at
+        # creation.  Terms stored as (rate, monthly_payment, start_date).
+        if mortgage_balances is not None and event_mortgage_terms:
+            static_ids = {m.id for m in self.scenario.mortgages}
+            for mort_id, balance in list(mortgage_balances.items()):
+                if mort_id in static_ids or balance <= 0:
+                    continue
+                terms = event_mortgage_terms.get(mort_id)
+                if terms is None:
+                    continue  # liability tracked, payment terms unknown
+                rate, payment, start_date = terms
+                if year < start_date.year:
+                    continue
+                months = 12
+                if year == start_date.year:
+                    # payments begin the month after the event
+                    months = 12 - start_date.month
+                amount = 0.0
+                monthly_rate = rate / 12
+                for _ in range(months):
+                    if balance <= 0:
+                        break
+                    interest = balance * monthly_rate
+                    pmt = min(payment, balance + interest)
+                    balance -= pmt - interest
+                    amount += pmt
+                mortgage_balances[mort_id] = max(0.0, balance)
+                if amount > 0:
+                    total_expenses += amount
+                    expenses_by_category[f"Mortgage - {mort_id}"] = amount
 
         return {"total": total_expenses, "by_category": expenses_by_category}
 
@@ -2079,6 +2122,12 @@ class RetirementPlanner:
         for mortgage in self.scenario.mortgages:
             mortgage_balances[mortgage.id] = mortgage.balance
 
+        # Mortgages created by housing events: id -> (rate, payment, start)
+        event_mortgage_terms: Dict[str, tuple] = {}
+        mortgage_property_map = {
+            m.id: m.property_id for m in self.scenario.mortgages
+        }
+
         # Initialize cost basis — for simplicity, assume initial basis
         # equals current balance (all contributions up to now).
         # A real implementation would track actual contributions.
@@ -2228,7 +2277,8 @@ class RetirementPlanner:
 
             # --- Step 4: Expenses ---
             expense_data = self.calculate_annual_expenses(
-                year, scenario_name, mortgage_balances=mortgage_balances)
+                year, scenario_name, mortgage_balances=mortgage_balances,
+                event_mortgage_terms=event_mortgage_terms,)
             annual_expenses = expense_data["total"]
 
             # In NOMINAL mode, inflate expenses to year-of dollars
@@ -2410,15 +2460,19 @@ class RetirementPlanner:
             for he in self.scenario.housing_events:
                 he_result = process_housing_event(
                     he, year, balances, mortgage_balances,
-                    cost_basis=cost_basis.get_basis("real_estate"),
+                    cost_basis=cost_basis.get_basis(
+                        he.property_id, 0.0) if he.property_id
+                        else cost_basis.get_basis("real_estate", 0.0),
                     filing_status=filing_status,
+                    mortgage_property_map=mortgage_property_map,
+                    event_mortgage_terms=event_mortgage_terms,
                 )
                 if he_result.event_type != "none":
-                    goes_to = getattr(he, 'goes_to_account', 'joint_brokerage')
-                    balances[goes_to] = balances.get(goes_to, 0) + he_result.account_delta
-                    for mort_id in mortgage_balances:
-                        mortgage_balances[mort_id] += he_result.mortgage_delta
                     taxes += he_result.tax_due
+                    # New property basis = purchase price (aggregate policy)
+                    if he.property_id and he.purchase_price > 0:
+                        cost_basis.set_basis(
+                            he.property_id, he.purchase_price)
 
             # --- Step 9: Track net worth ---
             total_assets = sum(b for b in balances.values() if b > 0)

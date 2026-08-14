@@ -282,3 +282,54 @@ class TestLiquidity:
         # Every run must fail: liquid $20K cannot fund $60K/yr forever,
         # and the house is never sold.
         assert result["out_of_savings_rate"] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# 6. Housing trade-up in MC: sale pays matching mortgage, new mortgage amortizes
+# ---------------------------------------------------------------------------
+class TestHousingTradeUpMC:
+
+    def _planner(self):
+        from retirement_planner.models import HousingEvent, Mortgage
+        accounts = [
+            Account("home", "Home", "real_estate", "taxable", 1_000_000,
+                    liquid=False, growth_rate=0.03),
+            Account("brokerage", "Brokerage", "brokerage", "taxable", 300_000),
+        ]
+        mortgage = Mortgage(
+            id="m_home", name="Home Mortgage", property_id="home",
+            balance=600_000, interest_rate=0.06, monthly_payment=4_000,
+            start_date=date(2026, 1, 1), end_date=date(2055, 12, 31),
+        )
+        event = HousingEvent(
+            id="trade_up", name="Trade up", event_date=date(2029, 7, 1),
+            sale_price=1_100_000, purchase_price=1_500_000,
+            down_payment=300_000, mortgage_amount=1_200_000,
+            mortgage_rate=0.062, mortgage_term_years=30,
+            property_id="home", goes_to_account="brokerage",
+            funding_account="brokerage", new_mortgage_id="m_new",
+        )
+        return make_planner(accounts=accounts, mortgages=[mortgage]), event
+
+    def test_trade_up_updates_balances_and_amortizes(self):
+        planner, event = self._planner()
+        planner.scenario.housing_events = [event]
+        run = planner.run_single_simulation(
+            rng=__import__("numpy").random.default_rng(3))
+        assert run["out_of_savings_year"] is None
+
+    def test_event_mortgage_payment_amortizes(self):
+        planner, event = self._planner()
+        # Directly exercise calculate_annual_expenses with an event mortgage
+        balances = {"home": 1_100_000, "brokerage": 100_000}
+        mortgage_balances = {"m_home": 550_000.0, "m_new": 1_200_000.0}
+        terms = {"m_new": (0.062, 7_381.0, date(2029, 7, 1))}
+        exp = planner.calculate_annual_expenses(
+            2029, mortgage_balances=mortgage_balances,
+            event_mortgage_terms=terms)
+        assert "Mortgage - m_new" in exp["by_category"]
+        # 5 payments (Aug-Dec, month after the July event): ~5 × 7,381
+        assert exp["by_category"]["Mortgage - m_new"] == pytest.approx(
+            5 * 7_381.0, rel=0.05)
+        # balance reduced by principal portion
+        assert mortgage_balances["m_new"] < 1_200_000
