@@ -23,7 +23,7 @@ from retirement_planner.engine import (
 from retirement_planner.fixes import process_roth_conversions
 from retirement_planner.models import (
     Account, EconomicAssumptions, Expense, IncomeStream, Mortgage, Person,
-    Scenario, SocialSecurity, RothConversion,
+    Scenario, SocialSecurity, RothConversion, MonetaryConvention,
 )
 
 
@@ -593,3 +593,117 @@ class TestSourcedWindfall:
         # Moving money between two same-tax accounts is neutral; only the
         # 529's tax-exempt status changes the outcome, not the transfer.
         assert with_xfer == pytest.approx(without, rel=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# 13. Sweep fixes: medical inflation, NOMINAL returns, ACA parity, CTC
+# ---------------------------------------------------------------------------
+class TestMedicalInflation:
+
+    def test_healthcare_grows_at_excess_rate_from_level_start(self):
+        from retirement_planner.models import AgeEvent
+        healthcare = Expense(
+            "health", "Health", monthly_amount=1_000,
+            start_date=date(2026, 1, 1), end_date=date(2090, 12, 31),
+            category="medical", is_must_spend=True)
+        scenario = Scenario(
+            name="med", description="",
+            primary=Person("Primary", date(1980, 1, 1), date(2026, 1, 1), 95),
+            spouse=Person("Spouse", date(1982, 1, 1), date(2026, 1, 1), 95),
+            economic=EconomicAssumptions(medical_inflation=0.04),
+            accounts=[Account("b", "B", "brokerage", "taxable", 5_000_000)],
+            income_streams=[], expenses=[healthcare], mortgages=[],
+            age_events=[AgeEvent(trigger_age=65, expense_id="health",
+                                 new_monthly_amount=2_000)],
+        )
+        planner = RetirementPlanner(scenario)
+        # 2030: 4 years of 1.5% excess on 12K base
+        extra = planner._medical_inflation_extra(2030, 0.015)
+        assert extra == pytest.approx(12_000 * (1.015**4 - 1), rel=1e-6)
+        # 2048 (younger born 1982 → 65 in 2047): excess compounds from
+        # the 2047 level change → 1 year of excess on 24K
+        extra = planner._medical_inflation_extra(2048, 0.015)
+        assert extra == pytest.approx(24_000 * (1.015 - 1), rel=1e-6)
+        # Deterministic projection applies it (base + excess)
+        proj = planner.project_cash_flow()
+        r2030 = [r for r in proj if r["year"] == 2030][0]
+        assert r2030["expenses"] > 12_000 + 700  # base + ~1.5%^4 excess
+
+
+class TestNominalNoDoubleConversion:
+
+    def test_nominal_returns_convert_once(self):
+        scenario = Scenario(
+            name="nom", description="",
+            primary=Person("Primary", date(1980, 1, 1), date(2026, 1, 1), 95),
+            spouse=Person("Spouse", date(1982, 1, 1), date(2026, 1, 1), 95),
+            economic=EconomicAssumptions(),
+            accounts=[Account("b", "B", "brokerage", "taxable", 100_000,
+                              growth_rate=0.07)],
+            income_streams=[], expenses=[], mortgages=[],
+            monetary_convention=MonetaryConvention.NOMINAL,
+        )
+        planner = RetirementPlanner(scenario)
+        run = planner.run_single_simulation(return_volatility=0.0)
+        # 7% real + scenario inflation = nominal — once, not twice.
+        # Spouse (1982+95) dies 2077; loop runs 2026..2077 = 52 years.
+        inf = scenario.economic.get_rate("mean")["general_inflation"]
+        expected = 100_000 * (1.07 * (1 + inf)) ** 52
+        assert run["final_net_worth"] == pytest.approx(expected, rel=1e-6)
+
+
+class TestAcaParity:
+
+    def test_deterministic_aca_matches_mc_law(self):
+        from retirement_planner.tax_law import (
+            TaxLawRegistry, calculate_aca_subsidy)
+        # Born 1965/1967: ages 63/61 in 2028 — pre-Medicare, on ACA
+        scenario = Scenario(
+            name="aca", description="",
+            primary=Person("Primary", date(1965, 1, 1), date(2026, 1, 1), 90,
+                           coverage_type="auto"),
+            spouse=Person("Spouse", date(1967, 1, 1), date(2026, 1, 1), 90,
+                          coverage_type="auto"),
+            economic=EconomicAssumptions(),
+            accounts=[Account("b", "B", "brokerage", "taxable", 3_000_000)],
+            income_streams=[], expenses=[], mortgages=[],
+        )
+        planner = RetirementPlanner(scenario)
+        proj = planner.project_cash_flow()
+        r = [row for row in proj if row["year"] == 2028][0]
+        law = TaxLawRegistry().law_for_year(2028)
+        expected = calculate_aca_subsidy(r["income"], 2, law, "CA")
+        assert r["aca_subsidy"] == pytest.approx(expected, rel=1e-6)
+        assert r["aca_subsidy"] > 0
+
+
+class TestChildTaxCreditWired:
+
+    def test_ctc_reduces_taxes_with_dependents(self):
+        from retirement_planner.models import Dependent
+        def build(deps):
+            scenario = Scenario(
+                name="ctc", description="",
+                primary=Person("Primary", date(1960, 1, 1),
+                               date(2026, 1, 1), 90),
+                spouse=Person("Spouse", date(1962, 1, 1),
+                              date(2026, 1, 1), 90),
+                economic=EconomicAssumptions(),
+                accounts=[Account("b", "B", "brokerage", "taxable",
+                                  5_000_000)],
+                income_streams=[], expenses=[], mortgages=[],
+                dependents=deps,
+            )
+            return RetirementPlanner(scenario)
+        with_kid = build([Dependent(name="K", birth_date=date(2027, 1, 1))])
+        without = build([])
+        # 2028: kid age 1 — CTC applies (via the wired num_children path)
+        ti = __import__("retirement_planner.models", fromlist=["TaxableIncome"]).TaxableIncome
+        ti = ti(ordinary=80_000, capital_gains=0, tax_free=0, total=80_000)
+        tax_with = with_kid.calculate_taxes(2028, ti, num_children=1)
+        tax_without = without.calculate_taxes(2028, ti, num_children=0)
+        assert tax_with < tax_without
+        # At age 17+ (2044) the credit stops
+        tax_2044_with = with_kid.calculate_taxes(2044, ti, num_children=0)
+        tax_2044_without = without.calculate_taxes(2044, ti, num_children=0)
+        assert tax_2044_with == pytest.approx(tax_2044_without)

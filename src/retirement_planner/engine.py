@@ -1154,6 +1154,57 @@ class RetirementPlanner:
     # ------------------------------------------------------------------
     # Income
     # ------------------------------------------------------------------
+    def _medical_expenses_base(self, year: int) -> float:
+        """Current-year medical-category expense total (with age events)."""
+        mods = self.calculate_age_events(year)
+        total = 0.0
+        for exp in self.scenario.expenses:
+            if exp.is_one_time or exp.category != "medical":
+                continue
+            monthly = mods.get(exp.id, exp.monthly_amount)
+            total += (monthly * 12
+                      * _year_active_fraction(exp.start_date, exp.end_date, year))
+        return total
+
+    def _medical_inflation_extra(self, year: int, excess_rate: float) -> float:
+        """Extra healthcare cost from medical inflation exceeding general.
+
+        Age events step healthcare costs up (e.g. 65 -> Medicare costs,
+        75 -> LTC).  The excess rate compounds only from the start of the
+        CURRENT cost level (expense start or the latest age-event
+        trigger), not from the simulation start — otherwise a $120K LTC
+        step at 75 would compound for 50+ years.
+        """
+        if excess_rate <= 0 or year <= self.start_year:
+            return 0.0
+        mods = self.calculate_age_events(year)
+        total_extra = 0.0
+        for exp in self.scenario.expenses:
+            if exp.is_one_time or exp.category != "medical":
+                continue
+            monthly = mods.get(exp.id, exp.monthly_amount)
+            base = monthly * 12 * _year_active_fraction(
+                exp.start_date, exp.end_date, year)
+            if base <= 0:
+                continue
+            # Level start = the latest age-event trigger year (or expense
+            # start).  Trigger age is relative to the younger person.
+            younger_birth = max(
+                self.scenario.primary.birth_date.year,
+                self.scenario.spouse.birth_date.year,
+            )
+            latest_trigger = 0
+            for ev in self.scenario.age_events:
+                if ev.expense_id == exp.id:
+                    trigger_year = younger_birth + ev.trigger_age
+                    if trigger_year <= year:
+                        latest_trigger = max(latest_trigger, trigger_year)
+            level_start = max(exp.start_date.year, latest_trigger)
+            years = year - level_start
+            if years > 0:
+                total_extra += base * ((1.0 + excess_rate) ** years - 1.0)
+        return total_extra
+
     def calculate_annual_income(self, year: int,
                                 scenario: str = "mean") -> Dict:
         """Calculate total income for a year.
@@ -2250,6 +2301,7 @@ class RetirementPlanner:
                 if balance <= 0:
                     continue
                 account = self.accounts[account_id]
+                convention_adjusted = False
 
                 if account.account_type == "real_estate":
                     base_rate = rates["housing_appreciation"]
@@ -2258,7 +2310,10 @@ class RetirementPlanner:
                 elif account.growth_rate == 0:
                     base_rate = 0
                 else:
-                    # Use equity glidepath if configured
+                    # Use equity glidepath if configured.  Allocation
+                    # rates are already converted to the active
+                    # convention inside get_growth_rate_for_allocation.
+                    convention_adjusted = True
                     allocation = self.get_equity_allocation(
                         self._account_owner_age(account, year)
                     )
@@ -2277,18 +2332,28 @@ class RetirementPlanner:
                 if (self._historical_return_override is not None
                         and _hist_idx < len(self._historical_return_override)
                         and account.account_type not in ("real_estate",)):
-                    # Use pre-computed historical return sequence
+                    # Historical sequences are NOMINAL market returns:
+                    # in REAL mode deflate them to constant dollars.
                     actual_rate = self._historical_return_override[_hist_idx]
+                    if (self.scenario.monetary_convention
+                            == MonetaryConvention.REAL):
+                        actual_rate = ((1.0 + actual_rate)
+                                       / (1.0 + inflation_rate) - 1.0)
                 elif return_volatility > 0:
                     generator = rng if rng is not None else np.random.default_rng()
                     actual_rate = generator.normal(base_rate, return_volatility)
                 else:
                     actual_rate = base_rate
 
-                # Convert real return to the active convention
-                actual_rate = monetary_policy.portfolio_return_to_convention(
-                    actual_rate, inflation_rate,
-                )
+                # Non-allocation rates (real estate, depreciating assets,
+                # cash) come in the real convention — convert once here.
+                # Allocation rates were already converted above.
+                if not convention_adjusted and not (
+                        self._historical_return_override is not None
+                        and account.account_type not in ("real_estate",)):
+                    actual_rate = monetary_policy.portfolio_return_to_convention(
+                        actual_rate, inflation_rate,
+                    )
 
                 growth = balance * actual_rate
                 balances[account_id] = balance + growth
@@ -2337,13 +2402,11 @@ class RetirementPlanner:
                 annual_expenses, year, inflation_rate,
             )
 
-            # Apply medical inflation to healthcare expenses
-            medical_extra = apply_medical_inflation(
-                0, year, self.start_year,
-                general_inflation=rates.get("general_inflation", 0.025),
-                medical_inflation=rates.get("medical_inflation", 0.034),
-            )
-            annual_expenses += medical_extra
+            # Medical inflation: healthcare grows at medical minus
+            # general inflation, compounded from the current cost level.
+            excess = rates.get("medical_inflation", 0.034) - rates.get(
+                "general_inflation", 0.025)
+            annual_expenses += self._medical_inflation_extra(year, excess)
 
             # --- Step 4b: IRMAA Medicare surcharges (per-person) ---
             # 2-year lookback: use MAGI from 2 years prior
@@ -2501,10 +2564,15 @@ class RetirementPlanner:
                     total=(tax_ordinary_nominal + tax_cg_nominal
                            + tax_free_nominal),
                 )
+                # Child Tax Credit: dependents under 17
+                num_children = sum(
+                    1 for dep in self.scenario.dependents
+                    if 0 <= year - dep.birth_date.year < 17)
                 taxes_nominal = self.calculate_taxes(
                     year, taxable_income_for_tax, scenario_name,
                     inflation_rate=inflation_rate,
-                    years_from_base=years_from_base)
+                    years_from_base=years_from_base,
+                    num_children=num_children)
                 # Convert tax back to the active convention (NIIT is already
                 # included in calculate_taxes() via tax_law)
                 taxes = monetary_policy.from_nominal_after_tax(
@@ -2827,6 +2895,10 @@ class RetirementPlanner:
                 year, scenario_name, mortgage_balances=mortgage_balances,
                 event_mortgage_terms=event_mortgage_terms)
 
+            # Medical inflation excess — parity with the Monte Carlo path.
+            expenses["total"] += self._medical_inflation_extra(
+                year, rates["medical_inflation"] - inflation_rate)
+
             # ACA subsidy (pre-Medicare, per-person)
             aca_family_size = 0
             if primary_age < 65 and self.scenario.primary.coverage_at_age(primary_age) == "aca":
@@ -2838,8 +2910,12 @@ class RetirementPlanner:
 
             aca_subsidy = 0.0
             if aca_family_size > 0:
-                aca_subsidy = self.calculate_aca_subsidy(
-                    income["total"], aca_family_size, self.scenario.state)
+                # Use the versioned law pack so deterministic and MC
+                # subsidy amounts agree.
+                from .tax_law import TaxLawRegistry, calculate_aca_subsidy as tax_law_aca_calc
+                law = TaxLawRegistry().law_for_year(year)
+                aca_subsidy = tax_law_aca_calc(
+                    income["total"], aca_family_size, law, self.scenario.state)
 
             # Build TaxableIncome (simplified — all income as ordinary
             # for deterministic projection; real sim handles this properly)
@@ -2849,10 +2925,15 @@ class RetirementPlanner:
                 tax_free=0.0,
                 total=income["total"],
             )
+            # Child Tax Credit: dependents under 17
+            num_children = sum(
+                1 for dep in self.scenario.dependents
+                if 0 <= year - dep.birth_date.year < 17)
             taxes = self.calculate_taxes(
                 year, ti, scenario_name,
                 inflation_rate=inflation_rate,
-                years_from_base=years_from_base)
+                years_from_base=years_from_base,
+                num_children=num_children)
 
             # Housing events (sale/purchase/trade-up) — same in-place
             # semantics as the Monte Carlo path.
