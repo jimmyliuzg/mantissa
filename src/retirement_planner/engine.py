@@ -2313,19 +2313,14 @@ class RetirementPlanner:
                 annual_expenses += irmaa_amount
 
             # --- Step 4c: ACA subsidy (per-person, pre-Medicare) ---
-            aca_subsidy = 0.0
-            # Only people under 65 with ACA coverage count for ACA eligibility
+            # The subsidy depends on MAGI, which includes withdrawal
+            # income, so it is recomputed inside the fixed-point loop
+            # below rather than here.  Only eligibility is determined now.
             aca_family_size = 0
             if primary_age < 65 and self.scenario.primary.coverage_at_age(primary_age) == "aca":
                 aca_family_size += 1
             if spouse_age < 65 and self.scenario.spouse.coverage_at_age(spouse_age) == "aca":
                 aca_family_size += 1
-
-            if aca_family_size > 0:
-                aca_subsidy = tax_law_aca(
-                    annual_income, aca_family_size, law, self.scenario.state)
-                annual_expenses = max(0.0, annual_expenses - aca_subsidy)
-                total_aca_subsidy += aca_subsidy
 
             # --- Step 4d: Apply withdrawal strategy (if retired) ---
             total_portfolio_value = sum(b for b in balances.values() if b > 0)
@@ -2350,83 +2345,143 @@ class RetirementPlanner:
             else:
                 _roth_conversion_income = 0.0
 
-            # --- Step 5: Withdrawals (tax-efficient order) ---
-            shortfall = withdrawal_engine.calculate_withdrawal_needed(
-                year, annual_expenses, annual_income, ss_income,
-            )
+            # --- Step 5: Withdrawals with tax gross-up (fixed point) ---
+            # Withdrawals must fund expenses AND taxes.  Taxes depend on
+            # the income the withdrawals create (ordinary income, capital
+            # gains, taxable SS), so the required withdrawal is a fixed
+            # point:  needed = expenses + taxes - income.
+            #
+            # The ACA subsidy also depends on withdrawal income (MAGI) and
+            # taxable SS depends on provisional income, so both are
+            # recomputed each pass.  Simple iteration converges because the
+            # marginal tax rate on withdrawals is < 100% (monotone
+            # contraction); typically 2-4 passes.
+            #
+            # Trials run against COPIES of balances/basis so the fixed point
+            # is computed without mutating real state; the withdrawal
+            # executes exactly once after convergence.
+            trial_needed = 0.0
+            trial_magi = annual_income  # withdrawal-inclusive MAGI
+            converged = False
+            taxes = 0.0
+            aca_subsidy = 0.0
+            new_needed = 0.0
+            tax_ordinary_nominal = 0.0
+            tax_cg_nominal = 0.0
+            for _ in range(20):
+                trial_balances = dict(balances)
+                basis_snapshot = dict(cost_basis.basis_by_account)
+                # Always execute (even at needed=0) so the forced RMD
+                # floor is part of the fixed point: RMDs are mandatory
+                # regardless of spending need, and their tax consequences
+                # must feed back into the required withdrawal.
+                trial_wd = withdrawal_engine.execute_withdrawals(
+                    trial_needed, trial_balances, year, primary_age,
+                    spouse_age, sale_date=date(year, 12, 31),
+                )
+                # Undo trial basis mutation
+                cost_basis.basis_by_account.clear()
+                cost_basis.basis_by_account.update(basis_snapshot)
 
-            withdrawals = []
-            if shortfall > 0:
-                withdrawals = withdrawal_engine.execute_withdrawals(
-                    shortfall, balances, year, primary_age, spouse_age,
-                    sale_date=date(year, 12, 31),
+                # ACA subsidy on trial withdrawal-inclusive MAGI
+                if aca_family_size > 0:
+                    aca_subsidy = tax_law_aca(
+                        trial_magi, aca_family_size, law, self.scenario.state)
+                expenses_after_subsidy = max(
+                    0.0, annual_expenses - aca_subsidy)
+
+                # --- Build TaxableIncome from trial withdrawals ---
+                # SS taxable portion (income BEFORE SS was added, but
+                # INCLUDING withdrawal income — provisional income in
+                # retirement is driven by withdrawals).
+                withdrawal_ordinary = sum(
+                    w.taxable_amount for w in trial_wd
+                    if w.tax_treatment == "ordinary")
+                withdrawal_cg = sum(
+                    w.capital_gain for w in trial_wd
+                    if w.tax_treatment == "capital_gains")
+                tax_free = sum(
+                    w.amount for w in trial_wd
+                    if w.tax_treatment == "tax_free")
+
+                non_ss_income = income_data["total"]  # wages + other non-SS income
+                # Provisional income for SS taxation includes capital
+                # gains; ordinary income does not.
+                other_income = (non_ss_income + _roth_conversion_income
+                                + withdrawal_ordinary + withdrawal_cg)
+                taxable_ss = self.calculate_ss_taxable(ss_income, other_income)
+
+                # Ordinary income = non-SS wages/withdrawals/conversions +
+                # taxable SS portion (capital gains stay separate)
+                ordinary = (non_ss_income + _roth_conversion_income
+                            + withdrawal_ordinary + taxable_ss)
+                capital_gains = withdrawal_cg
+
+                # Convert to nominal for tax calculation (tax brackets are
+                # always nominal; REAL-mode values convert, then back).
+                tax_ordinary_nominal = monetary_policy.to_nominal_for_tax(
+                    ordinary, year, inflation_rate,
+                )
+                tax_cg_nominal = monetary_policy.to_nominal_for_tax(
+                    capital_gains, year, inflation_rate,
+                )
+                tax_free_nominal = monetary_policy.to_nominal_for_tax(
+                    tax_free, year, inflation_rate,
+                )
+                taxable_income_for_tax = TaxableIncome(
+                    ordinary=tax_ordinary_nominal,
+                    capital_gains=tax_cg_nominal,
+                    tax_free=tax_free_nominal,
+                    total=(tax_ordinary_nominal + tax_cg_nominal
+                           + tax_free_nominal),
+                )
+                taxes_nominal = self.calculate_taxes(
+                    year, taxable_income_for_tax, scenario_name,
+                    inflation_rate=inflation_rate,
+                    years_from_base=years_from_base)
+                # Convert tax back to the active convention (NIIT is already
+                # included in calculate_taxes() via tax_law)
+                taxes = monetary_policy.from_nominal_after_tax(
+                    taxes_nominal, year, inflation_rate,
                 )
 
-            # If withdrawals could not fully cover the shortfall (illiquid
-            # assets remain, e.g. real estate), the household is out of
-            # savings even though net worth may still be positive.
+                # Withdrawal-inclusive MAGI for the next ACA pass
+                trial_magi = (annual_income + withdrawal_ordinary
+                              + withdrawal_cg)
+
+                new_needed = max(0.0, expenses_after_subsidy + taxes
+                                 - annual_income)
+                if abs(new_needed - trial_needed) <= max(
+                        0.05, abs(trial_needed) * 1e-6):
+                    converged = True
+                    break
+                trial_needed = new_needed
+
+            if not converged:
+                # Safety net (marginal rates < 100% make this rare):
+                # damped average of the last two iterates.
+                trial_needed = (trial_needed + new_needed) / 2.0
+
+            # Execute exactly once on real balances at the converged amount
+            needed = trial_needed
+            if needed > 0:
+                withdrawals = withdrawal_engine.execute_withdrawals(
+                    needed, balances, year, primary_age, spouse_age,
+                    sale_date=date(year, 12, 31),
+                )
+            else:
+                withdrawals = []
+
+            # If withdrawals could not fully cover the required amount
+            # (illiquid assets remain, e.g. real estate), the household is
+            # out of savings even though net worth may still be positive.
             covered = sum(w.amount for w in withdrawals)
-            if (covered < shortfall - 1.0
+            if (covered < needed - 1.0
                     and out_of_savings_year is None):
                 out_of_savings_year = year
 
-            # --- Step 6: Build TaxableIncome from all sources ---
-            # Calculate SS taxable portion (uses income BEFORE SS was added)
-            non_ss_income = income_data["total"]  # wages + other non-SS income
-            taxable_ss = self.calculate_ss_taxable(ss_income, non_ss_income)
-
-            # Ordinary income = non-SS wages/withdrawals + taxable SS portion
-            ordinary = non_ss_income
-            ordinary += _roth_conversion_income  # Roth conversions add to ordinary income
-            capital_gains = 0.0
-            tax_free = 0.0
-            for w in withdrawals:
-                if w.tax_treatment == "ordinary":
-                    ordinary += w.taxable_amount
-                elif w.tax_treatment == "capital_gains":
-                    capital_gains += w.capital_gain
-                elif w.tax_treatment == "tax_free":
-                    tax_free += w.amount
-            ordinary += taxable_ss  # Only the taxable portion of SS
-
-            # --- Step 6b: Convert to nominal for tax calculation ---
-            # Tax brackets are always nominal (actual IRS values).
-            # In REAL mode the engine values are in real dollars, so we
-            # must convert to nominal before computing tax, then convert
-            # the resulting tax back to real.
-            tax_ordinary_nominal = monetary_policy.to_nominal_for_tax(
-                ordinary, year, inflation_rate,
-            )
-            tax_cg_nominal = monetary_policy.to_nominal_for_tax(
-                capital_gains, year, inflation_rate,
-            )
-            tax_free_nominal = monetary_policy.to_nominal_for_tax(
-                tax_free, year, inflation_rate,
-            )
-            tax_total_nominal = (tax_ordinary_nominal
-                                 + tax_cg_nominal
-                                 + tax_free_nominal)
-
-            total = ordinary + capital_gains + tax_free
-            taxable_income_for_tax = TaxableIncome(
-                ordinary=tax_ordinary_nominal,
-                capital_gains=tax_cg_nominal,
-                tax_free=tax_free_nominal,
-                total=tax_total_nominal,
-            )
-
-            # --- Step 7: Taxes ---
-            taxes_nominal = self.calculate_taxes(
-                year, taxable_income_for_tax, scenario_name,
-                inflation_rate=inflation_rate,
-                years_from_base=years_from_base)
-            # Convert tax back to the active convention
-            taxes = monetary_policy.from_nominal_after_tax(
-                taxes_nominal, year, inflation_rate,
-            )
-            # NIIT is already included in calculate_taxes() via tax_law
-
             total_taxes += taxes
+            total_aca_subsidy += aca_subsidy
 
             # Record this year's MAGI for future IRMAA lookback
             # (MAGI is always nominal for IRS purposes)
