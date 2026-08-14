@@ -192,8 +192,8 @@ def test_rsu_grant_creation():
         grant_date=date(2025, 10, 10),
         total_shares=2000,
         vesting_pattern="cliff_quarterly",
-        cliff_shares=1975,
-        periodic_shares=494,
+        cliff_shares=1000,
+        periodic_shares=250,
         cliff_date=date(2026, 10, 10),
     )
     assert grant.cliff_replaces_first_vest is False
@@ -218,7 +218,7 @@ def test_rsu_grant_defaults():
 # ---------------------------------------------------------------------------
 def test_refresher_policy_creation():
     policy = RefresherPolicy(
-        annual_shares=494,
+        annual_shares=250,
         grant_month=10,
         vesting_pattern="quarterly",
         vesting_delay_months=3,
@@ -226,7 +226,7 @@ def test_refresher_policy_creation():
         end_year=2035,
         growth_rate=0.0,
     )
-    assert policy.annual_shares == 494
+    assert policy.annual_shares == 250
     assert policy.vesting_delay_months == 3
 
 
@@ -242,8 +242,8 @@ def test_refresher_policy_defaults():
 # Bonus model
 # ---------------------------------------------------------------------------
 def test_bonus_creation():
-    bonus = Bonus(annual=22000, growth_rate=0.03, payment_month=3)
-    assert bonus.annual == 22000
+    bonus = Bonus(annual=18000, growth_rate=0.03, payment_month=3)
+    assert bonus.annual == 18000
     assert bonus.payment_month == 3
 
 
@@ -267,13 +267,13 @@ def test_equity_comp_creation():
                 grant_date=date(2025, 10, 10),
                 total_shares=2000,
                 vesting_pattern="cliff_quarterly",
-                cliff_shares=1975,
-                periodic_shares=494,
+                cliff_shares=1000,
+                periodic_shares=250,
                 cliff_date=date(2026, 10, 10),
             ),
         ],
         refreshers=RefresherPolicy(
-            annual_shares=494,
+            annual_shares=250,
             grant_month=10,
             vesting_pattern="quarterly",
             start_year=2026,
@@ -327,12 +327,12 @@ def test_income_stream_with_base_salary():
         start_date=date(2026, 1, 1),
         end_date=date(2036, 1, 1),
         base_salary={"annual": 180000, "growth_rate": 0.03},
-        bonus=Bonus(annual=22000, growth_rate=0.03, payment_month=3),
+        bonus=Bonus(annual=18000, growth_rate=0.03, payment_month=3),
         equity=EquityComp(ticker="EXMP", current_price=50.0),
     )
     assert stream.base_salary is not None
     assert stream.bonus is not None
     assert stream.equity is not None
     assert stream.base_salary["annual"] == 180000
-    assert stream.bonus.annual == 22000
+    assert stream.bonus.annual == 18000
     assert stream.equity.ticker == "EXMP"
