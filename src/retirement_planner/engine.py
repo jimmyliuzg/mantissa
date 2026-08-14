@@ -25,7 +25,7 @@ from enum import Enum
 from .models import (
     Scenario, Person, Account, IncomeStream, Expense,
     Mortgage, Windfall, HousingEvent, RothConversion, RolloverEvent,
-    EconomicAssumptions, SocialSecurity, AgeEvent, TaxableIncome,
+    Dependent, EconomicAssumptions, SocialSecurity, AgeEvent, TaxableIncome,
     AssetAllocation, GlidepathConfig, MonetaryConvention,
 )
 
@@ -893,6 +893,14 @@ class RetirementPlanner:
                 target_account=ro["target_account"],
             ))
 
+        # Parse dependents (children drive ACA family size dynamically)
+        dependents = []
+        for dep in config.get("dependents", []):
+            dependents.append(Dependent(
+                name=dep.get("name", "Child"),
+                birth_date=date.fromisoformat(dep["birth_date"]),
+            ))
+
         # Parse age events
         age_events = []
         for ae in config.get("age_events", []):
@@ -941,6 +949,7 @@ class RetirementPlanner:
             housing_events=housing_events,
             roth_conversions=roth_conversions,
             rollover_events=rollover_events,
+            dependents=dependents,
             age_events=age_events,
             social_security=social_security,
             glidepath=glidepath,
@@ -1061,6 +1070,23 @@ class RetirementPlanner:
         net_rate = gross_rate - account.expense_ratio
         return net_rate
 
+    def _account_growth_rate(self, account: Account, year: int,
+                             rates: Dict) -> float:
+        """Deterministic annual growth rate for an account (no volatility)."""
+        if account.account_type == "real_estate":
+            return rates["housing_appreciation"]
+        elif account.is_depreciating:
+            return -0.04
+        elif account.growth_rate == 0:
+            return 0
+        else:
+            owner_age = self._account_owner_age(account, year)
+            allocation = self.get_equity_allocation(owner_age)
+            if account.equity_pct is not None:
+                allocation = AssetAllocation(
+                    account.equity_pct, 1.0 - account.equity_pct)
+            return self.get_growth_rate_for_allocation(account, allocation)
+
     def get_account_balance(self, account_id: str, year: int,
                             scenario: str = "mean") -> float:
         """Get projected account balance for a given year (deterministic)."""
@@ -1070,21 +1096,21 @@ class RetirementPlanner:
 
         years = year - self.start_year
         rates = self.scenario.economic.get_rate(scenario)
-
-        if account.account_type == "real_estate":
-            rate = rates["housing_appreciation"]
-        elif account.is_depreciating:
-            rate = -0.04
-        elif account.growth_rate == 0:
-            rate = 0
-        else:
-            owner_age = self._account_owner_age(account, year)
-            allocation = self.get_equity_allocation(owner_age)
-            if account.equity_pct is not None:
-                allocation = AssetAllocation(account.equity_pct, 1.0 - account.equity_pct)
-            rate = self.get_growth_rate_for_allocation(account, allocation)
-
+        rate = self._account_growth_rate(account, year, rates)
         return account.project_balance(years, rate)
+
+    def _dependents_under_26(self, year: int) -> int:
+        """Number of configured dependents under 26 in *year*.
+
+        Children can stay on a parent's ACA plan until 26, so they count
+        toward the household family size for subsidy calculation.
+        """
+        count = 0
+        for dep in self.scenario.dependents:
+            age = year - dep.birth_date.year
+            if 0 <= age < 26:
+                count += 1
+        return count
 
     def _account_owner_age(self, account: Account, year: int) -> int:
         owner = (account.owner or "primary").lower()
@@ -2334,6 +2360,8 @@ class RetirementPlanner:
                 aca_family_size += 1
             if spouse_age < 65 and self.scenario.spouse.coverage_at_age(spouse_age) == "aca":
                 aca_family_size += 1
+            # Children under 26 ride on the parents' ACA plan
+            aca_family_size += self._dependents_under_26(year)
 
             # --- Step 4d: Apply withdrawal strategy (if retired) ---
             total_portfolio_value = sum(b for b in balances.values() if b > 0)
@@ -2703,6 +2731,17 @@ class RetirementPlanner:
         for mortgage in self.scenario.mortgages:
             mortgage_balances[mortgage.id] = mortgage.balance
 
+        # Running account balances (mirrors the MC loop so housing events
+        # mutate the same state: property sold/added, mortgages paid off
+        # or created, event mortgages amortized).
+        balances: Dict[str, float] = {}
+        for account_id, account in self.accounts.items():
+            balances[account_id] = account.balance
+        event_mortgage_terms: Dict[str, tuple] = {}
+        mortgage_property_map = {
+            m.id: m.property_id for m in self.scenario.mortgages
+        }
+
         max_year = (self.scenario.primary.birth_date.year
                     + self.scenario.primary.longevity_age + 1)
 
@@ -2721,6 +2760,14 @@ class RetirementPlanner:
             if (primary_age > self.scenario.primary.longevity_age
                     and spouse_age > self.scenario.spouse.longevity_age):
                 break
+
+            # Grow balances at deterministic (volatility-free) rates
+            for account_id in list(balances.keys()):
+                account = self.accounts.get(account_id)
+                if account is None or balances[account_id] <= 0:
+                    continue
+                rate = self._account_growth_rate(account, year, rates)
+                balances[account_id] *= (1 + rate)
 
             income = self.calculate_annual_income(year, scenario_name)
 
@@ -2741,7 +2788,8 @@ class RetirementPlanner:
                 income["by_source"]["Social Security"] = ss_income
 
             expenses = self.calculate_annual_expenses(
-                year, scenario_name, mortgage_balances=mortgage_balances)
+                year, scenario_name, mortgage_balances=mortgage_balances,
+                event_mortgage_terms=event_mortgage_terms)
 
             # ACA subsidy (pre-Medicare, per-person)
             aca_family_size = 0
@@ -2749,6 +2797,8 @@ class RetirementPlanner:
                 aca_family_size += 1
             if spouse_age < 65 and self.scenario.spouse.coverage_at_age(spouse_age) == "aca":
                 aca_family_size += 1
+            # Children under 26 ride on the parents' ACA plan
+            aca_family_size += self._dependents_under_26(year)
 
             aca_subsidy = 0.0
             if aca_family_size > 0:
@@ -2767,8 +2817,37 @@ class RetirementPlanner:
                 year, ti, scenario_name,
                 inflation_rate=inflation_rate,
                 years_from_base=years_from_base)
-            net_worth = self.calculate_net_worth(
-                year, scenario_name, mortgage_balances=mortgage_balances)
+
+            # Housing events (sale/purchase/trade-up) — same in-place
+            # semantics as the Monte Carlo path.
+            for he in self.scenario.housing_events:
+                he_result = process_housing_event(
+                    he, year, balances, mortgage_balances,
+                    cost_basis=cost_basis.get_basis(
+                        he.property_id, 0.0) if he.property_id
+                        else cost_basis.get_basis("real_estate", 0.0),
+                    filing_status="MFJ",
+                    mortgage_property_map=mortgage_property_map,
+                    event_mortgage_terms=event_mortgage_terms,
+                )
+                if he_result.event_type != "none":
+                    taxes += he_result.tax_due
+                    if he.property_id and he.purchase_price > 0:
+                        cost_basis.set_basis(
+                            he.property_id, he.purchase_price)
+
+            # Net worth from the running balances (assets + liabilities)
+            total_assets = sum(
+                b for b in balances.values() if b > 0)
+            total_liabs = sum(
+                abs(b) for b in balances.values() if b < 0)
+            total_liabs += sum(
+                b for b in mortgage_balances.values() if b > 0)
+            net_worth = {
+                "total_assets": total_assets,
+                "total_liabilities": total_liabs,
+                "net_worth": total_assets - total_liabs,
+            }
             yearly_state.income = income
             yearly_state.expenses = expenses
             yearly_state.taxes = taxes

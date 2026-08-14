@@ -311,6 +311,16 @@ class RothConversion:
 
 
 @dataclass
+class Dependent:
+    """Child/dependent added to the household at *birth_date*.
+
+    Drives ACA family size dynamically (children count while under 26).
+    """
+    birth_date: date
+    name: str = "Child"
+
+
+@dataclass
 class RolloverEvent:
     """One-time pre-tax rollover (e.g. 401(k) -> traditional IRA).
 
@@ -417,6 +427,7 @@ class Scenario:
     housing_events: List[HousingEvent] = field(default_factory=list)
     roth_conversions: List[RothConversion] = field(default_factory=list)
     rollover_events: List[RolloverEvent] = field(default_factory=list)
+    dependents: List[Dependent] = field(default_factory=list)
     age_events: List[AgeEvent] = field(default_factory=list)
     social_security: SocialSecurity = field(default_factory=SocialSecurity)
     glidepath: Optional[GlidepathConfig] = None

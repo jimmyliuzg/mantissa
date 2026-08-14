@@ -434,3 +434,97 @@ class TestRolloverEvent:
         assert run["out_of_savings_year"] is None
         # Ladder + rollover means conversions ran for a decade from the IRA
         assert run["lifetime_taxes"] > 0
+
+
+# ---------------------------------------------------------------------------
+# 9. Deterministic path processes housing events (parity with MC)
+# ---------------------------------------------------------------------------
+class TestDeterministicHousingEvents:
+
+    def test_trade_up_appears_in_deterministic_projection(self):
+        from retirement_planner.models import HousingEvent, Mortgage
+        accounts = [
+            Account("home", "Home", "real_estate", "taxable", 1_000_000,
+                    liquid=False, growth_rate=0.03),
+            Account("brokerage", "Brokerage", "brokerage", "taxable", 300_000),
+        ]
+        mortgage = Mortgage(
+            id="m_home", name="Home Mortgage", property_id="home",
+            balance=600_000, interest_rate=0.06, monthly_payment=4_000,
+            start_date=date(2026, 1, 1), end_date=date(2055, 12, 31),
+        )
+        event = HousingEvent(
+            id="trade_up", name="Trade up", event_date=date(2029, 7, 1),
+            sale_price=1_100_000, purchase_price=1_500_000,
+            down_payment=300_000, mortgage_amount=1_200_000,
+            mortgage_rate=0.062, mortgage_term_years=30,
+            property_id="home", goes_to_account="brokerage",
+            funding_account="brokerage", new_mortgage_id="m_new",
+        )
+        scenario = Scenario(
+            name="det", description="",
+            primary=Person("Primary", date(1980, 1, 1), date(2026, 1, 1), 95),
+            spouse=Person("Spouse", date(1982, 1, 1), date(2026, 1, 1), 95),
+            economic=EconomicAssumptions(),
+            accounts=accounts, income_streams=[], expenses=[],
+            mortgages=[mortgage], housing_events=[event],
+        )
+        planner = RetirementPlanner(scenario)
+        proj = planner.project_cash_flow()
+        r2028 = [r for r in proj if r["year"] == 2028][0]
+        r2029 = [r for r in proj if r["year"] == 2029][0]
+        r2030 = [r for r in proj if r["year"] == 2030][0]
+        # 2028: old mortgage liability present
+        assert r2028["total_liabilities"] > 500_000
+        # 2029: new mortgage replaces old (liability jumps), new payment starts
+        assert r2029["total_liabilities"] > r2028["total_liabilities"]
+        assert "Mortgage - m_new" in r2030["expenses_by_category"]
+        assert "Mortgage - Home Mortgage" not in r2030["expenses_by_category"]
+        # 2030 net worth reflects the new house + new mortgage
+        assert r2030["total_liabilities"] < r2029["total_liabilities"]  # amortizing
+
+
+# ---------------------------------------------------------------------------
+# 10. Dynamic ACA family size from dependents
+# ---------------------------------------------------------------------------
+class TestDependentAcaFamilySize:
+
+    def _planner(self, dependents=()):
+        from retirement_planner.models import Dependent
+        scenario = Scenario(
+            name="dep", description="",
+            primary=Person("Primary", date(1980, 1, 1), date(2026, 1, 1), 95,
+                           coverage_type="auto"),
+            spouse=Person("Spouse", date(1982, 1, 1), date(2026, 1, 1), 95,
+                          coverage_type="auto"),
+            economic=EconomicAssumptions(),
+            accounts=[Account("brokerage", "Brokerage", "brokerage",
+                              "taxable", 3_000_000)],
+            income_streams=[], expenses=[], mortgages=[],
+            dependents=list(dependents),
+        )
+        return RetirementPlanner(scenario)
+
+    def test_children_count_until_26(self):
+        from retirement_planner.models import Dependent
+        planner = self._planner([Dependent(name="Kid",
+                                           birth_date=date(2027, 1, 1))])
+        # Born 2027 → age 1 in 2027, age 25 in 2052, age 26 in 2053
+        assert planner._dependents_under_26(2026) == 0
+        assert planner._dependents_under_26(2027) == 1
+        assert planner._dependents_under_26(2052) == 1
+        assert planner._dependents_under_26(2053) == 0
+
+    def test_aca_subsidy_reflects_dependents(self):
+        from retirement_planner.models import Dependent
+        with_kid = self._planner([Dependent(name="Kid",
+                                            birth_date=date(2027, 1, 1))])
+        without = self._planner()
+        # 2027-2031: parents 45-51, both pre-Medicare on ACA
+        run_with = with_kid.run_single_simulation(
+            return_volatility=0.0, rng=None)
+        # family of 3 benchmark premium > family of 2, same MAGI
+        subsidy3 = with_kid.calculate_aca_subsidy(60_000, 3, "CA")
+        subsidy2 = without.calculate_aca_subsidy(60_000, 2, "CA")
+        assert subsidy3 > subsidy2
+        assert run_with["out_of_savings_year"] is None

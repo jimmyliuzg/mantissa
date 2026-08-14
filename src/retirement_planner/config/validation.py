@@ -52,7 +52,7 @@ _SCHEMA_KEYS = {
     "name", "description", "schema_version", "primary", "spouse",
     "economic", "accounts", "income_streams", "expenses", "mortgages",
     "windfalls", "housing_events", "roth_conversions", "rollover_events",
-    "age_events",
+    "age_events", "dependents",
     "social_security", "glidepath", "withdrawal_strategy", "withdrawal_rate",
     "guardrail_floor_pct", "guardrail_ceiling_pct", "legacy_goal", "state",
     "family_size", "savings_order", "monetary_convention", "_comment",
@@ -150,6 +150,16 @@ def validate_config(config: dict, strict: bool = False) -> ValidationResult:
     for index, account_id in enumerate(config.get("savings_order", [])):
         if account_id not in ids:
             _issue(result, f"$.savings_order[{index}]", f"unknown account '{account_id}'", code="reference")
+
+    for index, dep in enumerate(config.get("dependents", [])):
+        path = f"$.dependents[{index}]"
+        if not isinstance(dep, dict):
+            _issue(result, path, "must be an object", code="type")
+            continue
+        if "birth_date" not in dep:
+            _issue(result, f"{path}.birth_date", "required field", code="required")
+        else:
+            _date(result, dep["birth_date"], f"{path}.birth_date")
 
     for key, events in (("roth_conversions", "start_date"),
                         ("rollover_events", "event_date")):
