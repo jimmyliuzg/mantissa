@@ -24,7 +24,7 @@ from enum import Enum
 
 from .models import (
     Scenario, Person, Account, IncomeStream, Expense,
-    Mortgage, Windfall, HousingEvent, RothConversion,
+    Mortgage, Windfall, HousingEvent, RothConversion, RolloverEvent,
     EconomicAssumptions, SocialSecurity, AgeEvent, TaxableIncome,
     AssetAllocation, GlidepathConfig, MonetaryConvention,
 )
@@ -882,6 +882,17 @@ class RetirementPlanner:
                 annual_amount=rc["annual_amount"],
             ))
 
+        # Parse rollover events (401k -> IRA at retirement)
+        rollover_events = []
+        for ro in config.get("rollover_events", []):
+            rollover_events.append(RolloverEvent(
+                id=ro["id"],
+                name=ro["name"],
+                event_date=date.fromisoformat(ro["event_date"]),
+                source_account=ro["source_account"],
+                target_account=ro["target_account"],
+            ))
+
         # Parse age events
         age_events = []
         for ae in config.get("age_events", []):
@@ -929,6 +940,7 @@ class RetirementPlanner:
             windfalls=windfalls,
             housing_events=housing_events,
             roth_conversions=roth_conversions,
+            rollover_events=rollover_events,
             age_events=age_events,
             social_security=social_security,
             glidepath=glidepath,
@@ -1851,7 +1863,8 @@ class RetirementPlanner:
 
         Args:
             year: Current calendar year.
-            base_spending: The baseline annual spending (year 1 expenses).
+            base_spending: This year's planned expenses
+                (calculate_annual_expenses() total) — the spending anchor.
             portfolio_value: Current total portfolio value.
             portfolio_peak: Highest portfolio value seen so far.
 
@@ -2020,7 +2033,8 @@ class RetirementPlanner:
 
         Args:
             year: Current calendar year.
-            base_spending: Base annual expenses from calculate_annual_expenses().
+            base_spending: This year's planned expenses from
+                calculate_annual_expenses() — the spending anchor.
             portfolio_value: Current total portfolio value.
             portfolio_peak: High-water mark (for reporting only).
             expenses: Dict with 'total' and 'by_category' from expenses calculation.
@@ -2154,7 +2168,6 @@ class RetirementPlanner:
 
         # Withdrawal strategy tracking
         portfolio_peak = 0.0
-        base_spending = None  # Will be set on first retirement year
 
         # Starting portfolio for guardrails planned path
         self._starting_portfolio = sum(
@@ -2326,13 +2339,11 @@ class RetirementPlanner:
             total_portfolio_value = sum(b for b in balances.values() if b > 0)
 
             if primary_retired and spouse_retired:
-                # Set base spending from first retirement year
-                if base_spending is None:
-                    base_spending = annual_expenses
-
-                # Apply withdrawal strategy to adjust spending
+                # Anchor the strategy on THIS year's planned expenses, not
+                # a year-1 snapshot: when expense streams end (mortgage
+                # payoff, childcare, lease), spending must follow them.
                 annual_expenses = self.apply_withdrawal_strategy(
-                    year, base_spending, total_portfolio_value,
+                    year, expense_data["total"], total_portfolio_value,
                     portfolio_peak, expense_data,
                 )
 
@@ -2344,6 +2355,21 @@ class RetirementPlanner:
                 _roth_conversion_income = rc_result.ordinary_income_added
             else:
                 _roth_conversion_income = 0.0
+
+            # --- Step 4f: Pre-tax rollovers (e.g. 401k -> trad IRA) ---
+            # Run AFTER conversions of the same year (rollover feeds next
+            # year's ladder) and BEFORE withdrawals so the source account
+            # balance is fully moved.
+            for ro in self.scenario.rollover_events:
+                if ro.event_date.year != year:
+                    continue
+                source = balances.get(ro.source_account, 0.0)
+                if source <= 0:
+                    continue
+                balances[ro.source_account] = 0.0
+                balances[ro.target_account] = (
+                    balances.get(ro.target_account, 0.0) + source)
+                # Pre-tax -> pre-tax: no basis change
 
             # --- Step 5: Withdrawals with tax gross-up (fixed point) ---
             # Withdrawals must fund expenses AND taxes.  Taxes depend on

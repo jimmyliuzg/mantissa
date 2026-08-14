@@ -333,3 +333,104 @@ class TestHousingTradeUpMC:
             5 * 7_381.0, rel=0.05)
         # balance reduced by principal portion
         assert mortgage_balances["m_new"] < 1_200_000
+
+
+# ---------------------------------------------------------------------------
+# 7. Withdrawal strategy anchors on current-year expenses
+# ---------------------------------------------------------------------------
+class TestStrategySpendingAnchor:
+
+    def _planner(self, strategy="fixed"):
+        accounts = [
+            Account("brokerage", "Brokerage", "brokerage", "taxable", 5_000_000),
+        ]
+        # Expenses drop sharply after 2030 (e.g. mortgage payoff)
+        expenses = [
+            Expense("big", "Big", monthly_amount=10_000,
+                    start_date=date(2026, 1, 1), end_date=date(2030, 12, 31),
+                    is_must_spend=True),
+            Expense("small", "Small", monthly_amount=1_000,
+                    start_date=date(2031, 1, 1), end_date=date(2090, 12, 31),
+                    is_must_spend=True),
+        ]
+        scenario = Scenario(
+            name="anchor", description="",
+            primary=Person("Primary", date(1980, 1, 1), date(2026, 1, 1), 90),
+            spouse=Person("Spouse", date(1982, 1, 1), date(2026, 1, 1), 90),
+            economic=EconomicAssumptions(),
+            accounts=accounts, income_streams=[], expenses=expenses,
+            mortgages=[], withdrawal_strategy=strategy,
+        )
+        return RetirementPlanner(scenario)
+
+    def test_fixed_strategy_spends_current_expenses_not_year1(self):
+        planner = self._planner("fixed")
+        # Year 1: 10K/mo. Post-2030: 1K/mo. Spending must follow.
+        exp2030 = planner.calculate_annual_expenses(2030)
+        exp2031 = planner.calculate_annual_expenses(2031)
+        assert exp2030["total"] == pytest.approx(120_000)
+        assert exp2031["total"] == pytest.approx(12_000)
+        # Withdrawals in a full run drain far less after the drop.
+        run = planner.run_single_simulation(return_volatility=0.0)
+        # 5 yrs × 120K + 59 yrs × 12K = 1.31M total withdrawals incl. tax
+        assert run["final_net_worth"] > 5_000_000 - 1_400_000
+
+    def test_dynamic_strategy_bumps_around_current_expenses(self):
+        planner = self._planner("dynamic")
+        # 12K/yr spend on a 5M portfolio → rate 0.24% < 3% → +2% bump
+        adjusted = planner.apply_dynamic_spending(
+            2031, 12_000, 5_000_000, {"total": 12_000, "by_category": {}})
+        assert adjusted == pytest.approx(12_240)
+
+
+# ---------------------------------------------------------------------------
+# 8. 401(k) -> IRA rollover at retirement feeds the Roth ladder
+# ---------------------------------------------------------------------------
+class TestRolloverEvent:
+
+    def _planner(self):
+        from retirement_planner.models import RolloverEvent, RothConversion
+        scenario = Scenario(
+            name="roll", description="",
+            primary=Person("Primary", date(1980, 1, 1), date(2030, 1, 1), 90),
+            spouse=Person("Spouse", date(1982, 1, 1), date(2030, 1, 1), 90),
+            economic=EconomicAssumptions(),
+            accounts=[
+                Account("k401", "401k", "401k", "pre_tax", 500_000,
+                        growth_rate=0.0),
+                Account("trad", "Trad", "trad_ira", "pre_tax", 50_000,
+                        growth_rate=0.0),
+                Account("roth", "Roth", "roth_ira", "roth", 10_000,
+                        growth_rate=0.0),
+            ],
+            income_streams=[], expenses=[], mortgages=[],
+            roth_conversions=[RothConversion(
+                id="ladder", name="Ladder", source_account="trad",
+                target_account="roth", start_date=date(2030, 1, 1),
+                end_date=date(2039, 12, 31), annual_amount=40_000)],
+            rollover_events=[RolloverEvent(
+                id="roll", name="Rollover", event_date=date(2030, 1, 1),
+                source_account="k401", target_account="trad")],
+        )
+        return RetirementPlanner(scenario)
+
+    def test_rollover_moves_full_balance(self):
+        planner = self._planner()
+        balances = {"k401": 500_000, "trad": 50_000, "roth": 10_000}
+        from retirement_planner.fixes import process_roth_conversions
+        # Year 2030: conversion first (from 50K), then rollover lands 500K
+        rc = process_roth_conversions(planner.scenario.roth_conversions, 2030, balances)
+        assert rc.total_converted == pytest.approx(40_000)
+        for ro in planner.scenario.rollover_events:
+            if ro.event_date.year == 2030:
+                balances[ro.target_account] += balances[ro.source_account]
+                balances[ro.source_account] = 0.0
+        assert balances["k401"] == 0
+        assert balances["trad"] == pytest.approx(50_000 - 40_000 + 500_000)
+
+    def test_engine_processes_rollover_in_mc(self):
+        planner = self._planner()
+        run = planner.run_single_simulation(return_volatility=0.0)
+        assert run["out_of_savings_year"] is None
+        # Ladder + rollover means conversions ran for a decade from the IRA
+        assert run["lifetime_taxes"] > 0

@@ -311,6 +311,20 @@ class RothConversion:
 
 
 @dataclass
+class RolloverEvent:
+    """One-time pre-tax rollover (e.g. 401(k) -> traditional IRA).
+
+    Moves the full source balance to the target on *event_date*, so
+    later Roth conversion ladders can draw from the aggregated IRA.
+    """
+    id: str
+    name: str
+    event_date: date
+    source_account: str
+    target_account: str
+
+
+@dataclass
 class SocialSecurity:
     """Social Security configuration."""
     # Primary person
@@ -402,6 +416,7 @@ class Scenario:
     windfalls: List[Windfall] = field(default_factory=list)
     housing_events: List[HousingEvent] = field(default_factory=list)
     roth_conversions: List[RothConversion] = field(default_factory=list)
+    rollover_events: List[RolloverEvent] = field(default_factory=list)
     age_events: List[AgeEvent] = field(default_factory=list)
     social_security: SocialSecurity = field(default_factory=SocialSecurity)
     glidepath: Optional[GlidepathConfig] = None

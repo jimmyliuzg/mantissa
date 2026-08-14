@@ -51,7 +51,8 @@ class ValidationResult:
 _SCHEMA_KEYS = {
     "name", "description", "schema_version", "primary", "spouse",
     "economic", "accounts", "income_streams", "expenses", "mortgages",
-    "windfalls", "housing_events", "roth_conversions", "age_events",
+    "windfalls", "housing_events", "roth_conversions", "rollover_events",
+    "age_events",
     "social_security", "glidepath", "withdrawal_strategy", "withdrawal_rate",
     "guardrail_floor_pct", "guardrail_ceiling_pct", "legacy_goal", "state",
     "family_size", "savings_order", "monetary_convention", "_comment",
@@ -149,6 +150,22 @@ def validate_config(config: dict, strict: bool = False) -> ValidationResult:
     for index, account_id in enumerate(config.get("savings_order", [])):
         if account_id not in ids:
             _issue(result, f"$.savings_order[{index}]", f"unknown account '{account_id}'", code="reference")
+
+    for key, events in (("roth_conversions", "start_date"),
+                        ("rollover_events", "event_date")):
+        for index, ev in enumerate(config.get(key, [])):
+            path = f"$.{key}[{index}]"
+            if not isinstance(ev, dict):
+                _issue(result, path, "must be an object", code="type")
+                continue
+            if ev.get("source_account") not in ids:
+                _issue(result, f"{path}.source_account",
+                       f"unknown account '{ev.get('source_account')}'", code="reference")
+            if ev.get("target_account") not in ids:
+                _issue(result, f"{path}.target_account",
+                       f"unknown account '{ev.get('target_account')}'", code="reference")
+            if key == "rollover_events":
+                _date(result, ev.get("event_date"), f"{path}.event_date")
 
     glidepath = config.get("glidepath")
     if glidepath is not None:
