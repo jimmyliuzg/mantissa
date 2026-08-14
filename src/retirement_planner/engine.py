@@ -930,6 +930,8 @@ class RetirementPlanner:
             legacy_goal=config.get("legacy_goal", 2_000_000),
             state=config.get("state", "CA"),
             savings_order=savings_order,
+            withdrawal_strategy=config.get("withdrawal_strategy", "fixed"),
+            withdrawal_rate=config.get("withdrawal_rate", 0.04),
         )
         
         return cls(scenario)
