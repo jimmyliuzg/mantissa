@@ -74,10 +74,10 @@ mantissa sensitivity --config myplan.json --variable inflation --values 0.02,0.0
 ## Python API
 
 ```python
-from retirementplanner import RetirementPlanner, MonteCarloEngine
+from retirement_planner import RetirementPlanner, MonteCarloEngine
 
 planner = RetirementPlanner.from_config("myplan.json")
-projections = planner.project_cashflow()
+projections = planner.project_cash_flow()
 
 engine = MonteCarloEngine(planner)
 results = engine.run(num_simulations=10_000)

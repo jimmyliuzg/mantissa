@@ -137,8 +137,10 @@ def _ira_accounts():
 def test_roth_conversions_in_low_income_years():
     """No income between retirement (2030) and SS claiming (2037).
 
-    Each year: taxable income = 0 → room in 10% bracket = $23,200.
-    Expect 8 conversions (2030..2037 inclusive) of $23,200 each at 10%.
+    Years 2030-2036: taxable income = 0 → room in 10% bracket = $23,200.
+    Year 2037: Social Security begins ($66K) → income sits in the 12%
+    bracket, so the conversion fills room up to the 12% limit.
+    Expect 8 conversions (2030..2037 inclusive).
     """
     planner = _make_planner(accounts=_ira_accounts())
     opt = RothConversionOptimizer(planner)
@@ -150,9 +152,16 @@ def test_roth_conversions_in_low_income_years():
     for c in conversions:
         assert c.source_account == "trad_ira"
         assert c.target_account == "roth_ira"
+    # Pre-SS years: full 10% bracket
+    for c in conversions[:7]:
         assert c.amount == pytest.approx(23_200.0)
         assert c.tax_bracket == 0.10
         assert c.tax_cost == pytest.approx(2_320.0)
+    # SS year: income 66,000 → taxable 36,800 → room to 94,300 @ 12%
+    c = conversions[-1]
+    assert c.amount == pytest.approx(57_500.0)
+    assert c.tax_bracket == 0.12
+    assert c.tax_cost == pytest.approx(6_900.0)
 
 
 def test_roth_conversions_respect_max_annual_amount():

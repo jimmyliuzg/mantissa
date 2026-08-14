@@ -129,6 +129,30 @@ class RothConversionResult:
     conversions: List[dict]  # [{source, target, amount}]
 
 
+def _year_active_fraction(start_date: date, end_date: date, year: int) -> float:
+    """Fraction of *year* during which a dated stream is active.
+
+    Mirrors engine._year_active_fraction (kept local to avoid a circular
+    import).  Jan-1 end dates are exclusive: a window ending 2033-01-01
+    is inactive in 2033.
+    """
+    from datetime import timedelta
+    effective_end = end_date
+    if end_date.month == 1 and end_date.day == 1:
+        effective_end = end_date - timedelta(days=1)
+    if year < start_date.year or year > effective_end.year:
+        return 0.0
+    year_start = date(year, 1, 1)
+    year_end = date(year, 12, 31)
+    days_in_year = (year_end - year_start).days + 1
+    active_start = max(start_date, year_start)
+    active_end = min(effective_end, year_end)
+    if active_end < active_start:
+        return 0.0
+    active_days = (active_end - active_start).days + 1
+    return active_days / days_in_year
+
+
 def process_roth_conversions(
     conversions,  # List[RothConversion] from models.py
     year: int,
@@ -146,29 +170,32 @@ def process_roth_conversions(
     details = []
 
     for rc in conversions:
-        # Check if conversion is active this year
-        if rc.start_date.year <= year <= rc.end_date.year:
-            amount = min(rc.annual_amount, max_conversion)
-            if amount <= 0:
-                continue
+        # Check if conversion is active this year (end-exclusive:
+        # a window ending 2033-01-01 is inactive in 2033).
+        fraction = _year_active_fraction(rc.start_date, rc.end_date, year)
+        if fraction <= 0:
+            continue
+        amount = min(rc.annual_amount, max_conversion) * fraction
+        if amount <= 0:
+            continue
 
-            # Check source has enough
-            source_balance = balances.get(rc.source_account, 0)
-            actual = min(amount, source_balance)
-            if actual <= 0:
-                continue
+        # Check source has enough
+        source_balance = balances.get(rc.source_account, 0)
+        actual = min(amount, source_balance)
+        if actual <= 0:
+            continue
 
-            # Execute conversion
-            balances[rc.source_account] = source_balance - actual
-            target_balance = balances.get(rc.target_account, 0)
-            balances[rc.target_account] = target_balance + actual
+        # Execute conversion
+        balances[rc.source_account] = source_balance - actual
+        target_balance = balances.get(rc.target_account, 0)
+        balances[rc.target_account] = target_balance + actual
 
-            total += actual
-            details.append({
-                "source": rc.source_account,
-                "target": rc.target_account,
-                "amount": actual,
-            })
+        total += actual
+        details.append({
+            "source": rc.source_account,
+            "target": rc.target_account,
+            "amount": actual,
+        })
 
     return RothConversionResult(
         total_converted=total,

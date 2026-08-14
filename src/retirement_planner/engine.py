@@ -64,6 +64,34 @@ _UNIFIED_LIFETIME_TABLE: Dict[int, float] = {
 RMD_START_AGE = 73  # SECURE 2.0 Act
 
 
+def _year_active_fraction(start_date: date, end_date: date, year: int) -> float:
+    """Fraction of *year* during which a dated stream is active.
+
+    End dates are exclusive: a stream ending on Jan 1 of *year* is
+    treated as ending on Dec 31 of the prior year (e.g. a 30-year
+    mortgage taken in 2023 ends on 2053-01-01 and makes its last
+    payment in 2052).
+
+    Returns 1.0 for streams spanning the full year and 0.0 for streams
+    inactive in *year*.
+    """
+    from datetime import timedelta
+    effective_end = end_date
+    if end_date.month == 1 and end_date.day == 1:
+        effective_end = end_date - timedelta(days=1)
+    if year < start_date.year or year > effective_end.year:
+        return 0.0
+    year_start = date(year, 1, 1)
+    year_end = date(year, 12, 31)
+    days_in_year = (year_end - year_start).days + 1
+    active_start = max(start_date, year_start)
+    active_end = min(effective_end, year_end)
+    if active_end < active_start:
+        return 0.0
+    active_days = (active_end - active_start).days + 1
+    return active_days / days_in_year
+
+
 def _rmd_divisor(age: int) -> float:
     """Return the IRS Uniform Lifetime Table divisor for *age*.
 
@@ -336,6 +364,11 @@ class WithdrawalEngine:
             if remaining <= 0:
                 break
             if not category_filter(account):
+                continue
+            # Never liquidate illiquid assets (e.g. real estate) to fund
+            # ordinary spending — those require a housing event.
+            if (account.account_type == "real_estate"
+                    or not account.liquid):
                 continue
             balance = balances.get(account_id, 0.0)
             if balance <= 0:
@@ -735,7 +768,14 @@ class RetirementPlanner:
                     price_source=ec.get("price_source", "manual"),
                     grants=grants,
                     refreshers=refresher,
-                    end_date=date.fromisoformat(ec["end_date"]) if ec.get("end_date") else None,
+                    # Vesting stops when employment ends: default the
+                    # equity end date to the income stream's end date
+                    # when the equity block does not override it.
+                    end_date=(date.fromisoformat(ec["end_date"])
+                              if ec.get("end_date")
+                              else date.fromisoformat(ic["end_date"])
+                              if ic.get("end_date")
+                              else None),
                     sell_to_cover=ec.get("sell_to_cover", True),
                     is_taxable=ec.get("is_taxable", True),
                     goes_to_account=ec.get("goes_to_account", ""),
@@ -1033,8 +1073,14 @@ class RetirementPlanner:
         person = self.scenario.spouse if owner in {"spouse", spouse_name} else self.scenario.primary
         return year - person.birth_date.year
 
-    def calculate_net_worth(self, year: int, scenario: str = "mean") -> Dict:
-        """Calculate net worth at a given year."""
+    def calculate_net_worth(self, year: int, scenario: str = "mean",
+                            mortgage_balances: Optional[Dict[str, float]] = None) -> Dict:
+        """Calculate net worth at a given year.
+
+        When *mortgage_balances* is provided (deterministic projections),
+        outstanding mortgage balances are counted as liabilities so the
+        result matches the Monte Carlo path's net-worth convention.
+        """
         total_assets = 0
         total_liabilities = 0
         account_balances = {}
@@ -1047,6 +1093,10 @@ class RetirementPlanner:
                 total_assets += balance
             else:
                 total_liabilities += abs(balance)
+
+        if mortgage_balances:
+            total_liabilities += sum(
+                b for b in mortgage_balances.values() if b > 0)
 
         return {
             "total_assets": total_assets,
@@ -1070,40 +1120,61 @@ class RetirementPlanner:
         income_by_source = {}
 
         for stream in self.scenario.income_streams:
-            if stream.start_date.year <= year <= stream.end_date.year:
-                years_active = year - stream.start_date.year
+            fraction = _year_active_fraction(
+                stream.start_date, stream.end_date, year)
+            if fraction <= 0:
+                continue
+            years_active = year - stream.start_date.year
 
-                if stream.base_salary or stream.equity:
-                    # Enhanced mode: base + bonus + equity
-                    stream_income = 0
+            if stream.base_salary or stream.equity:
+                # Enhanced mode: base + bonus + equity
+                stream_income = 0
 
-                    # Base salary
-                    if stream.base_salary:
-                        base = stream.base_salary["annual"]
-                        growth = stream.base_salary.get("growth_rate", 0)
-                        stream_income += base * (1 + growth) ** years_active
+                # Base salary (prorated for partial start/end years)
+                if stream.base_salary:
+                    base = stream.base_salary["annual"]
+                    growth = stream.base_salary.get("growth_rate", 0)
+                    stream_income += (base * (1 + growth) ** years_active
+                                      * fraction)
 
-                    # Bonus (annual lump sum)
+                    # Bonus (annual lump sum) — skip if the stream ends
+                    # before the payment month in the final year
                     if stream.bonus and stream.bonus.annual > 0:
-                        bonus_growth = stream.bonus.growth_rate
-                        stream_income += stream.bonus.annual * (1 + bonus_growth) ** years_active
+                        end_month = stream.end_date.month
+                        if (year < stream.end_date.year
+                                or stream.bonus.payment_month <= end_month):
+                            bonus_growth = stream.bonus.growth_rate
+                            stream_income += (stream.bonus.annual
+                                              * (1 + bonus_growth) ** years_active
+                                              * fraction)
 
-                    # RSU equity
+                    # RSU equity — day-exact via equity.end_date
+                    # (defaulted to the stream end date at parse time)
                     if stream.equity and stream.equity.ticker:
-                        rsu_income = self.calculate_annual_rsu_income(year, stream.equity)
+                        rsu_income = self.calculate_annual_rsu_income(
+                            year, stream.equity)
                         stream_income += rsu_income
                         if rsu_income > 0:
                             income_by_source[f"{stream.name} — RSU"] = rsu_income
 
                     total_income += stream_income
-                    if stream.base_salary:
-                        income_by_source[stream.name] = stream_income
+                    income_by_source[stream.name] = stream_income
                 else:
-                    # Legacy mode: flat monthly amount with growth
-                    amount = (stream.monthly_amount * 12
-                              * (1 + stream.growth_rate) ** years_active)
-                    total_income += amount
-                    income_by_source[stream.name] = amount
+                    # Enhanced stream with equity only (no base salary)
+                    if stream.equity and stream.equity.ticker:
+                        rsu_income = self.calculate_annual_rsu_income(
+                            year, stream.equity)
+                        stream_income += rsu_income
+                        if rsu_income > 0:
+                            income_by_source[f"{stream.name} — RSU"] = rsu_income
+                    total_income += stream_income
+            else:
+                # Legacy mode: flat monthly amount with growth
+                amount = (stream.monthly_amount * 12
+                          * (1 + stream.growth_rate) ** years_active
+                          * fraction)
+                total_income += amount
+                income_by_source[stream.name] = amount
 
         return {"total": total_income, "by_source": income_by_source}
 
@@ -1297,6 +1368,9 @@ class RetirementPlanner:
                     # NO inflation multiplier — returns are real, so
                     # expenses stay flat in real terms.
                     amount = monthly * 12
+                    # Prorate partial start/end years (end-exclusive)
+                    amount *= _year_active_fraction(
+                        expense.start_date, expense.end_date, year)
 
                     # Apply stress reduction for discretionary expenses
                     if stress_level > 0 and not expense.is_must_spend:
@@ -1306,22 +1380,33 @@ class RetirementPlanner:
                     total_expenses += amount
                     expenses_by_category[expense.name] = amount
 
-        # Add mortgage payments (amortized when balances are tracked)
+        # Add mortgage payments (amortized when balances are tracked).
+        # Mortgages amortize monthly (US convention: nominal APR / 12);
+        # annual-compounding on the year-start balance diverges from real
+        # schedules and leaves a phantom residual liability.
         for mortgage in self.scenario.mortgages:
             if mortgage.start_date.year <= year <= mortgage.end_date.year:
                 if mortgage_balances is not None:
                     balance = mortgage_balances.get(mortgage.id, 0.0)
                     if balance <= 0:
                         continue  # Paid off — no more payments
-                    interest = balance * mortgage.interest_rate
-                    annual_payment = mortgage.monthly_payment * 12
-                    # Final payoff year may need less than a full payment
-                    amount = min(annual_payment, balance + interest)
-                    principal = amount - interest
-                    mortgage_balances[mortgage.id] = max(
-                        0.0, balance - principal)
+                    fraction = _year_active_fraction(
+                        mortgage.start_date, mortgage.end_date, year)
+                    amount = 0.0
+                    monthly_rate = mortgage.interest_rate / 12
+                    months = round(12 * fraction)
+                    for _ in range(months):
+                        if balance <= 0:
+                            break
+                        interest = balance * monthly_rate
+                        payment = min(
+                            mortgage.monthly_payment, balance + interest)
+                        balance -= payment - interest
+                        amount += payment
+                    mortgage_balances[mortgage.id] = max(0.0, balance)
                 else:
-                    amount = mortgage.monthly_payment * 12
+                    amount = mortgage.monthly_payment * 12 * _year_active_fraction(
+                        mortgage.start_date, mortgage.end_date, year)
                 total_expenses += amount
                 expenses_by_category[f"Mortgage - {mortgage.name}"] = amount
 
@@ -1791,8 +1876,10 @@ class RetirementPlanner:
         must_spend_total = 0.0
         for exp in self.scenario.expenses:
             if exp.is_must_spend and not exp.is_one_time:
-                if exp.start_date.year <= year <= exp.end_date.year:
-                    must_spend_total += exp.monthly_amount * 12
+                fraction = _year_active_fraction(
+                    exp.start_date, exp.end_date, year)
+                if fraction > 0:
+                    must_spend_total += exp.monthly_amount * 12 * fraction
         adjusted = max(must_spend_total, adjusted)
 
         return adjusted
@@ -1923,8 +2010,10 @@ class RetirementPlanner:
             floor = 0.0
             for exp in self.scenario.expenses:
                 if exp.is_must_spend and not exp.is_one_time:
-                    if exp.start_date.year <= year <= exp.end_date.year:
-                        floor += exp.monthly_amount * 12
+                    fraction = _year_active_fraction(
+                        exp.start_date, exp.end_date, year)
+                    if fraction > 0:
+                        floor += exp.monthly_amount * 12 * fraction
             withdrawal_rate = getattr(self.scenario, 'withdrawal_rate', 0.04)
             return self.apply_percent_of_portfolio(
                 year, portfolio_value, withdrawal_rate, floor,
@@ -1935,8 +2024,10 @@ class RetirementPlanner:
             floor = 0.0
             for exp in self.scenario.expenses:
                 if exp.is_must_spend and not exp.is_one_time:
-                    if exp.start_date.year <= year <= exp.end_date.year:
-                        floor += exp.monthly_amount * 12
+                    fraction = _year_active_fraction(
+                        exp.start_date, exp.end_date, year)
+                    if fraction > 0:
+                        floor += exp.monthly_amount * 12 * fraction
             ceiling = base_spending * 1.20
             return self.apply_floor_ceiling(
                 year, base_spending, portfolio_value, floor, ceiling,
@@ -2219,6 +2310,14 @@ class RetirementPlanner:
                     sale_date=date(year, 12, 31),
                 )
 
+            # If withdrawals could not fully cover the shortfall (illiquid
+            # assets remain, e.g. real estate), the household is out of
+            # savings even though net worth may still be positive.
+            covered = sum(w.amount for w in withdrawals)
+            if (covered < shortfall - 1.0
+                    and out_of_savings_year is None):
+                out_of_savings_year = year
+
             # --- Step 6: Build TaxableIncome from all sources ---
             # Calculate SS taxable portion (uses income BEFORE SS was added)
             non_ss_income = income_data["total"]  # wages + other non-SS income
@@ -2460,6 +2559,13 @@ class RetirementPlanner:
         inflation_rate = rates["general_inflation"]
         total_estate_tax = 0.0
 
+        # Track mortgage balances so deterministic net worth matches the
+        # Monte Carlo convention (liabilities reduce net worth, payments
+        # amortize the balance).
+        mortgage_balances: Dict[str, float] = {}
+        for mortgage in self.scenario.mortgages:
+            mortgage_balances[mortgage.id] = mortgage.balance
+
         max_year = (self.scenario.primary.birth_date.year
                     + self.scenario.primary.longevity_age + 1)
 
@@ -2480,7 +2586,25 @@ class RetirementPlanner:
                 break
 
             income = self.calculate_annual_income(year, scenario_name)
-            expenses = self.calculate_annual_expenses(year, scenario_name)
+
+            # Social Security (mirrors the Monte Carlo path: per-person
+            # claiming age with COLA).  Deterministic runs are in real
+            # dollars, so no inflation adjustment is applied.
+            ss_income = 0.0
+            ss = self.scenario.social_security
+            if ss:
+                if primary_age >= ss.primary_claiming_age:
+                    ss_income += self.calculate_social_security(
+                        year, self.scenario.primary)
+                if spouse_age >= ss.spouse_claiming_age:
+                    ss_income += self.calculate_social_security(
+                        year, self.scenario.spouse)
+            if ss_income > 0:
+                income["total"] += ss_income
+                income["by_source"]["Social Security"] = ss_income
+
+            expenses = self.calculate_annual_expenses(
+                year, scenario_name, mortgage_balances=mortgage_balances)
 
             # ACA subsidy (pre-Medicare, per-person)
             aca_family_size = 0
@@ -2506,7 +2630,8 @@ class RetirementPlanner:
                 year, ti, scenario_name,
                 inflation_rate=inflation_rate,
                 years_from_base=years_from_base)
-            net_worth = self.calculate_net_worth(year, scenario_name)
+            net_worth = self.calculate_net_worth(
+                year, scenario_name, mortgage_balances=mortgage_balances)
             yearly_state.income = income
             yearly_state.expenses = expenses
             yearly_state.taxes = taxes
