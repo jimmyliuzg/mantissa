@@ -1,0 +1,128 @@
+{
+  "name": "Equity Config Test",
+  "description": "Tests base_salary, bonus, and equity parsing.",
+  "primary": {
+    "name": "Primary",
+    "birth_date": "1990-01-01",
+    "retirement_date": "2035-01-01",
+    "longevity_age": 90
+  },
+  "spouse": {
+    "name": "Spouse",
+    "birth_date": "1991-01-01",
+    "retirement_date": "2036-01-01",
+    "longevity_age": 90
+  },
+  "economic": {
+    "inflation": 0.025,
+    "medical_inflation": 0.04,
+    "housing_appreciation": 0.035,
+    "investment_return_mean": 0.07,
+    "investment_return_volatility": 0.15
+  },
+  "accounts": [
+    {
+      "id": "brokerage",
+      "name": "Brokerage",
+      "type": "brokerage",
+      "tax_treatment": "taxable",
+      "balance": 100000,
+      "growth_rate": 0.07
+    }
+  ],
+  "income_streams": [
+    {
+      "id": "primary_acme",
+      "name": "Primary \u2014 Acme",
+      "owner": "primary",
+      "monthly_amount": 0,
+      "start_date": "2026-01-01",
+      "end_date": "2035-01-01",
+      "base_salary": {
+        "annual": 200000,
+        "growth_rate": 0.03
+      },
+      "bonus": {
+        "annual": 0,
+        "growth_rate": 0.0,
+        "payment_month": 3
+      },
+      "equity": null
+    },
+    {
+      "id": "spouse_globex",
+      "name": "Spouse \u2014 Globex",
+      "owner": "spouse",
+      "monthly_amount": 0,
+      "start_date": "2026-01-01",
+      "end_date": "2036-01-01",
+      "base_salary": {
+        "annual": 180000,
+        "growth_rate": 0.03
+      },
+      "bonus": {
+        "annual": 18000,
+        "growth_rate": 0.03,
+        "payment_month": 3
+      },
+      "equity": {
+        "ticker": "EXMP",
+        "current_price": 50.0,
+        "price_source": "manual",
+        "grants": [
+          {
+            "id": "grant_1_2025",
+            "grant_date": "2025-10-10",
+            "total_shares": 2000,
+            "vesting_pattern": "cliff_quarterly",
+            "cliff_shares": 1000,
+            "periodic_shares": 250,
+            "cliff_date": "2026-10-10",
+            "status": "active"
+          },
+          {
+            "id": "grant_2_2025",
+            "grant_date": "2025-08-10",
+            "total_shares": 800,
+            "vesting_pattern": "quarterly",
+            "periodic_shares": 100,
+            "status": "active",
+            "cliff_shares": 1000,
+            "cliff_date": null
+          }
+        ],
+        "refreshers": {
+          "annual_shares": 100,
+          "grant_month": 10,
+          "vesting_pattern": "quarterly",
+          "vesting_delay_months": 3,
+          "start_year": 2027,
+          "end_year": 2035,
+          "growth_rate": 0.0
+        },
+        "sell_to_cover": true,
+        "is_taxable": true,
+        "goes_to_account": "brokerage"
+      }
+    }
+  ],
+  "expenses": [
+    {
+      "id": "living",
+      "name": "Living",
+      "monthly_amount": 5000,
+      "start_date": "2026-01-01",
+      "end_date": "2080-01-01",
+      "category": "general",
+      "is_must_spend": true
+    }
+  ],
+  "mortgages": [],
+  "windfalls": [],
+  "legacy_goal": 1000000,
+  "state": "CA",
+  "savings_order": [
+    "brokerage"
+  ],
+  "withdrawal_strategy": "dynamic"
+}
