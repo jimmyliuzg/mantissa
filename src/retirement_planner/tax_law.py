@@ -773,19 +773,47 @@ def calculate_aca_subsidy(
     return max(0.0, benchmark_annual - expected_contribution)
 
 
+# Federal estate tax brackets (IRC §2001(c)): applied to the taxable
+# estate (value above the unified credit exemption).  Flat 40% on the
+# whole excess overstates tax on the lower brackets for modest estates.
+_ESTATE_BRACKETS = [
+    (10_000, 0.18), (20_000, 0.20), (40_000, 0.22), (60_000, 0.24),
+    (80_000, 0.26), (100_000, 0.28), (150_000, 0.30), (250_000, 0.32),
+    (500_000, 0.34), (750_000, 0.37), (1_000_000, 0.39),
+    (float('inf'), 0.40),
+]
+
+
+def estate_tax_on_taxable(taxable: float) -> float:
+    """Progressive federal estate tax on the taxable amount."""
+    if taxable <= 0:
+        return 0.0
+    tax = 0.0
+    prev = 0.0
+    for upper, rate in _ESTATE_BRACKETS:
+        if taxable <= prev:
+            break
+        tax += (min(taxable, upper) - prev) * rate
+        prev = upper
+    return tax
+
+
 def calculate_estate_tax(
     taxable_estate: float,
     law: TaxLawVersion,
     status: FilingStatus = FilingStatus.MFJ,
 ) -> float:
-    """Federal estate tax (simplified — unified credit)."""
+    """Federal estate tax (simplified — unified credit, portability via
+    the MFJ exemption).  *taxable_estate* must be in NOMINAL dollars:
+    the exemption is inflation-indexed (nominal), so comparing a real
+    estate value against it understates (usually zeroes) the tax."""
     if status in (FilingStatus.MFJ, FilingStatus.QSS):
         exemption = law.estate_exemption_mfj
     else:
         exemption = law.estate_exemption_single
 
     taxable = max(0.0, taxable_estate - exemption)
-    return taxable * law.estate_tax_rate
+    return estate_tax_on_taxable(taxable)
 
 
 def calculate_child_tax_credit(

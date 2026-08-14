@@ -848,6 +848,7 @@ class RetirementPlanner:
                 date=date.fromisoformat(wf["date"]),
                 goes_to_account=wf.get("goes_to_account", ""),
                 is_taxable=wf.get("is_taxable", True),
+                source_account=wf.get("source_account", ""),
             ))
 
         # Parse housing events
@@ -1830,17 +1831,22 @@ class RetirementPlanner:
         Returns:
             Federal estate tax owed.
         """
+        # The exemption is indexed to inflation (nominal dollars); the
+        # estate value arrives in the active convention, so convert it
+        # to nominal before comparing, then convert the tax back.
+        from .tax_law import estate_tax_on_taxable
         idx = (1.0 + inflation_rate) ** years_from_base
         if filing_status == "MFJ":
             exemption = _ESTATE_EXEMPTION_MFJ * idx
         else:
             exemption = _ESTATE_EXEMPTION_SINGLE * idx
 
-        if net_worth <= exemption:
+        estate_nominal = net_worth * idx
+        if estate_nominal <= exemption:
             return 0.0
 
-        excess = net_worth - exemption
-        return excess * _ESTATE_TAX_RATE
+        tax_nominal = estate_tax_on_taxable(estate_nominal - exemption)
+        return tax_nominal / idx if idx else tax_nominal
 
     # ------------------------------------------------------------------
     # Social Security
@@ -2203,8 +2209,14 @@ class RetirementPlanner:
         # Historical return sequence index (for sequential replay)
         _hist_idx = 0
 
-        max_year = (self.scenario.primary.birth_date.year
-                    + self.scenario.primary.longevity_age + 1)
+        # Run until the LAST death: the younger/longer-lived person sets
+        # the horizon (estate tax is assessed when both are gone).
+        max_year = max(
+            self.scenario.primary.birth_date.year
+            + self.scenario.primary.longevity_age,
+            self.scenario.spouse.birth_date.year
+            + self.scenario.spouse.longevity_age,
+        ) + 1
 
         for year in range(self.start_year, max_year):
             context = make_year_context(
@@ -2557,13 +2569,25 @@ class RetirementPlanner:
             for windfall in self.scenario.windfalls:
                 if windfall.date.year == year:
                     target = windfall.goes_to_account
-                    if target and target in balances:
-                        balances[target] += windfall.amount
-                        # Increase basis for taxable windfalls
-                        acct = self.accounts.get(target)
-                        if acct and acct.tax_treatment == "taxable":
-                            current_basis = cost_basis.get_basis(target, 0.0)
-                            cost_basis.set_basis(target, current_basis + windfall.amount)
+                    if not target or target not in balances:
+                        continue
+                    # Transfers debit the source account (e.g. 529
+                    # superfund moves brokerage cash into the 529)
+                    if windfall.source_account:
+                        source_balance = balances.get(
+                            windfall.source_account, 0.0)
+                        if source_balance <= 0:
+                            continue
+                        amount = min(windfall.amount, source_balance)
+                        balances[windfall.source_account] -= amount
+                    else:
+                        amount = windfall.amount
+                    balances[target] += amount
+                    # Increase basis for taxable windfalls
+                    acct = self.accounts.get(target)
+                    if acct and acct.tax_treatment == "taxable":
+                        current_basis = cost_basis.get_basis(target, 0.0)
+                        cost_basis.set_basis(target, current_basis + amount)
 
             # --- Step 8b: Housing events ---
             for he in self.scenario.housing_events:
@@ -2619,8 +2643,14 @@ class RetirementPlanner:
                 else self.scenario.spouse.longevity_age)
             if (younger_age >= younger_longevity
                     and total_estate_tax == 0.0):
-                total_estate_tax = tax_law_estate(
-                    net_worth, law, FilingStatus.MFJ)
+                # The exemption is inflation-indexed (nominal), so the
+                # estate must be converted to nominal before comparing.
+                estate_nominal = monetary_policy.to_nominal_for_tax(
+                    net_worth, year, inflation_rate)
+                estate_tax_nominal = tax_law_estate(
+                    estate_nominal, law, FilingStatus.MFJ)
+                total_estate_tax = monetary_policy.from_nominal_after_tax(
+                    estate_tax_nominal, year, inflation_rate)
 
         final_nw = (sum(balances.values())
                     - sum(b for b in mortgage_balances.values() if b > 0))
@@ -2742,8 +2772,14 @@ class RetirementPlanner:
             m.id: m.property_id for m in self.scenario.mortgages
         }
 
-        max_year = (self.scenario.primary.birth_date.year
-                    + self.scenario.primary.longevity_age + 1)
+        # Run until the LAST death: the younger/longer-lived person sets
+        # the horizon (estate tax is assessed when both are gone).
+        max_year = max(
+            self.scenario.primary.birth_date.year
+            + self.scenario.primary.longevity_age,
+            self.scenario.spouse.birth_date.year
+            + self.scenario.spouse.longevity_age,
+        ) + 1
 
         for year in range(self.start_year, max_year):
             context = make_year_context(

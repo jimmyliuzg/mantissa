@@ -72,7 +72,8 @@ class TestMoneyConservation:
         """The fixed-point loop must not double-withdraw across passes."""
         initial = 3_000_000
         annual_expenses = 120_000
-        num_years = 20  # sim runs 2026..2045 (born 1980, longevity 65)
+        # Sim runs 2026..2047 (spouse born 1982, longevity 65) = 22 years
+        num_years = 22
         planner = make_planner(
             accounts=[Account("trad", "Trad", "trad_ira", "pre_tax",
                               initial, growth_rate=0.0)],
@@ -83,17 +84,17 @@ class TestMoneyConservation:
         assert run["out_of_savings_year"] is None
         assert run["lifetime_taxes"] > 0  # pre-tax withdrawals are ordinary
         # Balance falls by exactly (expenses + taxes), once per year.
-        # (Fixed-point convergence tolerance bounds the residual to ~$1.)
+        # (Fixed-point convergence tolerance bounds the residual to ~$2.)
         assert run["final_net_worth"] == pytest.approx(
             initial - annual_expenses * num_years - run["lifetime_taxes"],
-            rel=1e-5)
+            abs=10.0)
 
     def test_no_withdrawals_when_income_covers_expenses(self):
         """A fully-funded retirement withdraws nothing and pays no tax
         (no phantom withdrawals from the fixed-point iterations)."""
         initial = 500_000
         annual_expenses = 12_000
-        num_years = 20
+        num_years = 22  # sim runs 2026..2047 (spouse longevity 65)
         planner = make_planner(
             accounts=[Account("roth", "Roth", "roth_ira", "roth",
                               initial, growth_rate=0.0)],

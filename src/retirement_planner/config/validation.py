@@ -161,6 +161,16 @@ def validate_config(config: dict, strict: bool = False) -> ValidationResult:
         else:
             _date(result, dep["birth_date"], f"{path}.birth_date")
 
+    for index, wf in enumerate(config.get("windfalls", [])):
+        path = f"$.windfalls[{index}]"
+        if not isinstance(wf, dict):
+            continue
+        for field in ("goes_to_account", "source_account"):
+            acct = wf.get(field)
+            if acct and acct not in ids:
+                _issue(result, f"{path}.{field}",
+                       f"unknown account '{acct}'", code="reference")
+
     for key, events in (("roth_conversions", "start_date"),
                         ("rollover_events", "event_date")):
         for index, ev in enumerate(config.get(key, [])):

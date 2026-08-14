@@ -528,3 +528,68 @@ class TestDependentAcaFamilySize:
         subsidy2 = without.calculate_aca_subsidy(60_000, 2, "CA")
         assert subsidy3 > subsidy2
         assert run_with["out_of_savings_year"] is None
+
+
+# ---------------------------------------------------------------------------
+# 11. Estate tax: REAL estate converted to nominal before exemption
+# ---------------------------------------------------------------------------
+class TestEstateTaxConvention:
+
+    def _planner(self, balance):
+        scenario = Scenario(
+            name="estate", description="",
+            primary=Person("Primary", date(1980, 1, 1), date(2026, 1, 1), 90),
+            spouse=Person("Spouse", date(1982, 1, 1), date(2026, 1, 1), 90),
+            economic=EconomicAssumptions(),
+            accounts=[Account("brokerage", "Brokerage", "brokerage",
+                              "taxable", balance, growth_rate=0.07)],
+            income_streams=[], expenses=[], mortgages=[],
+        )
+        return RetirementPlanner(scenario)
+
+    def test_large_estate_pays_estate_tax_in_real_mode(self):
+        """The exemption is inflation-indexed (nominal); a REAL-mode
+        estate must be converted to nominal before comparing.  Before
+        the fix, real-vs-nominal comparison zeroed estate tax entirely."""
+        planner = self._planner(5_000_000)
+        run = planner.run_single_simulation(return_volatility=0.0)
+        # 5M real at 7% for 64 yrs ≈ 340M real ≈ 1.4B nominal — taxable
+        assert run["estate_tax"] > 0
+        # Tax is progressive 18-40% on the excess over the indexed MFJ
+        # exemption — never the full flat 40% on the entire estate.
+        assert run["estate_tax"] < run["final_net_worth"] * 0.4
+
+
+# ---------------------------------------------------------------------------
+# 12. Sourced windfalls are NW-neutral transfers
+# ---------------------------------------------------------------------------
+class TestSourcedWindfall:
+
+    def test_transfer_does_not_create_money(self):
+        from retirement_planner.models import Windfall
+        scenario = Scenario(
+            name="wf", description="",
+            primary=Person("Primary", date(1980, 1, 1), date(2026, 1, 1), 90),
+            spouse=Person("Spouse", date(1982, 1, 1), date(2026, 1, 1), 90),
+            economic=EconomicAssumptions(),
+            accounts=[
+                Account("a", "A", "brokerage", "taxable", 500_000,
+                        growth_rate=0.07),
+                Account("b", "B", "brokerage", "taxable", 100_000,
+                        growth_rate=0.07),
+            ],
+            income_streams=[], expenses=[], mortgages=[],
+            windfalls=[Windfall(
+                id="xfer", name="Transfer", amount=95_000,
+                date=date(2027, 1, 15), goes_to_account="b",
+                source_account="a", is_taxable=False)],
+        )
+        planner = RetirementPlanner(scenario)
+        with_xfer = planner.run_single_simulation(
+            return_volatility=0.0)["final_net_worth"]
+        scenario.windfalls = []
+        without = planner.run_single_simulation(
+            return_volatility=0.0)["final_net_worth"]
+        # Moving money between two same-tax accounts is neutral; only the
+        # 529's tax-exempt status changes the outcome, not the transfer.
+        assert with_xfer == pytest.approx(without, rel=1e-9)

@@ -3,8 +3,8 @@ import pytest
 from retirement_planner.tax_law import (
     TaxLawVersion, TaxLawRegistry, FilingStatus, Bracket,
     bracket_tax, calculate_niit, calculate_amt, calculate_irmaa,
-    calculate_aca_subsidy, calculate_estate_tax, calculate_child_tax_credit,
-    calculate_qcd, determine_filing_status,
+    calculate_aca_subsidy, calculate_estate_tax, estate_tax_on_taxable,
+    calculate_child_tax_credit, calculate_qcd, determine_filing_status,
 )
 
 
@@ -199,10 +199,12 @@ class TestEstateTax:
 
     def test_above_exemption(self):
         law = TaxLawRegistry().law_for_year(2024)
-        # $30M estate, $27.22M exemption → $2.78M taxable × 40%
+        # $30M estate, $27.22M exemption → $2.78M taxable at progressive
+        # IRC §2001(c) rates (18% first $10K … 40% above $1M).
         tax = calculate_estate_tax(30_000_000, law, FilingStatus.MFJ)
-        expected = (30_000_000 - 27_220_000) * 0.40
-        assert tax == pytest.approx(expected)
+        taxable = 30_000_000 - 27_220_000
+        assert tax < taxable * 0.40  # progressive beats flat 40%
+        assert tax == pytest.approx(estate_tax_on_taxable(taxable))
 
 
 # ---------------------------------------------------------------------------

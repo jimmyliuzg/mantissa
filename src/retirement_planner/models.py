@@ -264,13 +264,18 @@ class Mortgage:
 
 @dataclass
 class Windfall:
-    """One-time lump sum event."""
+    """One-time lump sum event.
+
+    Adds *amount* to *goes_to_account*; when *source_account* is set,
+    the amount is debited from it (a transfer rather than new money).
+    """
     id: str
     name: str
     amount: float
     date: date
     goes_to_account: str = ""
     is_taxable: bool = True
+    source_account: str = ""
 
 
 @dataclass
