@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    name: Core tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install test dependencies
+        run: python -m pip install -e ".[test]"
+      - name: Run core test suite
+        run: python -m pytest -q
+
+  pdf:
+    name: PDF tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install PDF test dependencies
+        run: python -m pip install -e ".[test,pdf]"
+      - name: Run PDF tests
+        run: python -m pytest -q tests/cli/test_pdf_report.py
+
+  clean-install:
+    name: Clean install smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install build tooling
+        run: python -m pip install build
+      - name: Build wheel
+        run: python -m build --wheel
+      - name: Install wheel in fresh environment
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/mantissa-venv"
+          "$RUNNER_TEMP/mantissa-venv/bin/python" -m pip install dist/*.whl
+          mkdir -p "$RUNNER_TEMP/mantissa-smoke"
+          cd "$RUNNER_TEMP/mantissa-smoke"
+          export PATH="$RUNNER_TEMP/mantissa-venv/bin:$PATH"
+          mantissa --version
+          mantissa init --output plan.json
+          mantissa validate --config plan.json
+          mantissa project --config plan.json --format json > projection.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          rows = json.loads(Path("projection.json").read_text())
+          assert rows, "clean-install projection returned no rows"
+          PY
