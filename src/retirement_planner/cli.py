@@ -6,6 +6,7 @@ import io
 from pathlib import Path
 from tabulate import tabulate
 
+from . import __version__
 from .engine import RetirementPlanner
 from .simulators import MonteCarloEngine
 from .reports import (
@@ -40,7 +41,7 @@ def _print_mc_results(mc_results: dict, label: str = "MONTE CARLO RESULTS"):
 
 
 @click.group()
-@click.version_option(version="0.1.0", prog_name="Mantissa")
+@click.version_option(version=__version__, prog_name="Mantissa")
 def main():
     """Mantissa — Open-source retirement planner with Monte Carlo simulation."""
     pass
@@ -582,7 +583,7 @@ def doctor():
 
     # Core dependencies
     click.echo("Core dependencies:")
-    for pkg in ["click", "tabulate"]:
+    for pkg in ["click", "numpy", "tabulate"]:
         try:
             mod = importlib.import_module(pkg)
             version = importlib.metadata.version(pkg)
