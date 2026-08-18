@@ -29,6 +29,23 @@ jobs:
       - name: Run core test suite
         run: python -m pytest -q
 
+  charts:
+    name: Chart tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install chart test dependencies
+        run: python -m pip install -e ".[test,charts]"
+      - name: Run chart tests
+        run: python -m pytest -q tests/cli/test_charts.py
+
   pdf:
     name: PDF tests
     runs-on: ubuntu-latest
