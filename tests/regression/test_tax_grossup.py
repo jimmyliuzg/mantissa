@@ -79,14 +79,18 @@ class TestMoneyConservation:
                               initial, growth_rate=0.0)],
             expenses=[expense(10_000)],
         )
-        run = planner.run_single_simulation(return_volatility=0.0)
+        run = planner.run_single_simulation(
+            return_volatility=0.0, collect_projections=True)
 
         assert run["out_of_savings_year"] is None
         assert run["lifetime_taxes"] > 0  # pre-tax withdrawals are ordinary
-        # Balance falls by exactly (expenses + taxes), once per year.
-        # (Fixed-point convergence tolerance bounds the residual to ~$2.)
+        # Balance falls by exactly (expenses + taxes), once per year.  The
+        # survivor expense ratio (R6) scales post-first-death years to 75%,
+        # so sum the actual per-year expenses from the projections rather
+        # than the flat annual amount.
+        total_expenses = sum(r["expenses"] for r in run["projections"])
         assert run["final_net_worth"] == pytest.approx(
-            initial - annual_expenses * num_years - run["lifetime_taxes"],
+            initial - total_expenses - run["lifetime_taxes"],
             abs=10.0)
 
     def test_no_withdrawals_when_income_covers_expenses(self):
@@ -100,11 +104,15 @@ class TestMoneyConservation:
                               initial, growth_rate=0.0)],
             expenses=[expense(1_000)],
         )
-        run = planner.run_single_simulation(return_volatility=0.0)
+        run = planner.run_single_simulation(
+            return_volatility=0.0, collect_projections=True)
         assert run["out_of_savings_year"] is None
         assert run["lifetime_taxes"] == 0.0
+        # Sum actual per-year expenses (survivor ratio scales post-death
+        # years) rather than the flat annual amount.
+        total_expenses = sum(r["expenses"] for r in run["projections"])
         assert run["final_net_worth"] == pytest.approx(
-            initial - annual_expenses * num_years, rel=1e-9)
+            initial - total_expenses, rel=1e-9)
 
 
 # ---------------------------------------------------------------------------

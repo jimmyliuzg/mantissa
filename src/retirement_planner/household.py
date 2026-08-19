@@ -349,13 +349,25 @@ def survivor_snapshot(
         has_dependents=has_dependents,
     )
 
-    living_adults = int(primary_alive) + int(spouse_alive)
-    aca_family_size = living_adults + active_dependent_count(year, dependents)
+    # ACA family size: ACA-eligible (under-65, ACA coverage) living adults
+    # plus active dependents.  Medicare-covered adults: living adults at
+    # Medicare age with Medicare coverage.  The two counts are derived
+    # separately (KTD5) and stay coverage-aware so coverage_type and the
+    # pre-Medicare gate are honored.
+    aca_family_size = (
+        sum(1 for person, alive in ((primary, primary_alive),
+                                    (spouse, spouse_alive))
+            if alive
+            and (year - person.birth_date.year) < 65
+            and person.coverage_at_age(year - person.birth_date.year) == "aca")
+        + active_dependent_count(year, dependents))
     medicare_adult_count = sum(
         1 for person, alive in ((primary, primary_alive),
                                 (spouse, spouse_alive))
-        if alive and (year - person.birth_date.year) >= 65
-    )
+        if alive
+        and (year - person.birth_date.year) >= 65
+        and person.coverage_at_age(year - person.birth_date.year) == "medicare")
+
 
     return SurvivorSnapshot(
         year=year,

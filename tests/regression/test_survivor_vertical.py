@@ -19,7 +19,16 @@ from retirement_planner.household import (
     normalize_filing_status,
     survivor_snapshot,
 )
-from retirement_planner.models import Dependent, Person
+from retirement_planner.engine import RetirementPlanner
+from retirement_planner.models import (
+    Account,
+    Dependent,
+    EconomicAssumptions,
+    Expense,
+    Person,
+    Scenario,
+    SocialSecurity,
+)
 from retirement_planner.tax_law import FilingStatus
 
 
@@ -198,24 +207,33 @@ class TestEqualDeaths:
 # Coverage counts (R5) — separate ACA family size and Medicare adult count
 # ---------------------------------------------------------------------------
 class TestCoverageCounts:
-    def test_aca_family_size_includes_dependents(self):
-        p, s = PRIMARY_FIRST
-        dep = make_dependent(2030)
-        snap_alive = survivor_snapshot(2030, p, s, [dep])
-        assert snap_alive.aca_family_size == 3  # 2 adults + 1 dependent
+    # Younger couple so ACA-eligible (under-65) adults exist in 2030.
+    YOUNG = (
+        make_person("Primary", 1990, 90),  # death 2080
+        make_person("Spouse", 1992, 90),   # death 2082
+    )
 
-        snap_widowed = survivor_snapshot(2041, p, s, [dep])
-        # One adult (spouse) + 1 dependent
-        assert snap_widowed.aca_family_size == 2
+    def test_aca_family_size_under_65_plus_dependents(self):
+        p, s = self.YOUNG
+        dep_young = make_dependent(2028)  # age 2 in 2030, ages out by 2054
+        # 2030: ages 40/38 (<65, ACA) + dependent age 2 (<26) -> 3
+        assert survivor_snapshot(2030, p, s, [dep_young]).aca_family_size == 3
+        # 2070: both 80/78 (>=65) and dependent age 42 (>26) -> 0
+        assert survivor_snapshot(2070, p, s, [dep_young]).aca_family_size == 0
+        dep_late = make_dependent(2068)  # age 2 in 2070, 13 in 2081
+        # 2070: both >=65; dependent age 2 (<26) remains ACA-eligible -> 1
+        assert survivor_snapshot(2070, p, s, [dep_late]).aca_family_size == 1
+        # 2081: primary dead, spouse Medicare-aged; dependent age 13 -> 1
+        assert survivor_snapshot(2081, p, s, [dep_late]).aca_family_size == 1
 
     def test_medicare_adult_count_only_eligible(self):
-        p, s = PRIMARY_FIRST
-        # In 2030 both are 68/70 -> both Medicare-eligible
-        snap = survivor_snapshot(2030, p, s)
-        assert snap.medicare_adult_count == 2
-        # In 2041 primary (81) dead, spouse (79) Medicare-eligible
-        snap2 = survivor_snapshot(2041, p, s)
-        assert snap2.medicare_adult_count == 1
+        p, s = self.YOUNG
+        # 2030: both 40/38 (<65) -> 0 Medicare-eligible
+        assert survivor_snapshot(2030, p, s).medicare_adult_count == 0
+        # 2070: both 80/78 (>=65) -> 2 Medicare-eligible
+        assert survivor_snapshot(2070, p, s).medicare_adult_count == 2
+        # 2081: primary dead, spouse 89 (>=65) -> 1 Medicare-eligible
+        assert survivor_snapshot(2081, p, s).medicare_adult_count == 1
 
 
 # ---------------------------------------------------------------------------
@@ -247,3 +265,105 @@ class TestSnapshotContract:
         assert active_dependent_count(2030, [dep]) == 0
         dep2 = make_dependent(2030)
         assert active_dependent_count(2030, [dep2]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Engine integration: survivor Social Security (R4) and expense scaling (R6)
+# ---------------------------------------------------------------------------
+def _build(primary_birth, spouse_birth, primary_lon, spouse_lon,
+           ss=(1000, 800), expense_monthly=0.0, ratio=0.75,
+           balance=10_000_000):
+    scenario = Scenario(
+        name="surv", description="", state="CA",
+        primary=Person("P", date(primary_birth, 1, 1), date(2025, 1, 1), primary_lon),
+        spouse=Person("S", date(spouse_birth, 1, 1), date(2025, 1, 1), spouse_lon),
+        economic=EconomicAssumptions(),
+        accounts=[Account("b", "B", "brokerage", "taxable", balance, growth_rate=0.0)],
+        income_streams=[],
+        expenses=([Expense("l", "L", expense_monthly, date(2025, 1, 1),
+                           date(2100, 1, 1), is_must_spend=True)]
+                   if expense_monthly > 0 else []),
+        mortgages=[],
+        social_security=SocialSecurity(
+            primary_benefit_at_67=ss[0], spouse_benefit_at_67=ss[1],
+            primary_claiming_age=67, spouse_claiming_age=67),
+        survivor_expense_ratio=ratio,
+    )
+    return RetirementPlanner(scenario)
+
+
+class TestSurvivorSocialSecurity:
+    # Primary dies first: 1990/80 -> 2070; spouse 1992/90 -> 2082.
+    def test_primary_first_retains_then_selects(self):
+        pl = _build(1990, 1992, 80, 90, ss=(1000, 800))
+        proj = {r["year"]: r for r in pl.run_single_simulation(
+            return_volatility=0.0, collect_projections=True)["projections"]}
+        # Both alive and claiming (2065): both payable benefits retained.
+        assert proj[2065]["primary_alive"] and proj[2065]["spouse_alive"]
+        ss_p = pl.calculate_social_security(2065, pl.scenario.primary)
+        ss_s = pl.calculate_social_security(2065, pl.scenario.spouse)
+        assert proj[2065]["income"] == pytest.approx(ss_p + ss_s)
+        # Death year (2070): still both alive -> both benefits retained.
+        ss_p_d = pl.calculate_social_security(2070, pl.scenario.primary)
+        ss_s_d = pl.calculate_social_security(2070, pl.scenario.spouse)
+        assert proj[2070]["income"] == pytest.approx(ss_p_d + ss_s_d)
+        # Year after primary death (2071): survivor gets higher payable.
+        assert proj[2071]["primary_alive"] is False
+        assert proj[2071]["survivor"] == "spouse"
+        ss_p_a = pl.calculate_social_security(2071, pl.scenario.primary)
+        ss_s_a = pl.calculate_social_security(2071, pl.scenario.spouse)
+        assert proj[2071]["income"] == pytest.approx(max(ss_p_a, ss_s_a))
+        assert proj[2071]["income"] < proj[2070]["income"]
+
+    def test_spouse_first_retains_then_selects(self):
+        pl = _build(1992, 1990, 90, 80, ss=(1000, 800))
+        proj = {r["year"]: r for r in pl.run_single_simulation(
+            return_volatility=0.0, collect_projections=True)["projections"]}
+        ss_p = pl.calculate_social_security(2065, pl.scenario.primary)
+        ss_s = pl.calculate_social_security(2065, pl.scenario.spouse)
+        assert proj[2065]["income"] == pytest.approx(ss_p + ss_s)
+        # Spouse dies first (2070); year after, survivor (primary) gets max.
+        assert proj[2071]["spouse_alive"] is False
+        assert proj[2071]["survivor"] == "primary"
+        ss_p_a = pl.calculate_social_security(2071, pl.scenario.primary)
+        ss_s_a = pl.calculate_social_security(2071, pl.scenario.spouse)
+        assert proj[2071]["income"] == pytest.approx(max(ss_p_a, ss_s_a))
+
+    def test_unclaimed_deceased_benefit_absent(self):
+        # Primary dies before claiming age (65 < 67) -> no payable benefit,
+        # so the survivor receives only the spouse's benefit (R4).  Spouse
+        # also pre-claiming here, so income is zero until they claim.
+        pl = _build(1990, 1992, 65, 90, ss=(1000, 800))
+        proj = {r["year"]: r for r in pl.run_single_simulation(
+            return_volatility=0.0, collect_projections=True)["projections"]}
+        row = proj[2056]  # primary dead (age 65), spouse age 63 (<67)
+        assert row["primary_alive"] is False
+        assert row["income"] == pytest.approx(0.0)
+
+
+class TestSurvivorExpenseRatio:
+    def test_scales_post_death(self):
+        base = _build(1990, 1992, 80, 90, expense_monthly=2000, ratio=1.0)
+        scaled = _build(1990, 1992, 80, 90, expense_monthly=2000, ratio=0.75)
+        b = {r["year"]: r for r in base.run_single_simulation(
+            return_volatility=0.0, collect_projections=True)["projections"]}
+        s = {r["year"]: r for r in scaled.run_single_simulation(
+            return_volatility=0.0, collect_projections=True)["projections"]}
+        # Pre-death (both alive): identical expenses.
+        assert b[2069]["expenses"] == pytest.approx(s[2069]["expenses"])
+        # Post-primary-death (2071): scaled = 0.75 * base (same-year med/
+        # IRMAA terms, so the only difference is the ratio).
+        assert s[2071]["expenses"] == pytest.approx(
+            b[2071]["expenses"] * 0.75, rel=1e-9)
+        assert s[2071]["expense_ratio"] == 0.75
+
+    def test_custom_ratio(self):
+        base = _build(1990, 1992, 80, 90, expense_monthly=2000, ratio=1.0)
+        scaled = _build(1990, 1992, 80, 90, expense_monthly=2000, ratio=0.5)
+        b = {r["year"]: r for r in base.run_single_simulation(
+            return_volatility=0.0, collect_projections=True)["projections"]}
+        s = {r["year"]: r for r in scaled.run_single_simulation(
+            return_volatility=0.0, collect_projections=True)["projections"]}
+        assert s[2071]["expenses"] == pytest.approx(
+            b[2071]["expenses"] * 0.5, rel=1e-9)
+        assert s[2071]["expense_ratio"] == 0.5

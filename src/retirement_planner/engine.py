@@ -34,7 +34,7 @@ from .monetary import MonetaryPolicy
 from .fixes import process_housing_event, process_roth_conversions, apply_medical_inflation
 from .tax_lots import calculate_121_exclusion
 from .projection.services import make_year_context, make_state
-from .sim_integration import calculate_401k_limit
+from .sim_integration import calculate_401k_limit, compute_survivor_ss_benefit
 from .household import survivor_snapshot, normalize_filing_status
 from .tax_law import (
     TaxLawRegistry, FilingStatus,
@@ -1007,6 +1007,7 @@ class RetirementPlanner:
             savings_order=savings_order,
             withdrawal_strategy=config.get("withdrawal_strategy", "fixed"),
             withdrawal_rate=config.get("withdrawal_rate", 0.04),
+            survivor_expense_ratio=config.get("survivor_expense_ratio", 0.75),
         )
 
         planner = cls(scenario)
@@ -2470,14 +2471,22 @@ class RetirementPlanner:
                 annual_income, year, inflation_rate,
             )
 
-            # Social Security
-            ss_income = 0.0
-            if primary_age >= self.scenario.social_security.primary_claiming_age:
-                ss_income += self.calculate_social_security(
-                    year, self.scenario.primary)
-            if spouse_age >= self.scenario.social_security.spouse_claiming_age:
-                ss_income += self.calculate_social_security(
-                    year, self.scenario.spouse)
+            # Social Security (R4): claimed-benefit-only survivor benefit.
+            # The death year retains both payable benefits; after a death
+            # the survivor receives the higher of their own and the
+            # deceased person's payable benefit — no benefit is invented
+            # for an unclaimed deceased spouse.
+            ss_primary_annual = (
+                self.calculate_social_security(year, self.scenario.primary)
+                if primary_age >= self.scenario.social_security.primary_claiming_age
+                else 0.0)
+            ss_spouse_annual = (
+                self.calculate_social_security(year, self.scenario.spouse)
+                if spouse_age >= self.scenario.social_security.spouse_claiming_age
+                else 0.0)
+            ss_income = compute_survivor_ss_benefit(
+                ss_primary_annual, ss_spouse_annual,
+                snap.primary_alive, snap.spouse_alive)
             # In NOMINAL mode, inflate SS (it already has COLA but
             # we need the base-year → year inflation for convention)
             ss_income = monetary_policy.adjust_for_inflation(
@@ -2507,17 +2516,21 @@ class RetirementPlanner:
                 year, inflation_rate,
             )
 
+            # Survivor expense scaling (R6): after the first death, active
+            # expenses scale to survivor_expense_ratio of the both-alive
+            # total. Applied once, before IRMAA/withdrawal logic.
+            survivor_expense_ratio = (
+                self.scenario.survivor_expense_ratio
+                if snap.survivor is not None else 1.0)
+            annual_expenses *= survivor_expense_ratio
+
             # --- Step 4b: IRMAA Medicare surcharges (per-person) ---
             # 2-year lookback: use MAGI from 2 years prior
             lookback_year = year - 2
             magi_2yr_ago = magi_history.get(lookback_year, 0.0)
 
-            # Count people on Medicare (age >= 65 with Medicare coverage)
-            num_medicare = 0
-            if self.scenario.primary.coverage_at_age(primary_age) == "medicare":
-                num_medicare += 1
-            if self.scenario.spouse.coverage_at_age(spouse_age) == "medicare":
-                num_medicare += 1
+            # Medicare-covered adults: living adults at Medicare age (R5/KTD5).
+            num_medicare = snap.medicare_adult_count
 
             irmaa_amount = 0.0
             if num_medicare > 0:
@@ -2528,14 +2541,9 @@ class RetirementPlanner:
             # --- Step 4c: ACA subsidy (per-person, pre-Medicare) ---
             # The subsidy depends on MAGI, which includes withdrawal
             # income, so it is recomputed inside the fixed-point loop
-            # below rather than here.  Only eligibility is determined now.
-            aca_family_size = 0
-            if primary_age < 65 and self.scenario.primary.coverage_at_age(primary_age) == "aca":
-                aca_family_size += 1
-            if spouse_age < 65 and self.scenario.spouse.coverage_at_age(spouse_age) == "aca":
-                aca_family_size += 1
-            # Children under 26 ride on the parents' ACA plan
-            aca_family_size += self._dependents_under_26(year)
+            # below rather than here.  ACA family size uses the survivor
+            # definition: living adults plus active dependents (R5/KTD5).
+            aca_family_size = snap.aca_family_size
 
             # --- Step 4d: Apply withdrawal strategy (if retired) ---
             total_portfolio_value = sum(b for b in balances.values() if b > 0)
@@ -2839,6 +2847,9 @@ class RetirementPlanner:
                     "spouse_alive": snap.spouse_alive,
                     "filing_status": snap.filing_status.value,
                     "survivor": snap.survivor,
+                    "aca_family_size": snap.aca_family_size,
+                    "medicare_adult_count": snap.medicare_adult_count,
+                    "expense_ratio": survivor_expense_ratio,
                 })
 
             if net_worth > peak_nw:
@@ -3047,15 +3058,17 @@ class RetirementPlanner:
 
             # Social Security (mirrors the Monte Carlo path: per-person
             # claiming age with COLA).
-            ss_income = 0.0
+            # Social Security (R4): claimed-benefit-only survivor benefit.
             ss = self.scenario.social_security
-            if ss:
-                if primary_age >= ss.primary_claiming_age:
-                    ss_income += self.calculate_social_security(
-                        year, self.scenario.primary)
-                if spouse_age >= ss.spouse_claiming_age:
-                    ss_income += self.calculate_social_security(
-                        year, self.scenario.spouse)
+            ss_primary_annual = (
+                self.calculate_social_security(year, self.scenario.primary)
+                if ss and primary_age >= ss.primary_claiming_age else 0.0)
+            ss_spouse_annual = (
+                self.calculate_social_security(year, self.scenario.spouse)
+                if ss and spouse_age >= ss.spouse_claiming_age else 0.0)
+            ss_income = compute_survivor_ss_benefit(
+                ss_primary_annual, ss_spouse_annual,
+                snap.primary_alive, snap.spouse_alive)
             # In NOMINAL mode, inflate income and SS to year-of dollars
             # (MC parity; REAL mode is identity).
             income["total"] = monetary_policy.adjust_for_inflation(
@@ -3084,23 +3097,23 @@ class RetirementPlanner:
                     year, rates["medical_inflation"] - inflation_rate),
                 year, inflation_rate)
 
-            # ACA subsidy (pre-Medicare, per-person)
-            aca_family_size = 0
-            if primary_age < 65 and self.scenario.primary.coverage_at_age(primary_age) == "aca":
-                aca_family_size += 1
-            if spouse_age < 65 and self.scenario.spouse.coverage_at_age(spouse_age) == "aca":
-                aca_family_size += 1
-            # Children under 26 ride on the parents' ACA plan
-            aca_family_size += self._dependents_under_26(year)
+            # Survivor expense scaling (R6): after the first death, active
+            # expenses scale to survivor_expense_ratio of the both-alive
+            # total. Applied once, before ACA/IRMAA logic.
+            survivor_expense_ratio = (
+                self.scenario.survivor_expense_ratio
+                if snap.survivor is not None else 1.0)
+            expenses["total"] *= survivor_expense_ratio
+
+            # ACA subsidy (pre-Medicare, per-person). ACA family size uses
+            # the survivor definition: living adults plus active dependents
+            # (R5/KTD5).
+            aca_family_size = snap.aca_family_size
 
             # IRMAA Medicare surcharges (2-year lookback on MAGI — the
             # deterministic path uses income-only MAGI; MC includes
             # withdrawals).  Mirrors the Monte Carlo step 4b.
-            num_medicare = 0
-            if self.scenario.primary.coverage_at_age(primary_age) == "medicare":
-                num_medicare += 1
-            if self.scenario.spouse.coverage_at_age(spouse_age) == "medicare":
-                num_medicare += 1
+            num_medicare = snap.medicare_adult_count
             if num_medicare > 0:
                 irmaa_amount = tax_law_irmaa(
                     income_history.get(year - 2, 0.0),
@@ -3225,6 +3238,9 @@ class RetirementPlanner:
                 "spouse_alive": snap.spouse_alive,
                 "filing_status": snap.filing_status.value,
                 "survivor": snap.survivor,
+                "aca_family_size": snap.aca_family_size,
+                "medicare_adult_count": snap.medicare_adult_count,
+                "expense_ratio": survivor_expense_ratio,
                 "approximations": [
                     a.as_dict() for a in tracker.for_year(year)
                 ],
