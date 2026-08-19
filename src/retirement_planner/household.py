@@ -387,6 +387,29 @@ def survivor_snapshot(
     )
 
 
+def rollover_pretax_ownership(
+    owner_map: Dict[str, str],
+    accounts,
+    deceased: str,
+    survivor: str,
+) -> Dict[str, str]:
+    """Reassign eligible pre-tax account ownership to the survivor.
+
+    Mutates only the local *owner_map* (never the shared ``Account``
+    objects) so Monte Carlo runs do not leak ownership across iterations
+    (R7).  Eligible accounts are those the engine's RMD path recognizes
+    as pre-tax; accounts already owned by the survivor are left untouched.
+    """
+    for account_id, account in accounts.items():
+        if account.tax_treatment != "pre_tax":
+            continue
+        current = owner_map.get(
+            account_id, (account.owner or "primary").lower())
+        if current == deceased:
+            owner_map[account_id] = survivor
+    return owner_map
+
+
 def normalize_filing_status(value) -> FilingStatus:
     """Normalize a string or enum filing status to the ``FilingStatus`` enum.
 

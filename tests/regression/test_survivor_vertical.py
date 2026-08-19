@@ -17,9 +17,14 @@ from retirement_planner.household import (
     active_dependent_count,
     configured_death_year,
     normalize_filing_status,
+    rollover_pretax_ownership,
     survivor_snapshot,
 )
-from retirement_planner.engine import RetirementPlanner
+from retirement_planner.engine import (
+    RetirementPlanner,
+    WithdrawalEngine,
+    CostBasisTracker,
+)
 from retirement_planner.models import (
     Account,
     Dependent,
@@ -367,3 +372,98 @@ class TestSurvivorExpenseRatio:
         assert s[2071]["expenses"] == pytest.approx(
             b[2071]["expenses"] * 0.5, rel=1e-9)
         assert s[2071]["expense_ratio"] == 0.5
+
+
+# ---------------------------------------------------------------------------
+# U3: Estate timing (R8) and spousal rollover / RMD ownership (R7)
+# ---------------------------------------------------------------------------
+class TestEstateTiming:
+    # Large estate so the exemption is exceeded and tax is non-trivial.
+    def _run(self, pb, sb, plon, slon, balance=50_000_000):
+        pl = _build(pb, sb, plon, slon, balance=balance)
+        run = pl.run_single_simulation(
+            return_volatility=0.0, collect_projections=True)
+        return pl, run
+
+    def test_second_death_primary_first(self):
+        pl, run = self._run(1990, 1992, 80, 90)  # P dies 2070, S dies 2082
+        proj = run["projections"]
+        rows = {r["year"]: r for r in proj}
+        # First death (2070): no estate tax (spousal transfer only).
+        assert rows[2070]["estate_tax"] == 0.0
+        # Second death (2082): estate tax assessed exactly once.
+        assert rows[2082]["estate_tax"] > 0.0
+        assert sum(1 for r in proj if r["estate_tax"] > 0) == 1
+        # Result-level fields populated; final net cash flow reflects estate.
+        assert run["estate_tax"] > 0
+        assert run["estate_value_before_tax"] == pytest.approx(
+            run["final_net_worth"])
+        assert run["net_worth_after_estate"] == pytest.approx(
+            run["final_net_worth"] - run["estate_tax"])
+        # No projection years continue after settlement.
+        assert max(r["year"] for r in proj) == 2082
+
+    def test_second_death_spouse_first(self):
+        pl, run = self._run(1992, 1990, 90, 80)  # S dies 2070, P dies 2082
+        proj = run["projections"]
+        rows = {r["year"]: r for r in proj}
+        assert rows[2070]["estate_tax"] == 0.0
+        assert rows[2082]["estate_tax"] > 0.0
+        assert sum(1 for r in proj if r["estate_tax"] > 0) == 1
+        assert run["estate_tax"] > 0
+        assert run["net_worth_after_estate"] == pytest.approx(
+            run["final_net_worth"] - run["estate_tax"])
+        assert max(r["year"] for r in proj) == 2082
+
+    def test_equal_deaths_use_mfj_convention(self):
+        # Equal death years -> combined/MFJ estate convention (double
+        # exemption), so the tax is lower than the single convention used
+        # when deaths differ, all else equal.
+        _, run_eq = self._run(1990, 1990, 80, 80)    # both die 2070
+        _, run_uneq = self._run(1990, 1990, 80, 90)  # last death 2080
+        eq_tax = run_eq["estate_tax"]
+        uneq_tax = run_uneq["estate_tax"]
+        assert eq_tax > 0 and uneq_tax > 0
+        assert eq_tax < uneq_tax
+
+
+class TestSpousalRollover:
+    def test_helper_reassigns_pretax_only(self):
+        accounts = {
+            "t": Account("t", "T", "trad_ira", "pre_tax", 1_000_000,
+                         owner="primary"),
+            "r": Account("r", "R", "roth_ira", "roth", 100_000,
+                         owner="spouse"),
+            "b": Account("b", "B", "brokerage", "taxable", 100_000,
+                         owner="primary"),
+        }
+        owner_map = {aid: (a.owner or "primary").lower()
+                     for aid, a in accounts.items()}
+        rollover_pretax_ownership(owner_map, accounts, "primary", "spouse")
+        # Only the pre-tax account changes hands.
+        assert owner_map["t"] == "spouse"
+        assert owner_map["r"] == "spouse"  # unchanged (not pre-tax)
+        assert owner_map["b"] == "primary"  # unchanged (not pre-tax)
+        # Shared Account objects are never mutated.
+        assert accounts["t"].owner == "primary"
+
+    def test_rmd_uses_survivor_age_after_rollover(self):
+        # Primary-owned trad_ira; primary age 74 (RMD), spouse age 70 (none).
+        accounts = {
+            "t": Account("t", "T", "trad_ira", "pre_tax", 1_000_000,
+                         owner="primary"),
+        }
+        we = WithdrawalEngine(accounts, CostBasisTracker())
+        # No rollover: RMD uses primary's age 74 -> forced withdrawal > 0.
+        we.clear()
+        we._withdraw_rmds({"t": 1_000_000}, 74, 70, 0.0)
+        rmd_no_roll = sum(w.amount for w in we.withdrawals)
+        # After rollover to spouse: RMD uses spouse's age 70 (<73) -> 0.
+        owner_map = {"t": "primary"}
+        rollover_pretax_ownership(owner_map, accounts, "primary", "spouse")
+        assert owner_map["t"] == "spouse"
+        we.clear()
+        we._withdraw_rmds({"t": 1_000_000}, 74, 70, 0.0, owner_map)
+        rmd_rolled = sum(w.amount for w in we.withdrawals)
+        assert rmd_no_roll > 0
+        assert rmd_rolled == 0.0
