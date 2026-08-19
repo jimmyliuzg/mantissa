@@ -34,7 +34,8 @@ from .monetary import MonetaryPolicy
 from .fixes import process_housing_event, process_roth_conversions, apply_medical_inflation
 from .tax_lots import calculate_121_exclusion
 from .projection.services import make_year_context, make_state
-from .sim_integration import determine_annual_filing_status, calculate_401k_limit
+from .sim_integration import calculate_401k_limit
+from .household import survivor_snapshot, normalize_filing_status
 from .tax_law import (
     TaxLawRegistry, FilingStatus,
     calculate_irmaa as tax_law_irmaa,
@@ -2370,12 +2371,15 @@ class RetirementPlanner:
             years_from_base = context.years_from_base
             yearly_state = make_state(context, balances, mortgage_balances)
 
-            # --- Filing status ---
-            filing_status = determine_annual_filing_status(
-                year, primary_alive=True, spouse_alive=True,
-                death_year_spouse=None,  # TODO: track spouse death year
-                has_dependents=False,
+            # --- Filing status (KTD1/KTD8) ---
+            # One longevity-derived survivor snapshot per year, shared with
+            # Monte Carlo. Normalize to the FilingStatus enum before every
+            # tax call so brackets/deductions resolve correctly.
+            snap = survivor_snapshot(
+                year, self.scenario.primary, self.scenario.spouse,
+                self.scenario.dependents,
             )
+            filing_status = normalize_filing_status(snap.filing_status)
 
             # Get tax law for this year
             law = tax_law_registry.law_for_year(year)
@@ -2695,6 +2699,7 @@ class RetirementPlanner:
                     if 0 <= year - dep.birth_date.year < 17)
                 taxes_nominal = self.calculate_taxes(
                     year, taxable_income_for_tax, scenario_name,
+                    filing_status=filing_status,
                     inflation_rate=inflation_rate,
                     years_from_base=years_from_base,
                     num_children=num_children)
@@ -2829,6 +2834,11 @@ class RetirementPlanner:
                     "net_worth": net_worth,
                     "total_assets": total_assets,
                     "total_liabilities": total_liabs,
+                    # Survivor transition state (additive, KTD9)
+                    "primary_alive": snap.primary_alive,
+                    "spouse_alive": snap.spouse_alive,
+                    "filing_status": snap.filing_status.value,
+                    "survivor": snap.survivor,
                 })
 
             if net_worth > peak_nw:
@@ -3013,6 +3023,14 @@ class RetirementPlanner:
             years_from_base = context.years_from_base
             yearly_state = make_state(context)
 
+            # Survivor transition state (KTD1): one longevity-derived
+            # snapshot per year, shared with the Monte Carlo path (R9).
+            snap = survivor_snapshot(
+                year, self.scenario.primary, self.scenario.spouse,
+                self.scenario.dependents,
+            )
+            filing_status = normalize_filing_status(snap.filing_status)
+
             if (primary_age > self.scenario.primary.longevity_age
                     and spouse_age > self.scenario.spouse.longevity_age):
                 break
@@ -3131,6 +3149,7 @@ class RetirementPlanner:
                 if 0 <= year - dep.birth_date.year < 17)
             taxes = self.calculate_taxes(
                 year, ti, scenario_name,
+                filing_status=filing_status,
                 inflation_rate=inflation_rate,
                 years_from_base=years_from_base,
                 num_children=num_children)
@@ -3147,7 +3166,7 @@ class RetirementPlanner:
                     cost_basis=cost_basis.get_basis(
                         he.property_id, 0.0) if he.property_id
                         else cost_basis.get_basis("real_estate", 0.0),
-                    filing_status="MFJ",
+                    filing_status=snap.filing_status.name,
                     mortgage_property_map=mortgage_property_map,
                     event_mortgage_terms=event_mortgage_terms,
                 )
@@ -3201,6 +3220,11 @@ class RetirementPlanner:
                 "net_worth": net_worth["net_worth"],
                 "total_assets": net_worth["total_assets"],
                 "total_liabilities": net_worth["total_liabilities"],
+                # Survivor transition state (additive, KTD9)
+                "primary_alive": snap.primary_alive,
+                "spouse_alive": snap.spouse_alive,
+                "filing_status": snap.filing_status.value,
+                "survivor": snap.survivor,
                 "approximations": [
                     a.as_dict() for a in tracker.for_year(year)
                 ],

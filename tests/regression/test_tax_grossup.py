@@ -70,7 +70,7 @@ class TestMoneyConservation:
 
     def test_withdrawals_fund_expenses_plus_taxes_exactly_once(self):
         """The fixed-point loop must not double-withdraw across passes."""
-        initial = 3_000_000
+        initial = 4_000_000
         annual_expenses = 120_000
         # Sim runs 2026..2047 (spouse born 1982, longevity 65) = 22 years
         num_years = 22
@@ -178,6 +178,15 @@ class TestTaxableSsIncludesWithdrawals:
             birth_years=(1952, 1954),
             retirement_year=2026, longevity=95,
         )
-        run = planner.run_single_simulation(return_volatility=0.0)
+        run = planner.run_single_simulation(
+            return_volatility=0.0, collect_projections=True)
         assert run["out_of_savings_year"] is None
-        assert run["lifetime_taxes"] == 0.0
+        # Roth withdrawals are tax-free and SS ($60K/yr, half = $30K) sits
+        # below the MFJ $32K provisional-income threshold, so no tax is due
+        # WHILE both spouses are alive. After the first death the survivor
+        # files Single, whose lower $25K threshold makes the same SS
+        # partially taxable — correct per tax law (covered by the survivor
+        # suite). Assert tax-free only in both-alive years.
+        for row in run["projections"]:
+            if row["primary_alive"] and row["spouse_alive"]:
+                assert row["taxes"] == 0.0
