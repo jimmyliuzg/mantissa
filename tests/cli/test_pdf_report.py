@@ -2,6 +2,10 @@
 import os
 from pathlib import Path
 
+import pytest
+
+pytest.importorskip("reportlab", reason="PDF tests require the optional pdf extra")
+
 from retirement_planner.engine import RetirementPlanner
 from retirement_planner.simulators import MonteCarloEngine
 from retirement_planner.pdf_report import generate_pdf_report, _fmt_money, _fmt_pct

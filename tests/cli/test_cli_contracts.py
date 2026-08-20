@@ -32,7 +32,16 @@ class TestCLIBasicContracts:
     def test_version_output(self, runner):
         result = runner.invoke(main, ["--version"])
         assert result.exit_code == 0
-        assert "0.1.0" in result.output
+        assert "0.2.0" in result.output
+
+    def test_changelog_matches_package_version(self):
+        import re
+        from retirement_planner import __version__
+
+        with open("CHANGELOG.md", encoding="utf-8") as changelog:
+            first_release = re.search(r"^## \[([^\]]+)\]", changelog.read(), re.MULTILINE)
+        assert first_release is not None
+        assert first_release.group(1) == __version__
 
     def test_help_lists_commands(self, runner):
         result = runner.invoke(main, ["--help"])
@@ -253,6 +262,22 @@ class TestProjectContract:
             assert "year" in row
             assert "income" in row
             assert "net_worth" in row
+
+    def test_project_row_has_survivor_fields(self, runner):
+        """Projection rows expose additive survivor transition state (KTD9)."""
+        result = runner.invoke(main, [
+            "project", "--config", SAMPLE_CONFIG,
+            "--format", "json",
+        ])
+        data = json.loads(result.output)
+        survivor_keys = [
+            "primary_alive", "spouse_alive", "filing_status",
+            "survivor", "aca_family_size", "medicare_adult_count",
+            "expense_ratio", "estate_tax",
+        ]
+        for row in data[:5]:
+            for key in survivor_keys:
+                assert key in row, f"Missing survivor field '{key}' in year {row.get('year')}"
 
 
 # ---------------------------------------------------------------------------

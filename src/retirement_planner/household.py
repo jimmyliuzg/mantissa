@@ -12,6 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
+from .tax_law import FilingStatus, determine_filing_status
+
 
 # ---------------------------------------------------------------------------
 # Mortality table (SSA Period Life Table, simplified)
@@ -238,6 +240,186 @@ def compute_survivor_transition(
         irmaa_change=0,  # Computed separately based on new MAGI
         years_until_qss_expiry=qss_remaining,
     )
+
+
+# ---------------------------------------------------------------------------
+# Deterministic survivor transition source (KTD1)
+# ---------------------------------------------------------------------------
+# One pure, longevity-derived annual household survivor snapshot shared by
+# the deterministic projection and Monte Carlo paths. No stochastic mortality
+# and no global randomness: death years come only from configured longevity
+# ages (R1). The same rules feed both paths so survivor state and estate
+# timing stay consistent (R9).
+def configured_death_year(person) -> int:
+    """Deterministic death year from birth year + configured longevity age.
+
+    The death year is the person's final *full* modeled year: they are alive
+    during it (R2). They are treated as dead beginning the following year.
+    """
+    return person.birth_date.year + person.longevity_age
+
+
+def active_dependent_count(year: int, dependents, cutoff_age: int = 26) -> int:
+    """Count dependents alive and under *cutoff_age* in *year*.
+
+    First-slice approximation for QSS/HOH qualification (R3) and ACA family
+    size (R5). Mirrors :class:`Dependent` semantics (children count while
+    under 26).
+    """
+    if not dependents:
+        return 0
+    return sum(
+        1 for dep in dependents
+        if 0 <= (year - dep.birth_date.year) < cutoff_age
+    )
+
+
+@dataclass
+class SurvivorSnapshot:
+    """Annual household survivor state derived from longevity ages.
+
+    Pure: depends only on configured birth/longevity and dependents. The
+    deterministic loop and Monte Carlo path both consume this so transitions
+    are auditable and identical (R9).
+    """
+    year: int
+    primary_alive: bool
+    spouse_alive: bool
+    # Identity of the surviving spouse between deaths; None if both alive
+    # (death year inclusive) or both deceased (post-settlement).
+    survivor: Optional[str]            # "primary" / "spouse"
+    filing_status: FilingStatus
+    is_primary_death_year: bool
+    is_spouse_death_year: bool
+    is_first_death_year: bool
+    is_second_death_year: bool
+    # Estate is assessed once, at the second configured death year (R8).
+    estate_event: bool
+    aca_family_size: int               # living adults + active dependents (R5)
+    medicare_adult_count: int          # living adults at Medicare age (R5)
+    first_death_year: Optional[int]
+    second_death_year: Optional[int]
+
+
+def survivor_snapshot(
+    year: int,
+    primary,
+    spouse,
+    dependents=None,
+) -> SurvivorSnapshot:
+    """Build the longevity-derived survivor snapshot for *year*.
+
+    Death years are ``birth_year + longevity_age``. A person is alive during
+    their death year and dead thereafter (R2). Filing status follows the
+    existing tax rules via ``determine_filing_status`` (R3): MFJ in the death
+    year, then QSS for two years when dependents qualify, then HOH when
+    dependents remain or Single otherwise.
+    """
+    primary_death = configured_death_year(primary)
+    spouse_death = configured_death_year(spouse)
+    primary_alive = year <= primary_death
+    spouse_alive = year <= spouse_death
+
+    equal_deaths = primary_death == spouse_death
+    first_death_year = (
+        None if equal_deaths else min(primary_death, spouse_death))
+    second_death_year = max(primary_death, spouse_death)
+
+    is_primary_death_year = year == primary_death
+    is_spouse_death_year = year == spouse_death
+    is_first_death_year = (year == first_death_year) and not equal_deaths
+    is_second_death_year = (year == second_death_year)
+    estate_event = is_second_death_year
+
+    if primary_alive and spouse_alive:
+        survivor: Optional[str] = None
+    elif primary_alive:
+        survivor = "primary"
+    elif spouse_alive:
+        survivor = "spouse"
+    else:
+        survivor = None
+
+    has_dependents = active_dependent_count(year, dependents) > 0
+    filing_status = determine_filing_status(
+        primary_alive=primary_alive,
+        spouse_alive=spouse_alive,
+        year_of_death_spouse=first_death_year,
+        current_year=year,
+        has_dependents=has_dependents,
+    )
+
+    # ACA family size: ACA-eligible (under-65, ACA coverage) living adults
+    # plus active dependents.  Medicare-covered adults: living adults at
+    # Medicare age with Medicare coverage.  The two counts are derived
+    # separately (KTD5) and stay coverage-aware so coverage_type and the
+    # pre-Medicare gate are honored.
+    aca_family_size = (
+        sum(1 for person, alive in ((primary, primary_alive),
+                                    (spouse, spouse_alive))
+            if alive
+            and (year - person.birth_date.year) < 65
+            and person.coverage_at_age(year - person.birth_date.year) == "aca")
+        + active_dependent_count(year, dependents))
+    medicare_adult_count = sum(
+        1 for person, alive in ((primary, primary_alive),
+                                (spouse, spouse_alive))
+        if alive
+        and (year - person.birth_date.year) >= 65
+        and person.coverage_at_age(year - person.birth_date.year) == "medicare")
+
+
+    return SurvivorSnapshot(
+        year=year,
+        primary_alive=primary_alive,
+        spouse_alive=spouse_alive,
+        survivor=survivor,
+        filing_status=filing_status,
+        is_primary_death_year=is_primary_death_year,
+        is_spouse_death_year=is_spouse_death_year,
+        is_first_death_year=is_first_death_year,
+        is_second_death_year=is_second_death_year,
+        estate_event=estate_event,
+        aca_family_size=aca_family_size,
+        medicare_adult_count=medicare_adult_count,
+        first_death_year=first_death_year,
+        second_death_year=second_death_year,
+    )
+
+
+def rollover_pretax_ownership(
+    owner_map: Dict[str, str],
+    accounts,
+    deceased: str,
+    survivor: str,
+) -> Dict[str, str]:
+    """Reassign eligible pre-tax account ownership to the survivor.
+
+    Mutates only the local *owner_map* (never the shared ``Account``
+    objects) so Monte Carlo runs do not leak ownership across iterations
+    (R7).  Eligible accounts are those the engine's RMD path recognizes
+    as pre-tax; accounts already owned by the survivor are left untouched.
+    """
+    for account_id, account in accounts.items():
+        if account.tax_treatment != "pre_tax":
+            continue
+        current = owner_map.get(
+            account_id, (account.owner or "primary").lower())
+        if current == deceased:
+            owner_map[account_id] = survivor
+    return owner_map
+
+
+def normalize_filing_status(value) -> FilingStatus:
+    """Normalize a string or enum filing status to the ``FilingStatus`` enum.
+
+    Tax calls key brackets/deductions by the enum (KTD8), so every status
+    delivered to ``calculate_taxes`` must be normalized first, including the
+    housing-event tax path.
+    """
+    if isinstance(value, FilingStatus):
+        return value
+    return FilingStatus[str(value).strip().upper()]
 
 
 # ---------------------------------------------------------------------------

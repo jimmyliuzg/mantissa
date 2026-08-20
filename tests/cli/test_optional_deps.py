@@ -41,6 +41,7 @@ class TestDoctorCommand:
         result = runner.invoke(main, ["doctor"])
         assert "click" in result.output.lower()
         assert "tabulate" in result.output.lower()
+        assert "numpy" in result.output.lower()
 
     def test_doctor_lists_optional_deps(self):
         runner = CliRunner()
@@ -153,7 +154,10 @@ class TestPackageStructure:
 
     def test_optional_deps_in_pyproject(self):
         """pyproject.toml has optional-dependencies section."""
-        import tomllib
+        try:
+            import tomllib
+        except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
+            import tomli as tomllib
         pyproject_path = os.path.join(
             os.path.dirname(__file__), "..", "..", "pyproject.toml"
         )
@@ -168,8 +172,11 @@ class TestPackageStructure:
         assert any("reportlab" in d for d in opt_deps["pdf"])
 
     def test_core_deps_are_minimal(self):
-        """Core dependencies are click and tabulate only."""
-        import tomllib
+        """Core dependencies include all unconditional runtime imports."""
+        try:
+            import tomllib
+        except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
+            import tomli as tomllib
         pyproject_path = os.path.join(
             os.path.dirname(__file__), "..", "..", "pyproject.toml"
         )
@@ -180,5 +187,27 @@ class TestPackageStructure:
         dep_names = [d.split(">=")[0].split("==")[0].strip() for d in deps]
         assert "click" in dep_names
         assert "tabulate" in dep_names
+        assert "numpy" in dep_names
         assert "matplotlib" not in dep_names
         assert "reportlab" not in dep_names
+
+    def test_test_extra_supports_python_39(self):
+        try:
+            import tomllib
+        except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
+            import tomli as tomllib
+        pyproject_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "pyproject.toml"
+        )
+        with open(pyproject_path, "rb") as f:
+            config = tomllib.load(f)
+
+        test_deps = config.get("project", {}).get("optional-dependencies", {}).get("test", [])
+        assert any("pytest" in d for d in test_deps)
+        assert any("tomli" in d for d in test_deps)
+
+    def test_installed_metadata_matches_package_version(self):
+        import importlib.metadata
+        from retirement_planner import __version__
+
+        assert importlib.metadata.version("mantissa") == __version__

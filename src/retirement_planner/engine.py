@@ -34,7 +34,12 @@ from .monetary import MonetaryPolicy
 from .fixes import process_housing_event, process_roth_conversions, apply_medical_inflation
 from .tax_lots import calculate_121_exclusion
 from .projection.services import make_year_context, make_state
-from .sim_integration import determine_annual_filing_status, calculate_401k_limit
+from .sim_integration import calculate_401k_limit, compute_survivor_ss_benefit
+from .household import (
+    survivor_snapshot,
+    normalize_filing_status,
+    rollover_pretax_ownership,
+)
 from .tax_law import (
     TaxLawRegistry, FilingStatus,
     calculate_irmaa as tax_law_irmaa,
@@ -226,6 +231,7 @@ class WithdrawalEngine:
         primary_age: int,
         spouse_age: int,
         sale_date: Optional[date] = None,
+        owner_map: Optional[Dict[str, str]] = None,
     ) -> List[WithdrawalResult]:
         """Withdraw from accounts in tax-efficient order until *needed* is met.
 
@@ -235,7 +241,8 @@ class WithdrawalEngine:
         self.clear()
         remaining = needed
         # --- Step 1: Force RMDs from pre-tax accounts (age 73+) ---
-        remaining = self._withdraw_rmds(balances, primary_age, spouse_age, remaining)
+        remaining = self._withdraw_rmds(
+            balances, primary_age, spouse_age, remaining, owner_map)
 
         # --- Step 2: Taxable brokerage ---
         remaining = self._withdraw_from_category(
@@ -270,6 +277,7 @@ class WithdrawalEngine:
         primary_age: int,
         spouse_age: int,
         remaining: float,
+        owner_map: Optional[Dict[str, str]] = None,
     ) -> float:
         """Force RMDs from all pre-tax accounts, return remaining shortfall.
 
@@ -285,7 +293,9 @@ class WithdrawalEngine:
             balance = balances.get(account_id, 0.0)
             if balance <= 0:
                 continue
-            owner = (account.owner or "primary").lower()
+            owner = (owner_map.get(account_id)
+                     if owner_map is not None
+                     else None) or (account.owner or "primary").lower()
             owner_age = spouse_age if owner == "spouse" else primary_age
             if owner_age < RMD_START_AGE:
                 continue
@@ -1006,6 +1016,7 @@ class RetirementPlanner:
             savings_order=savings_order,
             withdrawal_strategy=config.get("withdrawal_strategy", "fixed"),
             withdrawal_rate=config.get("withdrawal_rate", 0.04),
+            survivor_expense_ratio=config.get("survivor_expense_ratio", 0.75),
         )
 
         planner = cls(scenario)
@@ -2349,6 +2360,14 @@ class RetirementPlanner:
         # Historical return sequence index (for sequential replay)
         _hist_idx = 0
 
+        # Local ownership map for the spousal rollover (R7).  Mutated only in
+        # this run's local state, never the shared Account objects, so Monte
+        # Carlo iterations stay isolated.
+        owner_map: Dict[str, str] = {
+            aid: (acc.owner or "primary").lower()
+            for aid, acc in self.accounts.items()}
+        rollover_done = False
+
         # Run until the LAST death: the younger/longer-lived person sets
         # the horizon (estate tax is assessed when both are gone).
         max_year = max(
@@ -2370,12 +2389,24 @@ class RetirementPlanner:
             years_from_base = context.years_from_base
             yearly_state = make_state(context, balances, mortgage_balances)
 
-            # --- Filing status ---
-            filing_status = determine_annual_filing_status(
-                year, primary_alive=True, spouse_alive=True,
-                death_year_spouse=None,  # TODO: track spouse death year
-                has_dependents=False,
+            # --- Filing status (KTD1/KTD8) ---
+            # One longevity-derived survivor snapshot per year, shared with
+            # Monte Carlo. Normalize to the FilingStatus enum before every
+            # tax call so brackets/deductions resolve correctly.
+            snap = survivor_snapshot(
+                year, self.scenario.primary, self.scenario.spouse,
+                self.scenario.dependents,
             )
+            filing_status = normalize_filing_status(snap.filing_status)
+
+            # Spousal rollover (R7): at the first death, reassign eligible
+            # pre-tax account ownership to the survivor in local state only.
+            if snap.survivor is not None and not rollover_done:
+                deceased = ("spouse" if snap.survivor == "primary"
+                            else "primary")
+                rollover_pretax_ownership(
+                    owner_map, self.accounts, deceased, snap.survivor)
+                rollover_done = True
 
             # Get tax law for this year
             law = tax_law_registry.law_for_year(year)
@@ -2466,14 +2497,22 @@ class RetirementPlanner:
                 annual_income, year, inflation_rate,
             )
 
-            # Social Security
-            ss_income = 0.0
-            if primary_age >= self.scenario.social_security.primary_claiming_age:
-                ss_income += self.calculate_social_security(
-                    year, self.scenario.primary)
-            if spouse_age >= self.scenario.social_security.spouse_claiming_age:
-                ss_income += self.calculate_social_security(
-                    year, self.scenario.spouse)
+            # Social Security (R4): claimed-benefit-only survivor benefit.
+            # The death year retains both payable benefits; after a death
+            # the survivor receives the higher of their own and the
+            # deceased person's payable benefit — no benefit is invented
+            # for an unclaimed deceased spouse.
+            ss_primary_annual = (
+                self.calculate_social_security(year, self.scenario.primary)
+                if primary_age >= self.scenario.social_security.primary_claiming_age
+                else 0.0)
+            ss_spouse_annual = (
+                self.calculate_social_security(year, self.scenario.spouse)
+                if spouse_age >= self.scenario.social_security.spouse_claiming_age
+                else 0.0)
+            ss_income = compute_survivor_ss_benefit(
+                ss_primary_annual, ss_spouse_annual,
+                snap.primary_alive, snap.spouse_alive)
             # In NOMINAL mode, inflate SS (it already has COLA but
             # we need the base-year → year inflation for convention)
             ss_income = monetary_policy.adjust_for_inflation(
@@ -2503,17 +2542,21 @@ class RetirementPlanner:
                 year, inflation_rate,
             )
 
+            # Survivor expense scaling (R6): after the first death, active
+            # expenses scale to survivor_expense_ratio of the both-alive
+            # total. Applied once, before IRMAA/withdrawal logic.
+            survivor_expense_ratio = (
+                self.scenario.survivor_expense_ratio
+                if snap.survivor is not None else 1.0)
+            annual_expenses *= survivor_expense_ratio
+
             # --- Step 4b: IRMAA Medicare surcharges (per-person) ---
             # 2-year lookback: use MAGI from 2 years prior
             lookback_year = year - 2
             magi_2yr_ago = magi_history.get(lookback_year, 0.0)
 
-            # Count people on Medicare (age >= 65 with Medicare coverage)
-            num_medicare = 0
-            if self.scenario.primary.coverage_at_age(primary_age) == "medicare":
-                num_medicare += 1
-            if self.scenario.spouse.coverage_at_age(spouse_age) == "medicare":
-                num_medicare += 1
+            # Medicare-covered adults: living adults at Medicare age (R5/KTD5).
+            num_medicare = snap.medicare_adult_count
 
             irmaa_amount = 0.0
             if num_medicare > 0:
@@ -2524,14 +2567,9 @@ class RetirementPlanner:
             # --- Step 4c: ACA subsidy (per-person, pre-Medicare) ---
             # The subsidy depends on MAGI, which includes withdrawal
             # income, so it is recomputed inside the fixed-point loop
-            # below rather than here.  Only eligibility is determined now.
-            aca_family_size = 0
-            if primary_age < 65 and self.scenario.primary.coverage_at_age(primary_age) == "aca":
-                aca_family_size += 1
-            if spouse_age < 65 and self.scenario.spouse.coverage_at_age(spouse_age) == "aca":
-                aca_family_size += 1
-            # Children under 26 ride on the parents' ACA plan
-            aca_family_size += self._dependents_under_26(year)
+            # below rather than here.  ACA family size uses the survivor
+            # definition: living adults plus active dependents (R5/KTD5).
+            aca_family_size = snap.aca_family_size
 
             # --- Step 4d: Apply withdrawal strategy (if retired) ---
             total_portfolio_value = sum(b for b in balances.values() if b > 0)
@@ -2603,6 +2641,7 @@ class RetirementPlanner:
                 trial_wd = withdrawal_engine.execute_withdrawals(
                     trial_needed, trial_balances, year, primary_age,
                     spouse_age, sale_date=date(year, 12, 31),
+                    owner_map=owner_map,
                 )
                 # Undo trial basis mutation
                 cost_basis.basis_by_account.clear()
@@ -2695,6 +2734,7 @@ class RetirementPlanner:
                     if 0 <= year - dep.birth_date.year < 17)
                 taxes_nominal = self.calculate_taxes(
                     year, taxable_income_for_tax, scenario_name,
+                    filing_status=filing_status,
                     inflation_rate=inflation_rate,
                     years_from_base=years_from_base,
                     num_children=num_children)
@@ -2727,6 +2767,7 @@ class RetirementPlanner:
                 withdrawals = withdrawal_engine.execute_withdrawals(
                     needed, balances, year, primary_age, spouse_age,
                     sale_date=date(year, 12, 31),
+                    owner_map=owner_map,
                 )
             else:
                 withdrawals = []
@@ -2807,6 +2848,24 @@ class RetirementPlanner:
                 b for b in mortgage_balances.values() if b > 0)
             net_worth = total_assets - total_liabs
 
+            # --- Estate tax (second death only, R8) ---
+            # Assessed once at the second configured death year. The
+            # first-death spousal transfer does not trigger estate tax.
+            # Equal death years use the combined/MFJ estate convention;
+            # otherwise the survivor's estate is single.
+            year_estate_tax = 0.0
+            if snap.estate_event and total_estate_tax == 0.0:
+                estate_filing = (
+                    FilingStatus.MFJ if snap.first_death_year is None
+                    else FilingStatus.SINGLE)
+                estate_nominal = monetary_policy.to_nominal_for_tax(
+                    net_worth, year, inflation_rate)
+                estate_tax_nominal = tax_law_estate(
+                    estate_nominal, law, estate_filing)
+                year_estate_tax = monetary_policy.from_nominal_after_tax(
+                    estate_tax_nominal, year, inflation_rate)
+                total_estate_tax = year_estate_tax
+
             # Shared projection-state boundary. The legacy result contract
             # remains unchanged while yearly data becomes inspectable.
             yearly_state.income = income_data
@@ -2829,6 +2888,15 @@ class RetirementPlanner:
                     "net_worth": net_worth,
                     "total_assets": total_assets,
                     "total_liabilities": total_liabs,
+                    # Survivor transition state (additive, KTD9)
+                    "primary_alive": snap.primary_alive,
+                    "spouse_alive": snap.spouse_alive,
+                    "filing_status": snap.filing_status.value,
+                    "survivor": snap.survivor,
+                    "estate_tax": year_estate_tax,
+                    "aca_family_size": snap.aca_family_size,
+                    "medicare_adult_count": snap.medicare_adult_count,
+                    "expense_ratio": survivor_expense_ratio,
                 })
 
             if net_worth > peak_nw:
@@ -2842,21 +2910,6 @@ class RetirementPlanner:
             if net_worth <= 0 and out_of_savings_year is None:
                 out_of_savings_year = year
 
-            # --- Step 10: Estate tax (at end of life) ---
-            younger_longevity = (self.scenario.primary.longevity_age
-                if self.scenario.primary.birth_date > self.scenario.spouse.birth_date
-                else self.scenario.spouse.longevity_age)
-            if (younger_age >= younger_longevity
-                    and total_estate_tax == 0.0):
-                # The exemption is inflation-indexed (nominal), so the
-                # estate must be converted to nominal before comparing.
-                estate_nominal = monetary_policy.to_nominal_for_tax(
-                    net_worth, year, inflation_rate)
-                estate_tax_nominal = tax_law_estate(
-                    estate_nominal, law, FilingStatus.MFJ)
-                total_estate_tax = monetary_policy.from_nominal_after_tax(
-                    estate_tax_nominal, year, inflation_rate)
-
         final_nw = (sum(balances.values())
                     - sum(b for b in mortgage_balances.values() if b > 0))
         # Net of estate tax for success calculation
@@ -2867,6 +2920,8 @@ class RetirementPlanner:
         return {
             "success": success,
             "final_net_worth": final_nw,
+            "estate_value_before_tax": final_nw,
+            "net_worth_after_estate": final_nw_after_estate,
             "final_net_worth_after_estate_tax": final_nw_after_estate,
             "estate_tax": total_estate_tax,
             "aca_subsidy": total_aca_subsidy,
@@ -3013,6 +3068,14 @@ class RetirementPlanner:
             years_from_base = context.years_from_base
             yearly_state = make_state(context)
 
+            # Survivor transition state (KTD1): one longevity-derived
+            # snapshot per year, shared with the Monte Carlo path (R9).
+            snap = survivor_snapshot(
+                year, self.scenario.primary, self.scenario.spouse,
+                self.scenario.dependents,
+            )
+            filing_status = normalize_filing_status(snap.filing_status)
+
             if (primary_age > self.scenario.primary.longevity_age
                     and spouse_age > self.scenario.spouse.longevity_age):
                 break
@@ -3029,15 +3092,17 @@ class RetirementPlanner:
 
             # Social Security (mirrors the Monte Carlo path: per-person
             # claiming age with COLA).
-            ss_income = 0.0
+            # Social Security (R4): claimed-benefit-only survivor benefit.
             ss = self.scenario.social_security
-            if ss:
-                if primary_age >= ss.primary_claiming_age:
-                    ss_income += self.calculate_social_security(
-                        year, self.scenario.primary)
-                if spouse_age >= ss.spouse_claiming_age:
-                    ss_income += self.calculate_social_security(
-                        year, self.scenario.spouse)
+            ss_primary_annual = (
+                self.calculate_social_security(year, self.scenario.primary)
+                if ss and primary_age >= ss.primary_claiming_age else 0.0)
+            ss_spouse_annual = (
+                self.calculate_social_security(year, self.scenario.spouse)
+                if ss and spouse_age >= ss.spouse_claiming_age else 0.0)
+            ss_income = compute_survivor_ss_benefit(
+                ss_primary_annual, ss_spouse_annual,
+                snap.primary_alive, snap.spouse_alive)
             # In NOMINAL mode, inflate income and SS to year-of dollars
             # (MC parity; REAL mode is identity).
             income["total"] = monetary_policy.adjust_for_inflation(
@@ -3066,23 +3131,23 @@ class RetirementPlanner:
                     year, rates["medical_inflation"] - inflation_rate),
                 year, inflation_rate)
 
-            # ACA subsidy (pre-Medicare, per-person)
-            aca_family_size = 0
-            if primary_age < 65 and self.scenario.primary.coverage_at_age(primary_age) == "aca":
-                aca_family_size += 1
-            if spouse_age < 65 and self.scenario.spouse.coverage_at_age(spouse_age) == "aca":
-                aca_family_size += 1
-            # Children under 26 ride on the parents' ACA plan
-            aca_family_size += self._dependents_under_26(year)
+            # Survivor expense scaling (R6): after the first death, active
+            # expenses scale to survivor_expense_ratio of the both-alive
+            # total. Applied once, before ACA/IRMAA logic.
+            survivor_expense_ratio = (
+                self.scenario.survivor_expense_ratio
+                if snap.survivor is not None else 1.0)
+            expenses["total"] *= survivor_expense_ratio
+
+            # ACA subsidy (pre-Medicare, per-person). ACA family size uses
+            # the survivor definition: living adults plus active dependents
+            # (R5/KTD5).
+            aca_family_size = snap.aca_family_size
 
             # IRMAA Medicare surcharges (2-year lookback on MAGI — the
             # deterministic path uses income-only MAGI; MC includes
             # withdrawals).  Mirrors the Monte Carlo step 4b.
-            num_medicare = 0
-            if self.scenario.primary.coverage_at_age(primary_age) == "medicare":
-                num_medicare += 1
-            if self.scenario.spouse.coverage_at_age(spouse_age) == "medicare":
-                num_medicare += 1
+            num_medicare = snap.medicare_adult_count
             if num_medicare > 0:
                 irmaa_amount = tax_law_irmaa(
                     income_history.get(year - 2, 0.0),
@@ -3095,10 +3160,10 @@ class RetirementPlanner:
             aca_subsidy = 0.0
             if aca_family_size > 0:
                 # Use the versioned law pack so deterministic and MC
-                # subsidy amounts agree.
-                from .tax_law import TaxLawRegistry, calculate_aca_subsidy as tax_law_aca_calc
+                # subsidy amounts agree.  Module-level imports provide
+                # TaxLawRegistry and tax_law_aca already.
                 law = TaxLawRegistry().law_for_year(year)
-                aca_subsidy = tax_law_aca_calc(
+                aca_subsidy = tax_law_aca(
                     income["total"], aca_family_size, law, self.scenario.state)
 
             # Build TaxableIncome (simplified — all income as ordinary
@@ -3131,6 +3196,7 @@ class RetirementPlanner:
                 if 0 <= year - dep.birth_date.year < 17)
             taxes = self.calculate_taxes(
                 year, ti, scenario_name,
+                filing_status=filing_status,
                 inflation_rate=inflation_rate,
                 years_from_base=years_from_base,
                 num_children=num_children)
@@ -3147,7 +3213,7 @@ class RetirementPlanner:
                     cost_basis=cost_basis.get_basis(
                         he.property_id, 0.0) if he.property_id
                         else cost_basis.get_basis("real_estate", 0.0),
-                    filing_status="MFJ",
+                    filing_status=snap.filing_status.name,
                     mortgage_property_map=mortgage_property_map,
                     event_mortgage_terms=event_mortgage_terms,
                 )
@@ -3176,15 +3242,14 @@ class RetirementPlanner:
             yearly_state.approximations = list(tracker.for_year(year))
             yearly_state.events.append({"type": "year_complete"})
 
-            # Estate tax (at end of life, applied once)
-            younger_longevity = (self.scenario.primary.longevity_age
-                if self.scenario.primary.birth_date > self.scenario.spouse.birth_date
-                else self.scenario.spouse.longevity_age)
-            if (younger_age >= younger_longevity
-                    and total_estate_tax == 0.0):
-                total_estate_tax = self.calculate_estate_tax(
-                    net_worth["net_worth"], "MFJ",
+            # Estate tax (second death only, R8)
+            year_estate_tax = 0.0
+            if snap.estate_event and total_estate_tax == 0.0:
+                filing_str = "MFJ" if snap.first_death_year is None else "single"
+                year_estate_tax = self.calculate_estate_tax(
+                    net_worth["net_worth"], filing_str,
                     inflation_rate, years_from_base)
+                total_estate_tax = year_estate_tax
 
             projections.append({
                 "year": year,
@@ -3196,11 +3261,24 @@ class RetirementPlanner:
                 "aca_subsidy": aca_subsidy,
                 "expenses_by_category": expenses["by_category"],
                 "taxes": taxes,
-                "estate_tax": total_estate_tax if younger_age >= younger_longevity else 0.0,
+                "estate_tax": year_estate_tax,
+                "estate_value_before_tax": (
+                    net_worth["net_worth"] if snap.estate_event else None),
+                "net_worth_after_estate": (
+                    net_worth["net_worth"] - year_estate_tax
+                    if snap.estate_event else None),
                 "net_cash_flow": income["total"] - expenses["total"] - taxes - aca_subsidy,
                 "net_worth": net_worth["net_worth"],
                 "total_assets": net_worth["total_assets"],
                 "total_liabilities": net_worth["total_liabilities"],
+                # Survivor transition state (additive, KTD9)
+                "primary_alive": snap.primary_alive,
+                "spouse_alive": snap.spouse_alive,
+                "filing_status": snap.filing_status.value,
+                "survivor": snap.survivor,
+                "aca_family_size": snap.aca_family_size,
+                "medicare_adult_count": snap.medicare_adult_count,
+                "expense_ratio": survivor_expense_ratio,
                 "approximations": [
                     a.as_dict() for a in tracker.for_year(year)
                 ],

@@ -26,7 +26,7 @@ Usage:
     comparison = planner.compare_scenarios(["baseline", "early_retire", "high_spending"])
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 from .models import (
     Person, Account, IncomeStream, Expense, Mortgage,

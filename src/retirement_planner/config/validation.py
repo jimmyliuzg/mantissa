@@ -56,7 +56,7 @@ _SCHEMA_KEYS = {
     "social_security", "glidepath", "withdrawal_strategy", "withdrawal_rate",
     "guardrail_floor_pct", "guardrail_ceiling_pct", "legacy_goal", "state",
     "family_size", "savings_order", "monetary_convention", "stress_level",
-    "_comment",
+    "survivor_expense_ratio", "_comment",
 }
 
 
@@ -217,6 +217,8 @@ def validate_config(config: dict, strict: bool = False) -> ValidationResult:
         _issue(result, "$.monetary_convention", "must be 'real' or 'nominal'", code="enum")
     if "stress_level" in config:
         _number(result, config["stress_level"], "$.stress_level", 0, 1)
+    if "survivor_expense_ratio" in config:
+        _number(result, config["survivor_expense_ratio"], "$.survivor_expense_ratio", 0, 1)
     return result
 
 

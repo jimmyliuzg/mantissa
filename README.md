@@ -93,51 +93,51 @@ print(f"Success rate: {results.success_rate:.1%}")
   "state": "CA",
   "primary": {
     "name": "You",
-    "birthdate": "1980-01-01",
-    "retirementdate": "2045-01-01",
-    "longevityage": 95
+    "birth_date": "1980-01-01",
+    "retirement_date": "2045-01-01",
+    "longevity_age": 95
   },
   "spouse": {
     "name": "Partner",
-    "birthdate": "1982-01-01",
-    "retirementdate": "2045-01-01",
-    "longevityage": 95
+    "birth_date": "1982-01-01",
+    "retirement_date": "2045-01-01",
+    "longevity_age": 95
   },
   "accounts": [
     {
       "id": "brokerage",
       "name": "Joint Brokerage",
       "type": "brokerage",
-      "taxtreatment": "taxable",
+      "tax_treatment": "taxable",
       "balance": 300000,
-      "growthrate": 0.07
+      "growth_rate": 0.07
     },
     {
       "id": "traditional_401k",
       "name": "Traditional 401(k)",
       "type": "401k",
-      "taxtreatment": "pretax",
+      "tax_treatment": "pre_tax",
       "balance": 700000,
-      "growthrate": 0.07
+      "growth_rate": 0.07
     },
     {
       "id": "roth_ira",
       "name": "Roth IRA",
-      "type": "rothira",
-      "taxtreatment": "roth",
+      "type": "roth_ira",
+      "tax_treatment": "roth",
       "balance": 150000,
-      "growthrate": 0.07
+      "growth_rate": 0.07
     }
   ],
   "expenses": [
     {
       "id": "living",
       "name": "Living expenses",
-      "monthlyamount": 7000,
-      "startdate": "2026-01-01",
-      "enddate": "2080-12-31",
+      "monthly_amount": 7000,
+      "start_date": "2026-01-01",
+      "end_date": "2080-12-31",
       "category": "general",
-      "ismustspend": true
+      "is_must_spend": true
     }
   ]
 }
@@ -153,8 +153,8 @@ See `examples/sample_config.json` for a fuller configuration.
 |---|---|
 | `primary`, `spouse` | Name, birth date, retirement date, longevity age |
 | `state` | State used for state-tax and health-plan assumptions |
-| `familysize` | Household-size input for applicable scenarios |
-| `legacygoal` | Desired residual estate value |
+| `family_size` | Household-size input for applicable scenarios |
+| `legacy_goal` | Desired residual estate value |
 
 ### Accounts
 
@@ -162,12 +162,12 @@ See `examples/sample_config.json` for a fuller configuration.
 |---|---|
 | `id` | Unique account identifier |
 | `type` | `401k`, `tradira`, `rothira`, `brokerage`, `hsa`, `checking`, `realestate`, `vehicle`, or `other` |
-| `taxtreatment` | `pretax`, `roth`, `taxable`, or `taxexempt` |
+| `tax_treatment` | `pre_tax`, `roth`, `taxable`, or `tax_exempt` |
 | `balance` | Current nominal account balance |
-| `growthrate` | Return assumption used by the selected engine path |
-| `contributionpriority` | Order for surplus savings allocation |
-| `annualcontributioncap` | Contribution ceiling where applicable |
-| `equitypct` | Optional account-level equity allocation override |
+| `growth_rate` | Return assumption used by the selected engine path |
+| `contribution_priority` | Order for surplus savings allocation |
+| `annual_contribution_cap` | Contribution ceiling where applicable |
+| `equity_pct` | Optional account-level equity allocation override |
 
 ### Income and Expenses
 
@@ -242,9 +242,17 @@ Available outputs include:
 - PDF, CSV, JSON, and Markdown report paths where supported
 - Tax traces, decision traces, and threshold warnings
 
+## Release Surface
+
+The supported core path is the deterministic projection and JSON, CSV, or Markdown reporting available without optional extras. The `validate`, `schema`, `init`, `project`, `explain`, `run`, `report`, `compare`, and `sensitivity` CLI commands are covered by the core test gate.
+
+Charts require `pip install mantissa[charts]`. PDF reports require `pip install mantissa[pdf]`; PDF coverage runs in a separate CI job.
+
+Some model areas remain approximate or experimental and should not be treated as fully integrated planning advice: historical bond inputs are synthetic, survivor transitions are not applied consistently across every projection path, and annual/monthly event execution is not yet unified. Outputs are scenario analysis, not tax, legal, investment, or fiduciary advice.
+
 ## Reproducibility
 
-For reliable comparison and testing, record:
+When comparing runs, record:
 
 - Scenario configuration hash
 - Tax-law version
@@ -252,7 +260,7 @@ For reliable comparison and testing, record:
 - Random seed
 - Return model and historical-data provenance
 
-A production run should be reproducible from this metadata.
+Full reproducibility metadata is an active development priority and is not yet guaranteed in every report.
 
 ## Architecture
 

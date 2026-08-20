@@ -455,6 +455,10 @@ class Scenario:
     # Monetary convention: NOMINAL (all values in year-of dollars) or
     # REAL (all values in base-year purchasing-power dollars).
     monetary_convention: MonetaryConvention = MonetaryConvention.REAL
+    # Survivor spending approximation (R6): after the first death, active
+    # expenses scale to this fraction of the both-alive total. Explicit and
+    # validated; defaults to 75%.
+    survivor_expense_ratio: float = 0.75
 
     def to_dict(self) -> dict:
         """Convert to JSON-serializable dict."""
@@ -475,6 +479,7 @@ class Scenario:
             },
             "legacy_goal": self.legacy_goal,
             "state": self.state,
+            "survivor_expense_ratio": self.survivor_expense_ratio,
         }
     
     def to_json(self) -> str:
