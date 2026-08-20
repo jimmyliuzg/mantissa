@@ -32,27 +32,33 @@ class MonteCarloEngine:
         historical_returns: Optional[List[float]] = None,
         rng=None,
         stress_level: float = 0.0,
+        stochastic: bool = False,
     ) -> Dict:
         """Run one year-by-year simulation.
 
         When *method* == "historical" and *historical_returns* is provided,
-        those sequential returns replace the gaussian random draws.
+        those sequential returns replace the gaussian random draws. When
+        *stochastic* is True, each run samples a random household death year
+        from the SSA 2023 mortality tables.
         """
         if method == "historical" and historical_returns is not None:
             # Monkey-patch the planner's annual return generation for this sim.
             # We pass the pre-computed return sequence into run_single_simulation
             # via a thin wrapper that overrides the volatility-based return.
             return self._run_historical_simulation(
-                historical_returns, scenario, stress_level=stress_level)
+                historical_returns, scenario, stress_level=stress_level,
+                stochastic=stochastic)
 
         return self.planner.run_single_simulation(
-            scenario, return_volatility, rng=rng, stress_level=stress_level)
+            scenario, return_volatility, rng=rng, stress_level=stress_level,
+            stochastic=stochastic)
 
     def _run_historical_simulation(
         self,
         historical_returns: List[float],
         scenario: str = "mean",
         stress_level: float = 0.0,
+        stochastic: bool = False,
     ) -> Dict:
         """Run a simulation using pre-computed sequential historical returns.
 
@@ -64,7 +70,8 @@ class MonteCarloEngine:
         self.planner._historical_return_override = historical_returns
         try:
             return self.planner.run_single_simulation(
-                scenario, return_volatility=0.0, stress_level=stress_level)
+                scenario, return_volatility=0.0, stress_level=stress_level,
+                stochastic=stochastic)
         finally:
             self.planner._historical_return_override = None
 
@@ -79,6 +86,7 @@ class MonteCarloEngine:
         method: str = "gaussian",
         seed: Optional[int] = None,
         stress_level: float = 0.0,
+        stochastic: bool = False,
     ) -> Dict:
         """
         Run Monte Carlo simulation and return statistics.
@@ -114,6 +122,7 @@ class MonteCarloEngine:
                     historical_returns=seq,
                     rng=rng,
                     stress_level=stress_level,
+                    stochastic=stochastic,
                 )
                 results.append(result)
         else:
@@ -122,6 +131,7 @@ class MonteCarloEngine:
                 result = self.planner.run_single_simulation(
                     scenario, return_volatility, rng=rng,
                     stress_level=stress_level,
+                    stochastic=stochastic,
                 )
                 results.append(result)
 
@@ -132,6 +142,44 @@ class MonteCarloEngine:
         final_nws = sorted([r["final_net_worth"] for r in results])
         peak_nws = sorted([r["peak_net_worth"] for r in results])
         taxes = sorted([r["lifetime_taxes"] for r in results])
+
+        # --- Stochastic mortality distribution (U3) ---
+        # Aggregate the per-run death ages and financial outcomes into an
+        # age-indexed view: at each age, what fraction of runs are dead,
+        # out of money, or 3x+ the legacy goal, plus the median net worth.
+        if stochastic:
+            primary_birth_year = (
+                self.planner.scenario.primary.birth_date.year)
+            ages = sorted(
+                {a for r in results for a in r.get("net_worth_by_year", {})})
+            legacy_goal = self.planner.scenario.legacy_goal
+            distribution = []
+            for a in ages:
+                year_at_age = primary_birth_year + a
+                n_dead = sum(
+                    1 for r in results
+                    if r.get("death_age") is not None and r["death_age"] < a)
+                n_broke = sum(
+                    1 for r in results
+                    if r.get("out_of_savings_year") is not None
+                    and r["out_of_savings_year"] <= year_at_age)
+                n_thriving = sum(
+                    1 for r in results
+                    if r["final_net_worth"] >= 3 * legacy_goal)
+                nw_vals = [r["net_worth_by_year"][a]
+                           for r in results
+                           if a in r.get("net_worth_by_year", {})]
+                median_nw = float(np.median(nw_vals)) if nw_vals else 0.0
+                distribution.append({
+                    "age": a,
+                    "pct_dead": n_dead / num_simulations,
+                    "pct_out_of_money": n_broke / num_simulations,
+                    "pct_3x_target": n_thriving / num_simulations,
+                    "median_net_worth": median_nw,
+                })
+            mortality_distribution = distribution
+        else:
+            mortality_distribution = None
 
         return {
             "success_rate": success_rate,
@@ -146,6 +194,7 @@ class MonteCarloEngine:
             "median_peak_nw": peak_nws[int(num_simulations * 0.5)],
             "median_taxes": taxes[num_simulations // 2],
             "out_of_savings_rate": sum(1 for r in results if r["out_of_savings_year"]) / num_simulations,
+            "mortality_distribution": mortality_distribution,
         }
 
     @staticmethod

@@ -50,6 +50,7 @@ def generate_mc_report(mc_results: Dict[str, Any]) -> Dict[str, Any]:
         "num_simulations": mc_results.get("num_simulations", 0),
         "scenario": mc_results.get("scenario", "unknown"),
         "method": mc_results.get("method", "unknown"),
+        "mortality_distribution": mc_results.get("mortality_distribution"),
     }
 
 

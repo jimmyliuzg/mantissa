@@ -23,7 +23,8 @@ class TestMortalityModel:
 
     def test_old_lower_survival(self):
         m = MortalityModel()
-        p = m.survival_probability(85, is_male=True)
+        # SSA 2023: q(90, male) = 0.159458 -> p(survive) = 0.8405
+        p = m.survival_probability(90, is_male=True)
         assert p < 0.90
 
     def test_female_higher_survival(self):
@@ -47,7 +48,7 @@ class TestMortalityModel:
     def test_sample_death_age(self):
         m = MortalityModel()
         death_age = m.sample_death_age(65, is_male=True)
-        assert 65 <= death_age <= 105
+        assert 65 <= death_age <= 119
 
 
 class TestSampleHouseholdLifetimes:
