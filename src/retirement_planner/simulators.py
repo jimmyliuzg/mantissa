@@ -153,6 +153,11 @@ class MonteCarloEngine:
             ages = sorted(
                 {a for r in results for a in r.get("net_worth_by_year", {})})
             legacy_goal = self.planner.scenario.legacy_goal
+            # %3x target is evaluated on each run's final outcome, so it
+            # does not vary by age — compute it once, not per age.
+            n_thriving = sum(
+                1 for r in results
+                if r["final_net_worth"] >= 3 * legacy_goal)
             distribution = []
             for a in ages:
                 year_at_age = primary_birth_year + a
@@ -163,9 +168,6 @@ class MonteCarloEngine:
                     1 for r in results
                     if r.get("out_of_savings_year") is not None
                     and r["out_of_savings_year"] <= year_at_age)
-                n_thriving = sum(
-                    1 for r in results
-                    if r["final_net_worth"] >= 3 * legacy_goal)
                 nw_vals = [r["net_worth_by_year"][a]
                            for r in results
                            if a in r.get("net_worth_by_year", {})]

@@ -9,6 +9,7 @@ Covers:
 """
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
@@ -136,9 +137,8 @@ class MortalityModel:
 
         Returns the age at which the person dies (inclusive). If *rng* (a
         NumPy Generator) is provided, draws are reproducible; otherwise the
-        global ``random`` module is used.
+        ``random`` stdlib module is used.
         """
-        import random
         draw = rng.random if rng is not None else random.random
         age = int(current_age)
         while age < max_age:
@@ -350,8 +350,6 @@ class SurvivorSnapshot:
 
 def stochastic_alive_snapshot(
     year: int,
-    primary,
-    spouse,
     dependents,
     primary_age: float,
     spouse_age: float,

@@ -2421,8 +2421,7 @@ class RetirementPlanner:
                 # MFJ (both alive) until the single sampled death year, then
                 # the run ends. No survivor transitions, rollover, or estate.
                 snap = stochastic_alive_snapshot(
-                    year, self.scenario.primary, self.scenario.spouse,
-                    self.scenario.dependents, primary_age, spouse_age)
+                    year, self.scenario.dependents, primary_age, spouse_age)
                 filing_status = FilingStatus.MFJ
             else:
                 snap = survivor_snapshot(
