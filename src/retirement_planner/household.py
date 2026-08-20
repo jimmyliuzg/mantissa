@@ -16,40 +16,78 @@ from .tax_law import FilingStatus, determine_filing_status
 
 
 # ---------------------------------------------------------------------------
-# Mortality table (SSA Period Life Table, simplified)
+# Mortality table — SSA 2023 Period Life Table (2026 Trustees Report)
 # ---------------------------------------------------------------------------
-# Age → probability of surviving one more year
-# Source: SSA 2020 period life table (approximate)
-_MORTALITY_TABLE_MALE: Dict[int, float] = {
-    30: 0.9972, 35: 0.9965, 40: 0.9954, 45: 0.9936,
-    50: 0.9907, 55: 0.9864, 60: 0.9798, 65: 0.9693,
-    70: 0.9530, 75: 0.9282, 80: 0.8898, 85: 0.8340,
-    90: 0.7490, 95: 0.6100,
+# Age → q(x): probability of DYING within one year at exact age x.
+# Source: https://www.ssa.gov/oact/STATS/table4c6.html — the 2023 period
+# life table for the Social Security area population, used in the 2026 TR.
+# Full year-by-year data, ages 0-119, separated by sex. These replace the
+# earlier approximate 5-year-bucket tables.
+_SSA_QX_MALE: Dict[int, float] = {
+    0: 0.006015, 1: 0.000479, 2: 0.000320, 3: 0.000249, 4: 0.000194,
+    5: 0.000159, 6: 0.000137, 7: 0.000125, 8: 0.000120, 9: 0.000120,
+    10: 0.000125, 11: 0.000140, 12: 0.000173, 13: 0.000233, 14: 0.000327,
+    15: 0.000463, 16: 0.000634, 17: 0.000819, 18: 0.000999, 19: 0.001138,
+    20: 0.001235, 21: 0.001315, 22: 0.001378, 23: 0.001439, 24: 0.001509,
+    25: 0.001595, 26: 0.001685, 27: 0.001783, 28: 0.001876, 29: 0.001970,
+    30: 0.002085, 31: 0.002202, 32: 0.002308, 33: 0.002407, 34: 0.002490,
+    35: 0.002577, 36: 0.002665, 37: 0.002764, 38: 0.002864, 39: 0.002987,
+    40: 0.003115, 41: 0.003253, 42: 0.003419, 43: 0.003600, 44: 0.003777,
+    45: 0.003931, 46: 0.004073, 47: 0.004245, 48: 0.004477, 49: 0.004795,
+    50: 0.005126, 51: 0.005496, 52: 0.005917, 53: 0.006404, 54: 0.006923,
+    55: 0.007491, 56: 0.008173, 57: 0.008938, 58: 0.009714, 59: 0.010494,
+    60: 0.011337, 61: 0.012232, 62: 0.013196, 63: 0.014229, 64: 0.015316,
+    65: 0.016455, 66: 0.017574, 67: 0.018735, 68: 0.019981, 69: 0.021366,
+    70: 0.022903, 71: 0.024615, 72: 0.026504, 73: 0.028648, 74: 0.031071,
+    75: 0.033802, 76: 0.037010, 77: 0.041158, 78: 0.045461, 79: 0.050346,
+    80: 0.055633, 81: 0.061757, 82: 0.068358, 83: 0.075420, 84: 0.083364,
+    85: 0.092680, 86: 0.103459, 87: 0.115502, 88: 0.129018, 89: 0.143810,
+    90: 0.159458, 91: 0.176551, 92: 0.195360, 93: 0.216286, 94: 0.238799,
+    95: 0.262268, 96: 0.286291, 97: 0.310944, 98: 0.332325, 99: 0.349036,
+    100: 0.366568, 101: 0.384960, 102: 0.404252, 103: 0.424488, 104: 0.445712,
+    105: 0.467998, 106: 0.491398, 107: 0.515968, 108: 0.541766, 109: 0.568854,
+    110: 0.597297, 111: 0.627162, 112: 0.658520, 113: 0.691446, 114: 0.726018,
+    115: 0.762319, 116: 0.800435, 117: 0.840457, 118: 0.882480, 119: 0.926604,
 }
 
-_MORTALITY_TABLE_FEMALE: Dict[int, float] = {
-    30: 0.9985, 35: 0.9980, 40: 0.9973, 45: 0.9963,
-    50: 0.9945, 55: 0.9915, 60: 0.9865, 65: 0.9788,
-    70: 0.9663, 75: 0.9466, 80: 0.9168, 85: 0.8680,
-    90: 0.7900, 95: 0.6600,
+_SSA_QX_FEMALE: Dict[int, float] = {
+    0: 0.005125, 1: 0.000392, 2: 0.000229, 3: 0.000188, 4: 0.000155,
+    5: 0.000133, 6: 0.000115, 7: 0.000105, 8: 0.000100, 9: 0.000098,
+    10: 0.000101, 11: 0.000111, 12: 0.000126, 13: 0.000152, 14: 0.000188,
+    15: 0.000229, 16: 0.000273, 17: 0.000323, 18: 0.000372, 19: 0.000410,
+    20: 0.000441, 21: 0.000476, 22: 0.000513, 23: 0.000546, 24: 0.000582,
+    25: 0.000609, 26: 0.000641, 27: 0.000683, 28: 0.000740, 29: 0.000808,
+    30: 0.000878, 31: 0.000947, 32: 0.001018, 33: 0.001089, 34: 0.001154,
+    35: 0.001209, 36: 0.001263, 37: 0.001347, 38: 0.001438, 39: 0.001533,
+    40: 0.001643, 41: 0.001742, 42: 0.001845, 43: 0.001954, 44: 0.002075,
+    45: 0.002187, 46: 0.002306, 47: 0.002438, 48: 0.002595, 49: 0.002791,
+    50: 0.003030, 51: 0.003288, 52: 0.003554, 53: 0.003847, 54: 0.004172,
+    55: 0.004532, 56: 0.004923, 57: 0.005365, 58: 0.005815, 59: 0.006333,
+    60: 0.006923, 61: 0.007555, 62: 0.008220, 63: 0.008881, 64: 0.009514,
+    65: 0.010188, 66: 0.010880, 67: 0.011659, 68: 0.012543, 69: 0.013581,
+    70: 0.014769, 71: 0.016153, 72: 0.017705, 73: 0.019495, 74: 0.021533,
+    75: 0.023846, 76: 0.026458, 77: 0.029700, 78: 0.033135, 79: 0.036982,
+    80: 0.041183, 81: 0.045959, 82: 0.051282, 83: 0.057262, 84: 0.064107,
+    85: 0.071752, 86: 0.080490, 87: 0.090566, 88: 0.102204, 89: 0.115178,
+    90: 0.129176, 91: 0.144229, 92: 0.160353, 93: 0.177635, 94: 0.196502,
+    95: 0.216846, 96: 0.238750, 97: 0.261359, 98: 0.283899, 99: 0.306491,
+    100: 0.329680, 101: 0.353333, 102: 0.377300, 103: 0.401416, 104: 0.425501,
+    105: 0.451031, 106: 0.478092, 107: 0.506778, 108: 0.537185, 109: 0.568854,
+    110: 0.597297, 111: 0.627162, 112: 0.658520, 113: 0.691446, 114: 0.726018,
+    115: 0.762319, 116: 0.800435, 117: 0.840457, 118: 0.882480, 119: 0.926604,
 }
 
+# Oldest tabulated age; sampling clamps here (everyone dies by 119).
+MAX_AGE = 119
 
-def _interpolate_survival(table: Dict[int, float], age: float) -> float:
-    """Interpolate survival probability for fractional ages."""
-    ages = sorted(table.keys())
-    if age <= ages[0]:
-        return table[ages[0]]
-    if age >= ages[-1]:
-        return table[ages[-1]]
 
-    for i in range(len(ages) - 1):
-        if ages[i] <= age <= ages[i + 1]:
-            t = (age - ages[i]) / (ages[i + 1] - ages[i])
-            p1 = table[ages[i]]
-            p2 = table[ages[i + 1]]
-            return p1 + t * (p2 - p1)
-    return table[ages[-1]]
+def _qx(table: Dict[int, float], age: float) -> float:
+    """Year-by-year death probability q(x); clamps at the table edges."""
+    if age <= 0:
+        return table[0]
+    if age >= MAX_AGE:
+        return table[MAX_AGE]
+    return table[int(age)]
 
 
 @dataclass
@@ -64,15 +102,20 @@ class MortalityModel:
     longevity_boost: float = 1.0  # multiplier on survival probability (1.0 = table, 1.1 = optimistic)
 
     def survival_probability(self, age: float, is_male: bool = True) -> float:
-        """Probability of surviving one more year from given age."""
-        table = _MORTALITY_TABLE_MALE if is_male else _MORTALITY_TABLE_FEMALE
-        p = _interpolate_survival(table, age)
+        """Probability of surviving one more year from given age (1 - q(x))."""
+        table = _SSA_QX_MALE if is_male else _SSA_QX_FEMALE
+        q = _qx(table, age)
+        p = 1.0 - q
         # Boost: increase survival probability (caps at 0.999)
         p_boosted = min(0.999, p * self.longevity_boost)
         return p_boosted
 
     def expected_remaining_years(self, age: float, is_male: bool = True) -> float:
-        """Expected remaining years of life (E[remaining])."""
+        """Expected remaining years of life (E[remaining]).
+
+        Returns the *complete* life expectancy (curtate sum + 0.5), matching
+        the SSA period life table's published "Life expectancy" column.
+        """
         total = 0.0
         p_survive = 1.0
         for y in range(100):
@@ -80,23 +123,27 @@ class MortalityModel:
             p_year = self.survival_probability(current_age, is_male)
             p_survive *= p_year
             total += p_survive
-        return total
+        return total + 0.5
 
     def sample_death_age(
         self,
         current_age: float,
         is_male: bool = True,
-        max_age: int = 105,
+        max_age: int = MAX_AGE,
+        rng=None,
     ) -> int:
         """Sample a death age using Monte Carlo.
 
-        Returns the age at which the person dies (inclusive).
+        Returns the age at which the person dies (inclusive). If *rng* (a
+        NumPy Generator) is provided, draws are reproducible; otherwise the
+        global ``random`` module is used.
         """
         import random
-        age = current_age
+        draw = rng.random if rng is not None else random.random
+        age = int(current_age)
         while age < max_age:
             p = self.survival_probability(age, is_male)
-            if random.random() > p:
+            if draw() > p:
                 return int(age)
             age += 1
         return max_age
@@ -299,6 +346,43 @@ class SurvivorSnapshot:
     medicare_adult_count: int          # living adults at Medicare age (R5)
     first_death_year: Optional[int]
     second_death_year: Optional[int]
+
+
+def stochastic_alive_snapshot(
+    year: int,
+    primary,
+    spouse,
+    dependents,
+    primary_age: float,
+    spouse_age: float,
+) -> "SurvivorSnapshot":
+    """Synthetic 'both alive' snapshot for the stochastic-mortality MC path.
+
+    The stochastic path models the household as one unit that dies together
+    at a single sampled year (see the stochastic mortality plan). Every
+    modeled year both spouses are alive (MFJ); there are no survivor
+    transitions, no spousal rollover, and no estate tax. The run simply
+    ends once the sampled death age is passed.
+    """
+    medicare_adult_count = (
+        (1 if primary_age >= 65 else 0) + (1 if spouse_age >= 65 else 0))
+    aca_family_size = 2 + active_dependent_count(year, dependents)
+    return SurvivorSnapshot(
+        year=year,
+        primary_alive=True,
+        spouse_alive=True,
+        survivor=None,
+        filing_status=FilingStatus.MFJ,
+        is_primary_death_year=False,
+        is_spouse_death_year=False,
+        is_first_death_year=False,
+        is_second_death_year=False,
+        estate_event=False,
+        aca_family_size=aca_family_size,
+        medicare_adult_count=medicare_adult_count,
+        first_death_year=None,
+        second_death_year=None,
+    )
 
 
 def survivor_snapshot(

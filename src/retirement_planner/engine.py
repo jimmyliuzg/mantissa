@@ -38,7 +38,9 @@ from .sim_integration import calculate_401k_limit, compute_survivor_ss_benefit
 from .household import (
     survivor_snapshot,
     normalize_filing_status,
+    MortalityModel,
     rollover_pretax_ownership,
+    stochastic_alive_snapshot,
 )
 from .tax_law import (
     TaxLawRegistry, FilingStatus,
@@ -2278,6 +2280,7 @@ class RetirementPlanner:
         rng=None,
         collect_projections: bool = False,
         stress_level: Optional[float] = None,
+        stochastic: bool = False,
     ) -> Dict:
         """Run a single year-by-year projection with proper cash flow.
 
@@ -2301,6 +2304,7 @@ class RetirementPlanner:
         total_estate_tax = 0.0
         peak_nw = 0.0
         out_of_savings_year = None
+        net_worth_by_year: Dict[int, float] = {}
         projections = [] if collect_projections else None
         # Stress level: 0 = normal, 1 = max discretionary cuts
         # (None → planner-level default set via CLI --stress).
@@ -2368,14 +2372,33 @@ class RetirementPlanner:
             for aid, acc in self.accounts.items()}
         rollover_done = False
 
+        # --- Stochastic mortality (optional) ---
+        # Sample ONE household death age from the SSA 2023 tables; both
+        # spouses die together at that year (simplification). The run ends
+        # once the sampled age is passed. Deterministic (stochastic=False)
+        # keeps the configured-longevity horizon below.
+        stochastic_death_age = None
+        if stochastic:
+            _mm = MortalityModel()
+            stochastic_death_age = _mm.sample_death_age(
+                self.start_year - self.scenario.primary.birth_date.year,
+                is_male=_mm.primary_male,
+                rng=rng,
+            )
+
         # Run until the LAST death: the younger/longer-lived person sets
-        # the horizon (estate tax is assessed when both are gone).
-        max_year = max(
-            self.scenario.primary.birth_date.year
-            + self.scenario.primary.longevity_age,
-            self.scenario.spouse.birth_date.year
-            + self.scenario.spouse.longevity_age,
-        ) + 1
+        # the horizon (estate tax is assessed when both are gone). In
+        # stochastic mode the horizon is the single sampled death year.
+        max_year = (
+            self.scenario.primary.birth_date.year + stochastic_death_age + 1
+            if stochastic and stochastic_death_age is not None
+            else max(
+                self.scenario.primary.birth_date.year
+                + self.scenario.primary.longevity_age,
+                self.scenario.spouse.birth_date.year
+                + self.scenario.spouse.longevity_age,
+            ) + 1
+        )
 
         for year in range(self.start_year, max_year):
             context = make_year_context(
@@ -2393,25 +2416,37 @@ class RetirementPlanner:
             # One longevity-derived survivor snapshot per year, shared with
             # Monte Carlo. Normalize to the FilingStatus enum before every
             # tax call so brackets/deductions resolve correctly.
-            snap = survivor_snapshot(
-                year, self.scenario.primary, self.scenario.spouse,
-                self.scenario.dependents,
-            )
-            filing_status = normalize_filing_status(snap.filing_status)
+            if stochastic:
+                # Simplified "both die together" model: the household stays
+                # MFJ (both alive) until the single sampled death year, then
+                # the run ends. No survivor transitions, rollover, or estate.
+                snap = stochastic_alive_snapshot(
+                    year, self.scenario.primary, self.scenario.spouse,
+                    self.scenario.dependents, primary_age, spouse_age)
+                filing_status = FilingStatus.MFJ
+            else:
+                snap = survivor_snapshot(
+                    year, self.scenario.primary, self.scenario.spouse,
+                    self.scenario.dependents,
+                )
+                filing_status = normalize_filing_status(snap.filing_status)
 
-            # Spousal rollover (R7): at the first death, reassign eligible
-            # pre-tax account ownership to the survivor in local state only.
-            if snap.survivor is not None and not rollover_done:
-                deceased = ("spouse" if snap.survivor == "primary"
-                            else "primary")
-                rollover_pretax_ownership(
-                    owner_map, self.accounts, deceased, snap.survivor)
-                rollover_done = True
+                # Spousal rollover (R7): at the first death, reassign eligible
+                # pre-tax account ownership to the survivor in local state only.
+                if snap.survivor is not None and not rollover_done:
+                    deceased = ("spouse" if snap.survivor == "primary"
+                                else "primary")
+                    rollover_pretax_ownership(
+                        owner_map, self.accounts, deceased, snap.survivor)
+                    rollover_done = True
 
             # Get tax law for this year
             law = tax_law_registry.law_for_year(year)
 
-            if (primary_age > self.scenario.primary.longevity_age
+            if stochastic:
+                if primary_age > stochastic_death_age:
+                    break
+            elif (primary_age > self.scenario.primary.longevity_age
                     and spouse_age > self.scenario.spouse.longevity_age):
                 break
 
@@ -2847,6 +2882,8 @@ class RetirementPlanner:
             total_liabs += sum(
                 b for b in mortgage_balances.values() if b > 0)
             net_worth = total_assets - total_liabs
+            if stochastic:
+                net_worth_by_year[primary_age] = net_worth
 
             # --- Estate tax (second death only, R8) ---
             # Assessed once at the second configured death year. The
@@ -2930,6 +2967,8 @@ class RetirementPlanner:
             "lifetime_ss": total_ss,
             "lifetime_contributions": total_contributions,
             "out_of_savings_year": out_of_savings_year,
+            "death_age": stochastic_death_age,
+            "net_worth_by_year": net_worth_by_year,
             **({"projections": projections} if projections is not None else {}),
         }
 

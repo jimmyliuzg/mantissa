@@ -37,6 +37,17 @@ def _print_mc_results(mc_results: dict, label: str = "MONTE CARLO RESULTS"):
     click.echo(f"  Out of Savings Rate: {mc_results['out_of_savings_rate'] * 100:.1f}%")
     click.echo(f"  Simulations:         {mc_results['num_simulations']:,}")
     click.echo("=" * 52)
+    dist = mc_results.get("mortality_distribution")
+    if dist:
+        click.echo()
+        click.echo("  Stochastic mortality (by age):")
+        click.echo(f"  {'Age':>4} {'%Dead':>8} {'%OOM':>8} {'%3x':>8} {'Median NW':>16}")
+        for row in dist:
+            click.echo(
+                f"  {row['age']:>4} {row['pct_dead']*100:>7.1f}%"
+                f" {row['pct_out_of_money']*100:>7.1f}%"
+                f" {row['pct_3x_target']*100:>7.1f}%"
+                f" {_fmt_money(row['median_net_worth']):>16}")
     click.echo()
 
 
@@ -258,21 +269,26 @@ def _format_equity_breakdown(planner) -> str:
               help="Stress level 0-1: cut discretionary expenses by "
                    "min_reduction x stress (0 = normal, 1 = max).")
 @click.option("--output", "-o", default=None, type=click.Path())
+@click.option("--stochastic", is_flag=True, default=False,
+              help="Sample a random household death year per run from SSA "
+                   "2023 mortality tables (stochastic mortality mode).")
 @click.option("--seed", default=None, type=int, help="Seed for reproducible simulations.")
-def run(config, simulations, method, scenario, output, seed, stress):
+def run(config, simulations, method, scenario, output, seed, stress, stochastic):
     """Run Monte Carlo simulation and display results."""
     planner = RetirementPlanner.from_config(config)
     mc = MonteCarloEngine(planner)
 
     stress_level = stress if stress is not None else planner.stress_level
     click.echo(f"Running {simulations:,} simulations ({method}, {scenario})"
-               f"{' @ stress ' + str(stress_level) if stress_level else ''}...")
+               f"{' @ stress ' + str(stress_level) if stress_level else ''}"
+               f"{' [stochastic mortality]' if stochastic else ''}...")
     mc_results = mc.run(
         num_simulations=simulations,
         scenario=scenario,
         method=method,
         seed=seed,
         stress_level=stress_level,
+        stochastic=stochastic,
     )
 
     _print_mc_results(mc_results)
