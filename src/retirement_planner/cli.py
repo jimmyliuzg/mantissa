@@ -627,3 +627,7 @@ def doctor():
     else:
         click.echo("Some optional features are unavailable.")
         click.echo("Install all: pip install mantissa[all]")
+
+
+if __name__ == "__main__":
+    main()
