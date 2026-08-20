@@ -3160,10 +3160,10 @@ class RetirementPlanner:
             aca_subsidy = 0.0
             if aca_family_size > 0:
                 # Use the versioned law pack so deterministic and MC
-                # subsidy amounts agree.
-                from .tax_law import TaxLawRegistry, calculate_aca_subsidy as tax_law_aca_calc
+                # subsidy amounts agree.  Module-level imports provide
+                # TaxLawRegistry and tax_law_aca already.
                 law = TaxLawRegistry().law_for_year(year)
-                aca_subsidy = tax_law_aca_calc(
+                aca_subsidy = tax_law_aca(
                     income["total"], aca_family_size, law, self.scenario.state)
 
             # Build TaxableIncome (simplified — all income as ordinary

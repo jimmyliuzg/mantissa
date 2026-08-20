@@ -263,6 +263,22 @@ class TestProjectContract:
             assert "income" in row
             assert "net_worth" in row
 
+    def test_project_row_has_survivor_fields(self, runner):
+        """Projection rows expose additive survivor transition state (KTD9)."""
+        result = runner.invoke(main, [
+            "project", "--config", SAMPLE_CONFIG,
+            "--format", "json",
+        ])
+        data = json.loads(result.output)
+        survivor_keys = [
+            "primary_alive", "spouse_alive", "filing_status",
+            "survivor", "aca_family_size", "medicare_adult_count",
+            "expense_ratio", "estate_tax",
+        ]
+        for row in data[:5]:
+            for key in survivor_keys:
+                assert key in row, f"Missing survivor field '{key}' in year {row.get('year')}"
+
 
 # ---------------------------------------------------------------------------
 # Inspect command
