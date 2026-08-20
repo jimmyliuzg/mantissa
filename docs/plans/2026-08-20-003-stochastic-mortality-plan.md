@@ -18,6 +18,19 @@ execution: code
 
 ---
 
+## Status
+
+**Implemented — U1–U4 complete** (commit `e2ba7a8` on branch `feat/stochastic-mortality`; full suite 743 passed, deterministic path and survivor parity preserved).
+
+- **U1.** SSA 2023 full `q(x)` tables (ages 0–119, by sex, from `ssa.gov/oact/STATS/table4c6.html`) replace the approximate 5-year buckets in `household.py`. `sample_death_age` now takes a seeded NumPy RNG; `expected_remaining_years` returns complete life expectancy (e65♂ = 18.12, e80♀ = 9.82).
+- **U2.** Each Monte Carlo run samples one household death age from the primary's table (both spouses die together — synthetic `stochastic_alive_snapshot`, MFJ, no survivor transitions / rollover / estate). Deterministic path unchanged (`stochastic=False` default).
+- **U3.** `MonteCarloEngine.run` aggregates an age-indexed outcome distribution — `mortality_distribution`: % dead / % out of money / % 3x target / median NW by age.
+- **U4.** `mantissa run --stochastic` flag plus the `mortality_distribution` field in the report JSON.
+
+**Coverage:** `tests/regression/test_stochastic_mortality.py` (SSA anchors, sampling centering, distribution monotonicity, seed determinism, deterministic-path-unchanged, CLI flag); `tests/unit/test_household.py` updated for the new table.
+
+**Not built (deferred, per plan):** independent death ages, correlated death, health-adjusted mortality, partial-year timing.
+
 ## What Changes
 
 ### Current behavior (MC)
