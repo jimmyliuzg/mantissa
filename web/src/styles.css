@@ -104,6 +104,31 @@ footer { display: flex; justify-content: space-between; align-items: center; pad
 
 .results { min-width: 0; }
 
+.wizard { max-width: 720px; margin: 0 auto; }
+.wizard-header { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
+.wizard-header h2 { margin: 0; }
+.progress { display: flex; gap: 4px; }
+.progress-dot { width: 28px; height: 4px; background: var(--border); border-radius: 2px; }
+.progress-dot.done { background: var(--accent); }
+.wizard-step { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 8px; padding: 24px; min-height: 240px; }
+.wizard-step h3 { margin-top: 0; }
+.step-group { display: flex; flex-direction: column; gap: 8px; }
+.wizard-step .row { display: grid; grid-template-columns: 1fr 180px; gap: 8px; align-items: center; padding: 6px 0; }
+.wizard-step .row small { grid-column: 2; font-size: 11px; }
+.wizard-step input, .wizard-step select { font: inherit; padding: 6px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--fg); }
+.wizard-step input[type="number"] { font-family: var(--mono); }
+.choice-field { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; }
+.choice { text-align: left; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font: inherit; cursor: pointer; }
+.choice:hover { border-color: var(--accent); }
+.choice--selected { border-color: var(--accent); background: var(--bg-elev); color: var(--accent); font-weight: 600; }
+.review-table { width: 100%; border-collapse: collapse; }
+.review-table th, .review-table td { text-align: left; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+.review-table th { color: var(--fg-muted); font-weight: 500; width: 200px; }
+.wizard-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 16px; }
+.wizard-footer__final { display: flex; gap: 8px; }
+.btn--primary { background: var(--accent); color: white; border-color: var(--accent); }
+.btn--primary:hover { background: var(--accent); color: white; opacity: 0.9; }
+
 .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; margin: 16px 0; }
 .kpi { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 6px; padding: 12px; display: flex; flex-direction: column; gap: 4px; }
 .kpi-label { font-size: 11px; text-transform: uppercase; color: var(--fg-muted); letter-spacing: 0.04em; }

@@ -2,13 +2,13 @@ import { useState } from "preact/hooks";
 
 interface LandingProps {
   onOpenViewer: () => void;
+  onOpenWizard: () => void;
 }
 
 /**
- * Landing page. v1 has only the upload flow wired up; wizard + markdown
- * are placeholders for M2/M3.
+ * Landing page. Upload flow + wizard entry point.
  */
-export function Landing({ onOpenViewer }: LandingProps) {
+export function Landing({ onOpenViewer, onOpenWizard }: LandingProps) {
   const [err, setErr] = useState<string | null>(null);
 
   async function onFile(file: File) {
@@ -45,9 +45,9 @@ export function Landing({ onOpenViewer }: LandingProps) {
             }}
           />
         </label>
-        <button class="tile tile--wizard" disabled>
+        <button class="tile tile--wizard" onClick={onOpenWizard}>
           <span class="tile-title">Start from scratch</span>
-          <span class="tile-body">10-question wizard. M3.</span>
+          <span class="tile-body">8-question wizard, then open in the viewer.</span>
         </button>
         <button class="tile tile--md" disabled>
           <span class="tile-title">View a markdown report</span>

@@ -266,10 +266,31 @@ Unit tests: 16/16 (format helpers + config-edit path helpers).
 
 Bundle: 41 KB JS + 6 KB CSS + 134 KB wheel. Pyodide + numpy still CDN-cached.
 
-### Milestone 3 — Wizard
-- Scope: Flow B. Stepper, slim template synthesizer (mirroring example config shape), hands the user a downloadable config + the same review UI.
-- Stub-spouse generator for "no spouse" flow.
-- Deliverable: `/wizard` route.
+### Milestone 3 — Wizard ✅ DONE (2026-08-29)
+
+What shipped in `web/`:
+- **Slim config builder** (`web/src/slim/types.ts`): `WizardAnswers` → `buildSlimConfig()`. Emits the smallest Mantissa config the engine accepts end-to-end (verified by the M0 spike and now by a unit test suite). Single-household mode synthesizes a far-future-dated stub `spouse` so the config validates without a real partner. Risk tolerance maps to `investment_return_mean` + `_volatility` per a fixed low/med/high table.
+- **Wizard page** (`web/src/pages/wizard.tsx`): 8 question steps + a Review step = 9 progress dots. Two exits: "Download plan.json" produces a valid Mantissa CLI config; "Open in viewer" writes the config to sessionStorage and navigates to `/#/review`.
+- **State dropdown**: 50 states + DC.
+- **Router update** (`web/src/app.tsx`): added `/#/wizard` route.
+- **Landing page**: the wizard tile is now wired (was disabled in M1).
+
+Unit tests: 9 new tests in `web/tests/slim.test.ts` covering the engine-required field set, ISO date format, risk mapping, single-household stub, and the integer-rounding of monthly amounts. **25/25 unit tests pass overall.**
+
+E2E test (`web/scripts/m3-test.py`):
+```
+==> clicking Start from scratch
+==> progress dots: 9
+==> walking through 8 question steps
+==> reached review step
+==> opening in viewer
+==> viewer KPIs: ['100.0%', '$90.80B', '$9.63B', '$1128.93B', '$10.27M', '0.0%', '1,000']
+==> M3 OK
+```
+
+Default wizard profile (35, retire 65, $250k assets, $120k income, $60k spending, CA, $2.4k SS) → 100% success rate, $90.8B median final NW. Plan is over-funded for the spending target; not a bug, just a profile hint that the defaults could be more conservative. Worth flagging in M4.
+
+Bundle: 52 KB JS + 8 KB CSS + 134 KB wheel.
 
 ### Milestone 4 — Share + polish
 - Scope: URL-hash share link, lz-string compression, copy-to-clipboard, OG image for shared links, mobile pass, accessibility audit, CSP hardening.
