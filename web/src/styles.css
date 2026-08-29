@@ -81,6 +81,29 @@ footer { display: flex; justify-content: space-between; align-items: center; pad
 .viewer-header { display: flex; justify-content: space-between; align-items: baseline; }
 .viewer-header h2 { margin: 0; }
 
+.btn { display: inline-block; padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-elev); color: var(--fg); font: inherit; cursor: pointer; }
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+
+.layout { display: grid; grid-template-columns: 320px 1fr; gap: 16px; align-items: start; margin-top: 16px; }
+@media (max-width: 800px) { .layout { grid-template-columns: 1fr; } }
+
+.drawer { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 8px; padding: 12px; position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow: auto; }
+.drawer header { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }
+.drawer h3 { margin: 0; font-size: 14px; }
+.drawer fieldset { border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; margin: 8px 0; }
+.drawer legend { font-size: 11px; text-transform: uppercase; color: var(--fg-muted); letter-spacing: 0.04em; padding: 0 4px; }
+.drawer .row { display: grid; grid-template-columns: 1fr 110px; gap: 4px 8px; align-items: center; padding: 4px 0; font-size: 13px; }
+.drawer .row small { grid-column: 2; font-size: 10px; }
+.drawer input, .drawer select, .drawer textarea { font: inherit; padding: 3px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--fg); }
+.drawer input[type="number"] { font-family: var(--mono); }
+.drawer details { margin: 8px 0; }
+.drawer details summary { cursor: pointer; padding: 4px 0; }
+.list-field { display: flex; flex-direction: column; gap: 4px; }
+.list-field__item { padding: 6px; border: 1px solid var(--border); border-radius: 4px; margin: 4px 0; }
+.advanced-json { width: 100%; font-family: var(--mono); font-size: 11px; }
+
+.results { min-width: 0; }
+
 .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; margin: 16px 0; }
 .kpi { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 6px; padding: 12px; display: flex; flex-direction: column; gap: 4px; }
 .kpi-label { font-size: 11px; text-transform: uppercase; color: var(--fg-muted); letter-spacing: 0.04em; }

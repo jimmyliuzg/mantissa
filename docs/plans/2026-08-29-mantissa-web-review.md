@@ -243,10 +243,28 @@ vs CLI baseline (`/tmp/mantissa-pyodide-spike/baseline/run.json`):
 
 Bundle: 27KB JS + 4.5KB CSS + 134KB wheel = ~165KB initial. Pyodide + numpy are CDN-fetched once (~20MB), cached by browser.
 
-### Milestone 2 — Editing + re-run
-- Scope: Flow A becomes interactive. Inline edits debounce-trigger an engine re-run. Charts update.
-- Cap sims at 5,000 in the v1 browser build (200s worst case is too slow). Show a label.
-- Deliverable: same site, editable config drawer, debounced re-run, "Download config" button.
+### Milestone 2 — Editing + re-run ✅ DONE (2026-08-29)
+
+What shipped in `web/`:
+- **Plan store** (`web/src/state/plan-store.ts`): signals-based single source of truth. `config` + `sims` signals, a `state` signal of `EngineState` (idle/loading/running/ready/error), and a `rerun()` that increments a run counter so stale in-flight runs are dropped. Engine cancellation deferred to M3 — the run-id gate is good enough.
+- **ConfigDrawer** (`web/src/components/config-drawer.tsx`): left rail, sticky, with a curated field set (top-level, primary, spouse, economic, accounts, expenses, income_streams, MC sims) plus an "Advanced JSON" textarea for everything else. 17 typed fields plus 3 list editors.
+- **useDebouncedEffect** (`web/src/lib/use-debounced-effect.ts`): 400 ms debounce, last-write-wins. Edits during a run get queued; the next run starts after the in-flight one lands.
+- **Download config** button on the viewer header — produces a clean JSON blob with the current edited config.
+- **Sim count control**: 500 / 1k / 5k dropdown. Cost labeled ("5k sims takes ~100 s in browser").
+
+End-to-end test (`web/scripts/m2-test.py`):
+```
+before edit: ['1.3%', '$343.7k', '$92.8k', '$1.36M', '$229.5k', '98.2%', '1,000']
+==> editing accounts[0].balance: 150000 → 1500000
+==> re-run completed after edit
+after edit:  ['95.9%', '$21.09M', '$5.20M', '$65.99M', '$3.44M', '3.4%', '1,000']
+==> downloaded accounts[0].balance: 1500000
+```
+Success rate 1.3% → 95.9% matches the CLI exactly. Median net worth $343.7k → $21.09M. The downloaded JSON has `accounts[0].balance = 1,500,000`.
+
+Unit tests: 16/16 (format helpers + config-edit path helpers).
+
+Bundle: 41 KB JS + 6 KB CSS + 134 KB wheel. Pyodide + numpy still CDN-cached.
 
 ### Milestone 3 — Wizard
 - Scope: Flow B. Stepper, slim template synthesizer (mirroring example config shape), hands the user a downloadable config + the same review UI.
