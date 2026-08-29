@@ -140,8 +140,12 @@ export function buildSlimConfig(answers: WizardAnswers): unknown {
       longevity_age: answers.primaryLongevity,
     },
     // Spouse is REQUIRED by the engine parser. When single, we
-    // synthesize a stub with a far-future birth date so it never
-    // participates in any year the engine simulates.
+    // synthesize a stub with the same birth year + longevity as the
+    // primary, so the engine's projection horizon (max of both
+    // spouses' death years) is dominated by the primary. A stub
+    // born in 2100 with longevity 120 would otherwise project to
+    // year 2220 — 194 years of brokerage compounding produces
+    // $700M+ medians for any working professional.
     spouse: answers.hasSpouse
       ? {
           name: "Spouse",
@@ -154,9 +158,9 @@ export function buildSlimConfig(answers: WizardAnswers): unknown {
         }
       : {
           name: "(none)",
-          birth_date: "2100-01-01",
-          retirement_date: "2200-01-01",
-          longevity_age: 120,
+          birth_date: birthDate(answers.primaryAge),
+          retirement_date: retirementDate(answers.primaryRetirementAge, answers.primaryAge),
+          longevity_age: answers.primaryLongevity,
         },
     economic: {
       inflation: 0.025,
@@ -206,5 +210,17 @@ export function buildSlimConfig(answers: WizardAnswers): unknown {
     state: answers.state,
     monetary_convention: "real",
     savings_order: accounts.map((a) => (a as { id: string }).id),
+    // Default glidepath: 100% equity in early career, ramps to 40%
+    // by retirement with a 5-year bond tent, then back to 40-50%
+    // post-retirement. Without a glidepath the engine assumes 100%
+    // equity forever, which makes a 60-year horizon compound to
+    // lottery-ticket numbers regardless of contributions.
+    glidepath: {
+      equity_by_age: { 30: 1.0, 50: 0.8, 60: 0.5, 70: 0.4, 90: 0.4 },
+      pre_retirement_years: 10,
+      post_retirement_years: 5,
+      tent_equity_pct: 0.4,
+      tent_ramp_years: 10,
+    },
   };
 }

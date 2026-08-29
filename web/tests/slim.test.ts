@@ -12,12 +12,22 @@ describe("buildSlimConfig", () => {
     expect(Array.isArray(cfg.expenses)).toBe(true);
   });
 
-  it("synthesizes a far-future stub spouse when hasSpouse=false", () => {
-    const cfg = buildSlimConfig({ ...DEFAULT_ANSWERS, hasSpouse: false }) as {
-      spouse: { name: string; birth_date: string };
+  it("synthesizes a same-year stub spouse when hasSpouse=false", () => {
+    // The stub must share the primary's birth year and longevity so the
+    // engine's projection horizon is not extended 100+ years into the
+    // future (otherwise the brokerage account compounds forever).
+    const cfg = buildSlimConfig({
+      ...DEFAULT_ANSWERS,
+      hasSpouse: false,
+      primaryAge: 35,
+      primaryLongevity: 92,
+    }) as {
+      spouse: { name: string; birth_date: string; longevity_age: number };
+      primary: { birth_date: string; longevity_age: number };
     };
     expect(cfg.spouse.name).toBe("(none)");
-    expect(cfg.spouse.birth_date.startsWith("21")).toBe(true);
+    expect(cfg.spouse.birth_date).toBe(cfg.primary.birth_date);
+    expect(cfg.spouse.longevity_age).toBe(cfg.primary.longevity_age);
   });
 
   it("emits a real spouse object when hasSpouse=true", () => {
@@ -82,6 +92,26 @@ describe("buildSlimConfig", () => {
     }) as { income_streams: unknown[]; expenses: unknown[] };
     expect(cfg.income_streams).toHaveLength(0);
     expect(cfg.expenses).toHaveLength(0);
+  });
+
+  it("emits a default glidepath so a 60-year horizon doesn't compound to lottery numbers", () => {
+    // Without a glidepath the engine assumes 100% equity forever,
+    // which produces $90B+ terminal net worth for any reasonable
+    // starting balance. The default glidepath ramps equity from 100%
+    // at age 30 to 40% at retirement with a bond tent.
+    const cfg = buildSlimConfig(DEFAULT_ANSWERS) as {
+      glidepath: {
+        equity_by_age: Record<number, number>;
+        tent_equity_pct: number;
+      };
+    };
+    expect(cfg.glidepath).toBeDefined();
+    // Equity must decrease from young to old.
+    const young = cfg.glidepath.equity_by_age[30] ?? 1;
+    const old = cfg.glidepath.equity_by_age[70] ?? 0;
+    expect(young).toBeGreaterThan(old);
+    // Bond tent must be lower than the pre-tent allocation.
+    expect(cfg.glidepath.tent_equity_pct).toBeLessThan(0.6);
   });
 
   it("populates every engine-required field on income_streams and expenses", () => {

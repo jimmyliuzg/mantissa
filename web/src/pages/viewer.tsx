@@ -91,6 +91,8 @@ function Ready({ result }: { result: RunResult }) {
     <>
       <KpiRow kpis={result.kpis} />
 
+      <PlanSummary kpis={result.kpis} />
+
       <section class="panel">
         <h3>Cash flow</h3>
         <CashFlowChart rows={result.cashFlow} />
@@ -152,4 +154,54 @@ function runStatusLabel(s: EngineState): string {
     case "error":
       return "error";
   }
+}
+
+/**
+ * Plain-English interpretation of the KPIs. The raw numbers can be
+ * misleading — a 100% success rate with a $90B terminal net worth
+ * looks like a bug, but it actually means the plan over-saves for
+ * its spending. This component translates the most common cases.
+ */
+function PlanSummary({ kpis }: { kpis: RunResult["kpis"] }) {
+  const r = kpis.successRate;
+  const nw = kpis.medianFinalNetWorth;
+  const oos = kpis.outOfSavingsRate;
+
+  if (r >= 0.95) {
+    // High success rate: distinguish "comfortable" from "over-saving".
+    // Heuristic: if the plan ends with > 50x its annual expenses'
+    // rough equivalent (NW > $5M as a sanity floor), flag it.
+    const overSaving = nw > 5_000_000;
+    return (
+      <p class="plan-summary" data-tone={overSaving ? "info" : "good"}>
+        {overSaving
+          ? `Success rate ${fmtPct(r)} with a median terminal net worth of ${fmtMoney(nw)} — this plan is over-saving. You could retire earlier, spend more in retirement, or set a smaller legacy goal. Try lowering "Annual spending in retirement" in the wizard to see what changes.`
+          : `Success rate ${fmtPct(r)} — your plan covers retirement spending in nearly all market scenarios. Median terminal net worth is ${fmtMoney(nw)}.`}
+      </p>
+    );
+  }
+  if (r >= 0.75) {
+    return (
+      <p class="plan-summary" data-tone="good">
+        Success rate {fmtPct(r)} — the plan holds up in most market scenarios. Median terminal
+        net worth is {fmtMoney(nw)}.
+      </p>
+    );
+  }
+  if (r >= 0.5) {
+    return (
+      <p class="plan-summary" data-tone="warn">
+        Success rate {fmtPct(r)} — the plan works in a majority of market scenarios but is
+        vulnerable to extended downturns. Median terminal net worth is {fmtMoney(nw)}. Try
+        increasing savings, lowering retirement spending, or delaying retirement.
+      </p>
+    );
+  }
+  return (
+    <p class="plan-summary" data-tone="bad">
+      Success rate {fmtPct(r)} — the plan runs out of money in {fmtPct(oos)} of scenarios. The
+      numbers below show the median outcome, which assumes an average market. Consider higher
+      savings, lower retirement spending, or a later retirement date.
+    </p>
+  );
 }

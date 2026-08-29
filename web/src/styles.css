@@ -104,6 +104,12 @@ footer { display: flex; justify-content: space-between; align-items: center; pad
 
 .results { min-width: 0; }
 
+.plan-summary { padding: 10px 14px; border-radius: 6px; margin: 8px 0 16px; font-size: 13px; line-height: 1.5; border-left: 3px solid var(--neutral); background: var(--bg-elev); color: var(--fg); }
+.plan-summary[data-tone="good"]  { border-left-color: var(--good); }
+.plan-summary[data-tone="info"]  { border-left-color: var(--accent); }
+.plan-summary[data-tone="warn"]  { border-left-color: #d4a000; }
+.plan-summary[data-tone="bad"]   { border-left-color: var(--bad); }
+
 .wizard { max-width: 720px; margin: 0 auto; }
 .wizard-header { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
 .wizard-header h2 { margin: 0; }
