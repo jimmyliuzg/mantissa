@@ -51,7 +51,7 @@ export function Landing({ onOpenViewer, onOpenWizard }: LandingProps) {
         </button>
         <button class="tile tile--md" disabled>
           <span class="tile-title">View a markdown report</span>
-          <span class="tile-body">Read-only rendering. M2.</span>
+          <span class="tile-body">Read-only rendering. Coming soon.</span>
         </button>
       </div>
 

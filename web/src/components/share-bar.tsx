@@ -1,0 +1,123 @@
+import { useState } from "preact/hooks";
+import {
+  buildShareUrl,
+  encodeConfig,
+  encodeSnapshot,
+  shareByteSize,
+  type ShareableSnapshot,
+} from "../lib/share-codec";
+import type { PlanStore } from "../state/plan-store";
+import type { RunResult } from "@engine";
+
+interface ShareBarProps {
+  store: PlanStore;
+  result: RunResult | null;
+}
+
+type CopyState = "idle" | "copied" | "error";
+
+/**
+ * Share bar: two buttons.
+ *   - Copy link: share the config + sim params. Recipient re-runs.
+ *   - Copy snapshot link: share the config + the frozen RunResult.
+ *     Recipient renders instantly, no engine wait. Carries a "this is
+ *     a snapshot" UX cue.
+ *
+ * Both encode to the URL hash, so the share is a static URL the
+ * recipient can open on any host — no backend, no data leaves the
+ * device until the recipient navigates to the link.
+ */
+export function ShareBar({ store, result }: ShareBarProps) {
+  const [includeSnapshot, setIncludeSnapshot] = useState(true);
+  const [copyState, setCopyState] = useState<CopyState>("idle");
+  const [copiedKind, setCopiedKind] = useState<"config" | "snapshot" | null>(null);
+  const [size, setSize] = useState<{ kind: "config" | "snapshot"; bytes: number } | null>(null);
+
+  async function copy(kind: "config" | "snapshot") {
+    const sims = store.sims.value;
+    const seed = 42;
+    const config = store.config.value;
+    let hash: string;
+    if (kind === "config") {
+      hash = encodeConfig({ config, sims, seed });
+    } else {
+      if (!result) {
+        setCopyState("error");
+        return;
+      }
+      const snapshot: ShareableSnapshot = {
+        config,
+        sims,
+        seed,
+        result: {
+          kpis: result.kpis as unknown as Record<string, number>,
+          cashFlow: result.cashFlow as unknown as Array<Record<string, number | null>>,
+          mc: result.mc as unknown as ShareableSnapshot["result"]["mc"],
+          runtimeMs: result.runtimeMs,
+          generatedAt: result.generatedAt,
+        },
+      };
+      hash = encodeSnapshot(snapshot);
+    }
+    setSize({ kind, bytes: shareByteSize(hash) });
+    const url = buildShareUrl(kind, hash);
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedKind(kind);
+      setCopyState("copied");
+      setTimeout(() => setCopyState("idle"), 2000);
+    } catch {
+      setCopyState("error");
+    }
+  }
+
+  return (
+    <div class="share-bar" role="group" aria-label="Share this plan">
+      <button
+        type="button"
+        class="btn"
+        onClick={() => void copy("config")}
+        title="Share the config. Recipient's browser re-runs the engine (~20s for 1k sims)."
+        aria-label="Copy config share link"
+      >
+        Copy link
+      </button>
+      <button
+        type="button"
+        class="btn"
+        onClick={() => void copy("snapshot")}
+        disabled={!result}
+        title="Share the config plus the frozen result. Recipient renders instantly without a re-run."
+        aria-label="Copy snapshot share link (includes frozen Monte Carlo result)"
+      >
+        Copy snapshot link
+      </button>
+      <label class="share-toggle">
+        <input
+          type="checkbox"
+          checked={includeSnapshot}
+          onChange={(e) => setIncludeSnapshot((e.currentTarget as HTMLInputElement).checked)}
+          aria-label="Use snapshot by default"
+        />
+        <span>Default to snapshot</span>
+      </label>
+
+      {copyState === "copied" && size && (
+        <span class="share-toast" data-tone="good" role="status" aria-live="polite">
+          Copied {size.kind === "snapshot" ? "snapshot" : "config"} link ({formatBytes(size.bytes)})
+        </span>
+      )}
+      {copyState === "error" && (
+        <span class="share-toast" data-tone="bad" role="alert">
+          Could not copy. Long-press the URL bar to copy manually.
+        </span>
+      )}
+    </div>
+  );
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} kB`;
+  return `${(n / 1024 / 1024).toFixed(2)} MB`;
+}

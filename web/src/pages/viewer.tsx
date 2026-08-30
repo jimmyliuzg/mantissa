@@ -4,26 +4,31 @@ import { ConfigDrawer } from "../components/config-drawer";
 import { KpiRow } from "../components/kpi-row";
 import { CashFlowChart } from "../components/cash-flow-chart";
 import { MonteCarloFan } from "../components/monte-carlo-fan";
+import { ShareBar } from "../components/share-bar";
 import { fmtMoney, fmtPct } from "../lib/format";
 import { useDebouncedEffect } from "../lib/use-debounced-effect";
+import {
+  decodeConfig,
+  decodeSnapshot,
+  readShareFromLocation,
+  type ShareableSnapshot,
+} from "../lib/share-codec";
 import { createPlanStore, type EngineState } from "../state/plan-store";
 
 /**
- * M2 viewer: editable. Loads config from sessionStorage, creates a
- * per-page plan store, debounces re-runs 400 ms after the last edit.
+ * M4 viewer: editable, shareable. Loads the config from one of three
+ * places, in priority order:
+ *   1. URL hash: `?d=<config-hash>` or `?s=<snapshot-hash>`
+ *   2. sessionStorage: legacy landing-page upload path
+ *   3. Nothing: show a "no config" message
+ *
+ * Snapshot loads render the result immediately without running the
+ * engine. Any edit clears the snapshot and re-runs.
  */
 export function Viewer() {
-  const initialConfig = useMemo(() => {
-    const raw = sessionStorage.getItem("mantissa:config");
-    if (!raw) return null;
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return null;
-    }
-  }, []);
+  const initial = useMemo(() => loadInitial(), []);
 
-  if (!initialConfig) {
+  if (!initial) {
     return (
       <section class="viewer">
         <p class="error">No config loaded. Go back and upload a .json file.</p>
@@ -34,23 +39,87 @@ export function Viewer() {
     );
   }
 
-  return <ViewerBody initialConfig={initialConfig} />;
+  return <ViewerBody initial={initial} />;
 }
 
-function ViewerBody({ initialConfig }: { initialConfig: unknown }) {
-  // Per-page store. Created once.
-  const [store] = useState(() => createPlanStore(initialConfig, 1000));
-  // Subscribe to the state signal.
+type InitialState =
+  | { kind: "config"; config: unknown; sims: number; seed: number }
+  | { kind: "snapshot"; config: unknown; sims: number; seed: number; result: RunResult };
+
+function loadInitial(): InitialState | null {
+  // 1. URL hash share.
+  const share = readShareFromLocation();
+  if (share) {
+    try {
+      if (share.kind === "config") {
+        const c = decodeConfig(share.hash);
+        return { kind: "config", config: c.config, sims: c.sims, seed: c.seed };
+      }
+      const s = decodeSnapshot(share.hash);
+      return {
+        kind: "snapshot",
+        config: s.config,
+        sims: s.sims,
+        seed: s.seed,
+        result: s.result as unknown as RunResult,
+      };
+    } catch (e) {
+      console.error("bad share link", e);
+      return null;
+    }
+  }
+  // 2. sessionStorage from landing page.
+  const raw = sessionStorage.getItem("mantissa:config");
+  if (raw) {
+    try {
+      return {
+        kind: "config",
+        config: JSON.parse(raw),
+        sims: 1000,
+        seed: 42,
+      };
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function ViewerBody({ initial }: { initial: InitialState }) {
+  const [store] = useState(() => createPlanStore(initial.config, initial.sims));
+  // Manually seeded: share links can encode any seed; default to 42
+  // when the engine runs.
   const stateValue = store.state.value;
+  const [isSnapshot, setIsSnapshot] = useState(initial.kind === "snapshot");
 
   // Bootstrap engine on first mount.
   useEffect(() => {
+    if (initial.kind === "snapshot") {
+      // Snapshots render without running. We do still bootstrap the
+      // engine so subsequent edits can re-run without a cold start.
+      void store.bootstrap();
+      // Push the snapshot into the store as if it were a successful run.
+      store.state.value = {
+        kind: "ready",
+        result: initial.result,
+        runId: 0,
+        runtimeMs: initial.result.runtimeMs,
+      };
+      return;
+    }
     void store.bootstrap();
-  }, [store]);
+  }, [store, initial]);
 
-  // Debounced re-run on config or sims change.
+  // Debounced re-run on config or sims change, but NOT for snapshots
+  // until the user edits something. (Re-runs would clobber the
+  // snapshot's frozen numbers.)
   useDebouncedEffect(
     () => {
+      if (isSnapshot) {
+        // User has edited; clear the snapshot flag so future debounce
+        // ticks actually re-run.
+        setIsSnapshot(false);
+      }
       void store.rerun();
     },
     [store.config.value, store.sims.value],
@@ -61,13 +130,26 @@ function ViewerBody({ initialConfig }: { initialConfig: unknown }) {
     <section class="viewer viewer--editable">
       <header class="viewer-header">
         <div>
-          <h2>{(store.config.value as { name?: string } | null)?.name ?? "Mantissa plan"}</h2>
+          <h1>{(store.config.value as { name?: string } | null)?.name ?? "Mantissa plan"}</h1>
           <p class="muted small">
             {store.sims.value.toLocaleString()} simulations · {runStatusLabel(stateValue)}
+            {isSnapshot && stateValue.kind === "ready" && " · shared snapshot"}
           </p>
         </div>
-        <DownloadButton config={store.config.value} />
+        <div class="viewer-actions">
+          <ShareBar
+            store={store}
+            result={stateValue.kind === "ready" ? stateValue.result : null}
+          />
+          <DownloadButton config={store.config.value} />
+        </div>
       </header>
+
+      {isSnapshot && (
+        <p class="snapshot-banner" role="status">
+          Showing a shared snapshot. Edit any field to re-run the engine with your changes.
+        </p>
+      )}
 
       <div class="layout">
         <ConfigDrawer store={store} />
@@ -90,9 +172,7 @@ function Ready({ result }: { result: RunResult }) {
   return (
     <>
       <KpiRow kpis={result.kpis} />
-
       <PlanSummary kpis={result.kpis} />
-
       <section class="panel">
         <h3>Cash flow</h3>
         <CashFlowChart rows={result.cashFlow} />
@@ -103,7 +183,6 @@ function Ready({ result }: { result: RunResult }) {
           {fmtPct(result.kpis.successRate)}
         </p>
       </section>
-
       <section class="panel">
         <h3>Monte Carlo fan</h3>
         <MonteCarloFan
@@ -112,7 +191,6 @@ function Ready({ result }: { result: RunResult }) {
           medianFinal={result.kpis.medianFinalNetWorth}
         />
       </section>
-
       <details>
         <summary>Raw data ({result.cashFlow.length} rows)</summary>
         <pre class="data">{JSON.stringify(result, null, 2)}</pre>
@@ -156,21 +234,12 @@ function runStatusLabel(s: EngineState): string {
   }
 }
 
-/**
- * Plain-English interpretation of the KPIs. The raw numbers can be
- * misleading — a 100% success rate with a $90B terminal net worth
- * looks like a bug, but it actually means the plan over-saves for
- * its spending. This component translates the most common cases.
- */
 function PlanSummary({ kpis }: { kpis: RunResult["kpis"] }) {
   const r = kpis.successRate;
   const nw = kpis.medianFinalNetWorth;
   const oos = kpis.outOfSavingsRate;
 
   if (r >= 0.95) {
-    // High success rate: distinguish "comfortable" from "over-saving".
-    // Heuristic: if the plan ends with > 50x its annual expenses'
-    // rough equivalent (NW > $5M as a sanity floor), flag it.
     const overSaving = nw > 5_000_000;
     return (
       <p class="plan-summary" data-tone={overSaving ? "info" : "good"}>

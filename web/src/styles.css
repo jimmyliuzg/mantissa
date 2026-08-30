@@ -110,6 +110,45 @@ footer { display: flex; justify-content: space-between; align-items: center; pad
 .plan-summary[data-tone="warn"]  { border-left-color: #d4a000; }
 .plan-summary[data-tone="bad"]   { border-left-color: var(--bad); }
 
+.viewer-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+
+.share-bar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.share-toggle { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--fg-muted); cursor: pointer; }
+.share-toggle input { margin: 0; }
+.share-toast { font-size: 12px; padding: 2px 8px; border-radius: 4px; }
+.share-toast[data-tone="good"] { background: rgba(31, 122, 58, 0.12); color: var(--good); }
+.share-toast[data-tone="bad"]  { background: rgba(176, 38, 26, 0.12); color: var(--bad); }
+
+.snapshot-banner { background: var(--bg-elev); border: 1px solid var(--accent); border-left: 3px solid var(--accent); border-radius: 6px; padding: 8px 12px; margin: 12px 0 0; font-size: 13px; color: var(--fg); }
+
+/* Skip link for keyboard / screen reader users. */
+.skip-link { position: absolute; left: -9999px; top: 0; z-index: 1000; padding: 8px 12px; background: var(--accent); color: white; font-weight: 600; }
+.skip-link:focus { left: 8px; top: 8px; outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Focus styles for keyboard users across the app. */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+button:focus-visible, a:focus-visible, [role="button"]:focus-visible { outline-offset: 3px; }
+
+/* Mobile: collapse the drawer to a top-anchored full-width block and
+   make the wizard/wizard/review inputs taller for thumb taps. */
+@media (max-width: 600px) {
+  .app { padding: 8px; }
+  .topbar { padding: 6px 0; }
+  .tiles { grid-template-columns: 1fr; }
+  .viewer-header { flex-direction: column; gap: 8px; align-items: flex-start; }
+  .viewer-actions { justify-content: flex-start; }
+  .drawer { position: static; max-height: none; }
+  .kpi-row { grid-template-columns: repeat(2, 1fr); gap: 6px; }
+  .kpi { padding: 8px; }
+  .kpi-value { font-size: 15px; }
+  .wizard-step { padding: 16px; }
+  .wizard-step .row { grid-template-columns: 1fr; }
+  .wizard-step .row small { grid-column: 1; }
+  .wizard-step input, .wizard-step select, .wizard-step textarea { padding: 10px 12px; font-size: 16px; } /* iOS: 16px prevents auto-zoom */
+  .panel { padding: 12px; }
+  .chart { max-height: 200px; }
+}
+
 .wizard { max-width: 720px; margin: 0 auto; }
 .wizard-header { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
 .wizard-header h2 { margin: 0; }

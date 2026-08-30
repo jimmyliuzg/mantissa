@@ -4,11 +4,45 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
-    <meta name="description" content="Interactive viewer for Mantissa retirement plans. Runs entirely in your browser." />
+    <meta name="theme-color" content="#2e5cb8" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#6e9be0" media="(prefers-color-scheme: dark)" />
+    <meta name="description" content="Interactive viewer for Mantissa retirement plans. Runs entirely in your browser — no data leaves your device." />
+
+    <!-- Open Graph / Twitter card. The image and favicon live in /public
+         and are served from the same origin. Vite copies them verbatim. -->
+    <meta property="og:title" content="Mantissa · Plan Viewer" />
+    <meta property="og:description" content="Interactive viewer for Mantissa retirement plans. Runs entirely in your browser." />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="./og-image.svg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Mantissa · Plan Viewer" />
+    <meta name="twitter:description" content="Interactive viewer for Mantissa retirement plans. Runs entirely in your browser." />
+    <meta name="twitter:image" content="./og-image.svg" />
+
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+
+    <!--
+      Content Security Policy. We restrict everything to the same origin
+      plus the Pyodide CDN (jsdelivr). Pyodide + mantissa wheel + numpy
+      are fetched at boot.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self';
+               script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net;
+               style-src 'self' 'unsafe-inline';
+               img-src 'self' data:;
+               font-src 'self' data:;
+               connect-src 'self' https://cdn.jsdelivr.net https://pypi.org https://files.pythonhosted.org;
+               worker-src 'self' blob:;
+               base-uri 'self';
+               form-action 'none'"
+    />
+
     <title>Mantissa · Plan Viewer</title>
-    <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body>
+    <a class="skip-link" href="#app">Skip to content</a>
     <div id="app"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

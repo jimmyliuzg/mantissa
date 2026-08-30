@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <!-- Solid brand background -->
+  <rect width="1200" height="630" fill="#14140f" />
+
+  <!-- Stylized MC fan chart in the upper right -->
+  <g transform="translate(900, 130)">
+    <path d="M 0 200 Q 60 100 120 130 T 240 80 T 360 30" stroke="#6e9be0" stroke-width="6" fill="none" opacity="0.6" />
+    <path d="M 0 200 Q 60 130 120 160 T 240 120 T 360 70" stroke="#6e9be0" stroke-width="6" fill="none" opacity="0.8" />
+    <path d="M 0 200 Q 60 160 120 190 T 240 170 T 360 130" stroke="#6e9be0" stroke-width="6" fill="none" />
+    <path d="M 0 200 Q 60 190 120 220 T 240 210 T 360 200" stroke="#9a9a92" stroke-width="3" fill="none" stroke-dasharray="6 4" />
+  </g>
+
+  <!-- Brand mark -->
+  <g transform="translate(80, 120)">
+    <rect width="80" height="80" rx="14" fill="#2e5cb8" />
+    <text
+      x="40"
+      y="60"
+      text-anchor="middle"
+      font-family="ui-monospace, 'SF Mono', monospace"
+      font-size="48"
+      font-weight="700"
+      fill="white"
+    >M</text>
+  </g>
+
+  <!-- Title -->
+  <text
+    x="80"
+    y="290"
+    font-family="ui-sans-serif, system-ui, -apple-system, sans-serif"
+    font-size="68"
+    font-weight="700"
+    fill="#ececea"
+  >Mantissa</text>
+  <text
+    x="80"
+    y="350"
+    font-family="ui-sans-serif, system-ui, -apple-system, sans-serif"
+    font-size="36"
+    font-weight="500"
+    fill="#9a9a92"
+  >Plan Viewer</text>
+
+  <!-- Tagline -->
+  <text
+    x="80"
+    y="500"
+    font-family="ui-sans-serif, system-ui, -apple-system, sans-serif"
+    font-size="28"
+    font-weight="400"
+    fill="#ececea"
+  >Interactive retirement-plan viewer. Runs entirely in your browser.</text>
+  <text
+    x="80"
+    y="545"
+    font-family="ui-sans-serif, system-ui, -apple-system, sans-serif"
+    font-size="22"
+    font-weight="400"
+    fill="#9a9a92"
+  >No data leaves your device. The engine runs locally via Pyodide.</text>
+</svg>

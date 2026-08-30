@@ -123,8 +123,8 @@ def main() -> int:
         print(f"==> header: {runtime_text!r}")
 
         # Now test the Download button.
-        with page.expect_download() as dl_info:
-            page.click(".btn")
+        with page.expect_download(timeout=10_000) as dl_info:
+            page.click("button:has-text('Download config')")
         dl = dl_info.value
         dl_path = REPO_ROOT / "web" / "m2-downloaded.json"
         dl.save_as(str(dl_path))
