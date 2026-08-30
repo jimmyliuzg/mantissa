@@ -3,7 +3,7 @@ name: Pages
 on:
   push:
     branches: [main]
-    paths: ["web/**", "src/**", "pyproject.toml", "package.json"]
+    paths: ["web/**", "src/**", "pyproject.toml", "package.json", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 # Pages deploy needs write access for the gh-pages branch / deployment.
