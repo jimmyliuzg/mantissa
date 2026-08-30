@@ -292,8 +292,38 @@ Default wizard profile (35, retire 65, $250k assets, $120k income, $60k spending
 
 Bundle: 52 KB JS + 8 KB CSS + 134 KB wheel.
 
-### Milestone 4 — Share + polish
-- Scope: URL-hash share link, lz-string compression, copy-to-clipboard, OG image for shared links, mobile pass, accessibility audit, CSP hardening.
+### Milestone 4 — Share + polish ✅ DONE (2026-08-30)
+
+What shipped in `web/`:
+
+- **URL-hash share codec** (`web/src/lib/share-codec.ts`): lz-string + URL-safe base64, with two prefixes (`c1-` for config-only, `s1-` for full RunResult snapshot). 11 round-trip unit tests.
+- **Share bar** (`web/src/components/share-bar.tsx`): "Copy link" (config only) and "Copy snapshot link" (config + frozen result) buttons on the viewer header. Toast confirms the copy with a byte count.
+- **URL-driven viewer** (`web/src/pages/viewer.tsx`): `readShareFromLocation()` picks up `?d=...` or `?s=...` from the URL hash on load. Config links re-run on the recipient's side. Snapshot links render instantly, no engine wait, with a banner that says "Showing a shared snapshot. Edit any field to re-run." Editing on a snapshot view clears the banner and triggers a re-run.
+- **CSP, OG, a11y, mobile polish**:
+  - `web/index.html`: Content-Security-Policy meta tag (jsdelivr + pypi.org for `micropip`, same-origin for everything else), Open Graph + Twitter card meta, theme-color, favicon, skip-link.
+  - `web/public/favicon.svg`, `web/public/og-image.svg`: self-hosted assets Vite copies verbatim to dist.
+  - `web/src/styles.css`: `:focus-visible` outlines for keyboard users, skip-link styles, mobile breakpoint (≤600px) that collapses the drawer, stacks wizard inputs, and bumps font-size to 16px to prevent iOS auto-zoom.
+  - Heading levels fixed: viewer-header is `h1`, drawer and panels use the right level below.
+  - Share buttons have aria-labels; copy-state toasts use `aria-live="polite"` and `role="alert"`.
+
+E2E test (`web/scripts/m4-test.py`):
+
+```
+==> config URL starts with: http://127.0.0.1:8767/#/review?d=c1-...
+==> snapshot URL starts with: http://127.0.0.1:8767/#/review?s=s1-...
+config link KPIs (after 25.4s): ['1.3%', '$343.7k', '$92.8k', '$1.36M', '$229.5k', '98.2%', '1,000']
+snapshot link KPIs (after 0.1s): ['1.3%', '$343.7k', '$92.8k', '$1.36M', '$229.5k', '98.2%', '1,000']
+==> editing a field on the snapshot view
+==> snapshot banner cleared, re-run in progress
+==> M4 OK
+```
+
+Deployed verification (https://jimmyliuzg.github.io/mantissa/):
+- config link: 3.0 KB URL, 29.5 s to load (engine re-runs)
+- snapshot link: 8.1 KB URL, **0.2 s to load**, banner shown, KPIs match
+- 150× speedup for the snapshot recipient. The "share the same set of 1000 Monte Carlo runs between two people" behavior is live: two people open the same snapshot link, they see the same numbers instantly, and edits on either side produce a fresh run from the same seed.
+
+Unit tests: 37/37 (was 26; +11 share-codec). Bundle: 62 KB JS + 10 KB CSS + 134 KB wheel (was 54 + 8). Delta is lz-string + share UI + a11y CSS.
 
 ### Milestone 5 (optional) — Compare two plans
 - Scope: drop second config, side-by-side KPIs, overlaid fan charts.
