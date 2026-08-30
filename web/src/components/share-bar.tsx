@@ -61,6 +61,16 @@ export function ShareBar({ store, result }: ShareBarProps) {
     }
     setSize({ kind, bytes: shareByteSize(hash) });
     const url = buildShareUrl(kind, hash);
+
+    // Feature-detect the clipboard API. On insecure contexts (http://),
+    // file://, or when the page lacks the clipboard-write permission,
+    // navigator.clipboard is undefined or writeText rejects. Fall back
+    // to a less intrusive message that auto-dismisses.
+    if (!navigator.clipboard?.writeText) {
+      setCopyState("error");
+      setTimeout(() => setCopyState("idle"), 2000);
+      return;
+    }
     try {
       await navigator.clipboard.writeText(url);
       setCopiedKind(kind);
@@ -68,6 +78,7 @@ export function ShareBar({ store, result }: ShareBarProps) {
       setTimeout(() => setCopyState("idle"), 2000);
     } catch {
       setCopyState("error");
+      setTimeout(() => setCopyState("idle"), 2000);
     }
   }
 

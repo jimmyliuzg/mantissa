@@ -36,7 +36,10 @@ export function App() {
   return (
     <div class="app">
       <TopBar />
-      <EngineStatus />
+      {/* Engine status banner only makes sense on the viewer, where
+          the Pyodide boot actually runs. Landing and wizard pages
+          don't need to show the engine loading state. */}
+      {route === "viewer" && <EngineStatus />}
       <main>
         {route === "landing" && <Landing onOpenViewer={() => navigate("#/review")} onOpenWizard={() => navigate("#/wizard")} />}
         {route === "viewer" && <Viewer />}
