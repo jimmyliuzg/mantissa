@@ -50,7 +50,7 @@ jobs:
       - name: Vite build
         working-directory: web
         env:
-          VITE_BASE: /mantissa-web/
+          VITE_BASE: /mantissa/
         run: npx vite build
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
