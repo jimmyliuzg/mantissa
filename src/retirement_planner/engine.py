@@ -655,8 +655,8 @@ class RetirementPlanner:
         from datetime import date
         
         primary_cfg = config["primary"]
-        spouse_cfg = config["spouse"]
-        for who, pcfg in (("primary", primary_cfg), ("spouse", spouse_cfg)):
+        spouse_cfg = config.get("spouse")
+        for who, pcfg in (("primary", primary_cfg), ("spouse", spouse_cfg or {})):
             if "social_security_benefit" in pcfg or "ss_claiming_age" in pcfg:
                 warnings.warn(
                     f"{who}.social_security_benefit / ss_claiming_age are "
@@ -669,13 +669,18 @@ class RetirementPlanner:
             retirement_date=date.fromisoformat(primary_cfg["retirement_date"]),
             longevity_age=primary_cfg.get("longevity_age", 90),
         )
-        
-        spouse = Person(
-            name=spouse_cfg["name"],
-            birth_date=date.fromisoformat(spouse_cfg["birth_date"]),
-            retirement_date=date.fromisoformat(spouse_cfg["retirement_date"]),
-            longevity_age=spouse_cfg.get("longevity_age", 90),
-        )
+
+        # Issue #3: spouse is optional. A null or missing spouse means
+        # a single-household plan. The projection horizon will be
+        # derived from the primary alone (see _projection_max_year).
+        spouse = None
+        if spouse_cfg:
+            spouse = Person(
+                name=spouse_cfg["name"],
+                birth_date=date.fromisoformat(spouse_cfg["birth_date"]),
+                retirement_date=date.fromisoformat(spouse_cfg["retirement_date"]),
+                longevity_age=spouse_cfg.get("longevity_age", 90),
+            )
         
         # Parse accounts
         accounts = []
@@ -1192,6 +1197,13 @@ class RetirementPlanner:
 
     def _account_owner_age(self, account: Account, year: int) -> int:
         owner = (account.owner or "primary").lower()
+        # Single-household (issue #3): there is no spouse, so any
+        # account with owner 'spouse' falls back to the primary. The
+        # legacy lookup-by-spouse-name still works because the
+        # `owner in {"spouse", spouse_name}` branch only matches when
+        # the spouse exists.
+        if self.scenario.spouse is None:
+            return year - self.scenario.primary.birth_date.year
         spouse_name = self.scenario.spouse.name.lower()
         person = self.scenario.spouse if owner in {"spouse", spouse_name} else self.scenario.primary
         return year - person.birth_date.year
@@ -1645,7 +1657,12 @@ class RetirementPlanner:
     def calculate_age_events(self, year: int) -> Dict[str, float]:
         """Return modified monthly amounts triggered by age events."""
         primary_age = year - self.scenario.primary.birth_date.year
-        spouse_age = year - self.scenario.spouse.birth_date.year
+        # Issue #3: single-household plans have no spouse; the
+        # younger-age trigger is the primary's age.
+        if self.scenario.spouse is None:
+            spouse_age = primary_age
+        else:
+            spouse_age = year - self.scenario.spouse.birth_date.year
         younger_age = min(primary_age, spouse_age)
 
         mods: Dict[str, float] = {}
@@ -2389,22 +2406,38 @@ class RetirementPlanner:
         # Run until the LAST death: the younger/longer-lived person sets
         # the horizon (estate tax is assessed when both are gone). In
         # stochastic mode the horizon is the single sampled death year.
+        # Issue #3: when spouse is None (single-household), the horizon
+        # is the primary's death year + 1 alone.
+        primary_death_year = (
+            self.scenario.primary.birth_date.year
+            + self.scenario.primary.longevity_age
+        )
+        spouse_death_year = (
+            self.scenario.spouse.birth_date.year
+            + self.scenario.spouse.longevity_age
+            if self.scenario.spouse is not None
+            else primary_death_year
+        )
         max_year = (
             self.scenario.primary.birth_date.year + stochastic_death_age + 1
             if stochastic and stochastic_death_age is not None
-            else max(
-                self.scenario.primary.birth_date.year
-                + self.scenario.primary.longevity_age,
-                self.scenario.spouse.birth_date.year
-                + self.scenario.spouse.longevity_age,
-            ) + 1
+            else max(primary_death_year, spouse_death_year) + 1
         )
 
         for year in range(self.start_year, max_year):
+            # Single-household: treat spouse as having the same birth year
+            # as the primary so the context (ages, survivor state) stays
+            # well-defined. The if-sentinel downstream keys off the
+            # presence of scenario.spouse, not these values.
+            spouse_birth_year = (
+                self.scenario.spouse.birth_date.year
+                if self.scenario.spouse is not None
+                else self.scenario.primary.birth_date.year
+            )
             context = make_year_context(
                 year, self.start_year,
                 self.scenario.primary.birth_date.year,
-                self.scenario.spouse.birth_date.year,
+                spouse_birth_year,
             )
             primary_age = context.primary_age
             spouse_age = context.spouse_age
@@ -2520,7 +2553,13 @@ class RetirementPlanner:
 
             # --- Step 2: Retirement status (used below) ---
             primary_retired = self._is_retired(year, self.scenario.primary)
-            spouse_retired = self._is_retired(year, self.scenario.spouse)
+            # Issue #3: spouse is optional. Single-household: there is
+            # no spouse, so the spouse is treated as already retired
+            # (no further spousal income, no SS spousal benefit).
+            if self.scenario.spouse is None:
+                spouse_retired = True
+            else:
+                spouse_retired = self._is_retired(year, self.scenario.spouse)
 
             # --- Step 3: Income ---
             income_data = self.calculate_annual_income(year, scenario_name)
@@ -2540,10 +2579,15 @@ class RetirementPlanner:
                 self.calculate_social_security(year, self.scenario.primary)
                 if primary_age >= self.scenario.social_security.primary_claiming_age
                 else 0.0)
-            ss_spouse_annual = (
-                self.calculate_social_security(year, self.scenario.spouse)
-                if spouse_age >= self.scenario.social_security.spouse_claiming_age
-                else 0.0)
+            # Issue #3: spouse is optional. Single-household plans
+            # have no spousal SS benefit to compute.
+            if self.scenario.spouse is None:
+                ss_spouse_annual = 0.0
+            else:
+                ss_spouse_annual = (
+                    self.calculate_social_security(year, self.scenario.spouse)
+                    if spouse_age >= self.scenario.social_security.spouse_claiming_age
+                    else 0.0)
             ss_income = compute_survivor_ss_benefit(
                 ss_primary_annual, ss_spouse_annual,
                 snap.primary_alive, snap.spouse_alive)
@@ -3087,18 +3131,28 @@ class RetirementPlanner:
 
         # Run until the LAST death: the younger/longer-lived person sets
         # the horizon (estate tax is assessed when both are gone).
-        max_year = max(
+        primary_death_year = (
             self.scenario.primary.birth_date.year
-            + self.scenario.primary.longevity_age,
+            + self.scenario.primary.longevity_age
+        )
+        spouse_death_year = (
             self.scenario.spouse.birth_date.year
-            + self.scenario.spouse.longevity_age,
-        ) + 1
+            + self.scenario.spouse.longevity_age
+            if self.scenario.spouse is not None
+            else primary_death_year
+        )
+        max_year = max(primary_death_year, spouse_death_year) + 1
 
         for year in range(self.start_year, max_year):
+            spouse_birth_year = (
+                self.scenario.spouse.birth_date.year
+                if self.scenario.spouse is not None
+                else self.scenario.primary.birth_date.year
+            )
             context = make_year_context(
                 year, self.start_year,
                 self.scenario.primary.birth_date.year,
-                self.scenario.spouse.birth_date.year,
+                spouse_birth_year,
             )
             primary_age = context.primary_age
             spouse_age = context.spouse_age
@@ -3135,9 +3189,13 @@ class RetirementPlanner:
             ss_primary_annual = (
                 self.calculate_social_security(year, self.scenario.primary)
                 if ss and primary_age >= ss.primary_claiming_age else 0.0)
-            ss_spouse_annual = (
-                self.calculate_social_security(year, self.scenario.spouse)
-                if ss and spouse_age >= ss.spouse_claiming_age else 0.0)
+            # Issue #3: spouse is optional. Single-household: no spousal SS.
+            if self.scenario.spouse is None:
+                ss_spouse_annual = 0.0
+            else:
+                ss_spouse_annual = (
+                    self.calculate_social_security(year, self.scenario.spouse)
+                    if ss and spouse_age >= ss.spouse_claiming_age else 0.0)
             ss_income = compute_survivor_ss_benefit(
                 ss_primary_annual, ss_spouse_annual,
                 snap.primary_alive, snap.spouse_alive)

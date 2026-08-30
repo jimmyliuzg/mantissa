@@ -104,6 +104,13 @@ def validate_config(config: dict, strict: bool = False) -> ValidationResult:
 
     for key in ("primary", "spouse"):
         person = config.get(key)
+        # `spouse` is optional (issue #3): a missing or null value
+        # means a single-household plan. `primary` is still required.
+        if key == "spouse" and person is None:
+            if "spouse" in config and config["spouse"] is not None:
+                pass  # fall through to the dict check below for {} etc.
+            else:
+                continue
         if not isinstance(person, dict):
             _issue(result, f"$.{key}", "required object", code="required")
             continue
