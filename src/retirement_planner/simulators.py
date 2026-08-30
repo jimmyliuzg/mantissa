@@ -143,6 +143,30 @@ class MonteCarloEngine:
         peak_nws = sorted([r["peak_net_worth"] for r in results])
         taxes = sorted([r["lifetime_taxes"] for r in results])
 
+        # Per-year net-worth percentiles. Each run emits a Dict[age, nw]
+        # in `net_worth_by_year`; we aggregate across runs so the chart
+        # can draw a fan band that widens/narrows as the projection
+        # gets more uncertain. Keyed by primary_age.
+        yearly_percentiles: Dict[int, Dict[str, float]] = {}
+        if results and results[0].get("net_worth_by_year"):
+            ages = sorted({a for r in results
+                          for a in r.get("net_worth_by_year", {})})
+            for age in ages:
+                vals = [r["net_worth_by_year"][age]
+                        for r in results
+                        if age in r.get("net_worth_by_year", {})]
+                if not vals:
+                    continue
+                vals.sort()
+                n = len(vals)
+                yearly_percentiles[age] = {
+                    "p10": vals[int(n * 0.10)],
+                    "p25": vals[int(n * 0.25)],
+                    "p50": vals[int(n * 0.50)],
+                    "p75": vals[int(n * 0.75)],
+                    "p90": vals[int(n * 0.90)],
+                }
+
         # --- Stochastic mortality distribution (U3) ---
         # Aggregate the per-run death ages and financial outcomes into an
         # age-indexed view: at each age, what fraction of runs are dead,
@@ -197,6 +221,7 @@ class MonteCarloEngine:
             "median_taxes": taxes[num_simulations // 2],
             "out_of_savings_rate": sum(1 for r in results if r["out_of_savings_year"]) / num_simulations,
             "mortality_distribution": mortality_distribution,
+            "yearly_percentiles": yearly_percentiles,
         }
 
     @staticmethod

@@ -8,4 +8,4 @@ import { pyodideEngine } from "./pyodide";
 import type { Engine } from "./types";
 
 export const engine: Engine = pyodideEngine;
-export type { Engine, Kpis, CashFlowRow, McResult, RunOptions, RunResult, Warning } from "./types";
+export type { Engine, Kpis, CashFlowRow, McResult, McPercentilePoint, RunOptions, RunResult, Warning } from "./types";

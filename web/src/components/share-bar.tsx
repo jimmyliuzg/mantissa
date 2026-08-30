@@ -82,11 +82,17 @@ export function ShareBar({ store, result }: ShareBarProps) {
     }
   }
 
+  // The checkbox picks which share button is the primary one
+  // (visually highlighted). When 'snapshot' is selected and we have
+  // a result, that button is primary; otherwise the config button is.
+  const primary: "config" | "snapshot" = includeSnapshot ? "snapshot" : "config";
+  const hasResult = result !== null;
+
   return (
     <div class="share-bar" role="group" aria-label="Share this plan">
       <button
         type="button"
-        class="btn"
+        class={`btn ${primary === "config" ? "btn--primary" : ""}`.trim()}
         onClick={() => void copy("config")}
         title="Share the config. Recipient's browser re-runs the engine (~20s for 1k sims)."
         aria-label="Copy config share link"
@@ -95,9 +101,9 @@ export function ShareBar({ store, result }: ShareBarProps) {
       </button>
       <button
         type="button"
-        class="btn"
+        class={`btn ${primary === "snapshot" ? "btn--primary" : ""}`.trim()}
         onClick={() => void copy("snapshot")}
-        disabled={!result}
+        disabled={!hasResult}
         title="Share the config plus the frozen result. Recipient renders instantly without a re-run."
         aria-label="Copy snapshot share link (includes frozen Monte Carlo result)"
       >
@@ -108,9 +114,9 @@ export function ShareBar({ store, result }: ShareBarProps) {
           type="checkbox"
           checked={includeSnapshot}
           onChange={(e) => setIncludeSnapshot((e.currentTarget as HTMLInputElement).checked)}
-          aria-label="Use snapshot by default"
+          aria-label="Default share to snapshot link (recipient sees the same numbers instantly without a re-run)"
         />
-        <span>Default to snapshot</span>
+        <span>Snapshot by default</span>
       </label>
 
       {copyState === "copied" && size && (

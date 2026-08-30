@@ -94,10 +94,18 @@ class TestStochasticPath:
         planner = _build()
         mc = MonteCarloEngine(planner)
         res = mc.run(num_simulations=50, seed=7, stochastic=False)
+        # Stochastic-specific outputs are None in deterministic mode.
         assert res.get("mortality_distribution") is None
         single = planner.run_single_simulation(stochastic=False)
+        # Stochastic-specific fields are None in deterministic mode.
         assert single["death_age"] is None
-        assert single["net_worth_by_year"] == {}
+        # net_worth_by_year is populated for every run (deterministic and
+        # stochastic) so the fan chart and stochastic mortality paths both
+        # have the data they need. Previously this dict was empty in
+        # non-stochastic mode, which left the fan chart with only a single
+        # final-year vertical line.
+        assert isinstance(single["net_worth_by_year"], dict)
+        assert len(single["net_worth_by_year"]) > 0
 
     def test_stochastic_run_samples_death_years(self):
         planner = _build()

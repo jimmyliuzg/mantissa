@@ -2925,8 +2925,11 @@ class RetirementPlanner:
             total_liabs += sum(
                 b for b in mortgage_balances.values() if b > 0)
             net_worth = total_assets - total_liabs
-            if stochastic:
-                net_worth_by_year[primary_age] = net_worth
+            # Track per-age net worth for every run, not just stochastic.
+            # The Monte Carlo simulator aggregates this into per-year
+            # percentile bands for the fan chart, and the stochastic
+            # mortality path also uses it for the age-indexed distribution.
+            net_worth_by_year[primary_age] = net_worth
 
             # --- Estate tax (second death only, R8) ---
             # Assessed once at the second configured death year. The

@@ -40,9 +40,26 @@ export interface CashFlowRow {
   netCashFlow: number;
 }
 
+export interface McPercentilePoint {
+  /** Primary's age in the projection, the natural x-axis. */
+  age: number;
+  p10: number;
+  p25: number;
+  p50: number;
+  p75: number;
+  p90: number;
+}
+
 export interface McResult {
+  /** Final-year percentiles (what the KPI row shows). */
   percentiles: { percentile: number; value: number }[];
   method: McMethod;
+  /**
+   * Per-age net-worth percentiles across all runs. Drives the
+   * fan-band chart. Keyed by primary_age. Empty if the engine
+   * didn't return any.
+   */
+  yearlyPercentiles: McPercentilePoint[];
 }
 
 export interface Warning {

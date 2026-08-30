@@ -6,98 +6,175 @@ interface CashFlowChartProps {
 }
 
 const W = 880;
-const H = 280;
+const H = 320;
 const M = { top: 16, right: 16, bottom: 28, left: 56 };
+const TOP_H = 140;  // height of the cash-flow bars area
+const GAP = 24;     // gap between the two charts
 
 /**
- * Stacked area: income (top), taxes (middle), expenses (bottom), with a
- * net-worth line overlay. Hand-rolled SVG so we ship zero chart deps.
+ * Cash flow + net worth, two charts in one SVG.
+ *
+ * The top chart shows annual income, expenses, and taxes as a small
+ * grouped-bar visualization. The bottom chart shows the deterministic
+ * net-worth line on its own y-axis so the line is readable across
+ * the whole horizon.
+ *
+ * Both share the x-axis (year) so the visual relationship between
+ * cash flow and net worth is obvious.
  */
 export function CashFlowChart({ rows }: CashFlowChartProps) {
   if (rows.length === 0) return <p class="muted">no rows</p>;
 
   const innerW = W - M.left - M.right;
-  const innerH = H - M.top - M.bottom;
 
-  const xAt = (i: number) => M.left + (i / Math.max(1, rows.length - 1)) * innerW;
+  // --- X axis (shared) ---
+  const xAt = (i: number) =>
+    M.left + (i / Math.max(1, rows.length - 1)) * innerW;
 
-  // Stack bottom→top: expenses, taxes, income. Net worth is a separate line.
-  const maxStack = Math.max(
-    ...rows.map((r) => r.income + r.taxes + r.expenses),
+  // --- Top chart: cash flow bars (income, expenses, taxes) ---
+  const cfMax = Math.max(
+    ...rows.map((r) => Math.max(r.income, r.expenses + r.taxes, r.taxes)),
     1,
   );
-  const maxNW = Math.max(...rows.map((r) => r.netWorth), 1);
+  const cfMin = 0;
+  const cfPad = cfMax * 0.05;
+  const cfLo = cfMin - cfPad * 0.2;
+  const cfHi = cfMax + cfPad;
+  const cfY = (v: number) =>
+    M.top + TOP_H - ((v - cfLo) / (cfHi - cfLo)) * TOP_H;
 
-  const yExp = (v: number) => M.top + innerH - (v / maxStack) * innerH;
-  const yTax = (v: number) => yExp(v) - (v / maxStack) * innerH; // stacked above expenses
-  const yInc = (v: number) => yTax(v) - (v / maxStack) * innerH;
-  const yNW = (v: number) => M.top + innerH - (v / maxNW) * innerH;
+  // Grouped bar widths: thin bars with a small gap.
+  const groupW = innerW / Math.max(1, rows.length);
+  const barW = Math.max(1, Math.min(groupW * 0.28, 16));
+  const barGap = barW * 0.2;
 
-  const pathFor = (vals: number[], yFn: (v: number) => number) => {
-    if (vals.length === 0) return "";
-    let d = `M ${xAt(0)} ${yFn(vals[0]!)}`;
-    for (let i = 1; i < vals.length; i++) d += ` L ${xAt(i)} ${yFn(vals[i]!)}`;
-    return d;
-  };
-  const areaFor = (vals: number[], yFn: (v: number) => number, baseline: number) => {
-    if (vals.length === 0) return "";
-    let d = `M ${xAt(0)} ${baseline}`;
-    for (let i = 0; i < vals.length; i++) d += ` L ${xAt(i)} ${yFn(vals[i]!)}`;
-    for (let i = vals.length - 1; i >= 0; i--) d += ` L ${xAt(i)} ${baseline}`;
-    return `${d} Z`;
-  };
+  // --- Bottom chart: net worth line ---
+  const nwTop = M.top + TOP_H + GAP;
+  const nwH = H - nwTop - M.bottom;
+  const nwMin = Math.min(...rows.map((r) => r.netWorth), 0);
+  const nwMax = Math.max(...rows.map((r) => r.netWorth), 1);
+  const nwPad = (nwMax - nwMin) * 0.05;
+  const nwLo = nwMin - nwPad * 0.2;
+  const nwHi = nwMax + nwPad;
+  const nwY = (v: number) =>
+    nwTop + nwH - ((v - nwLo) / (nwHi - nwLo)) * nwH;
 
-  const baseY = M.top + innerH;
-  const expensesArea = areaFor(rows.map((r) => r.expenses), yExp, baseY);
-  const taxesArea = areaFor(rows.map((r) => r.taxes), yTax, yExp(rows[0]?.expenses ?? 0));
-  const incomeArea = areaFor(
-    rows.map((r) => r.income),
-    yInc,
-    yTax(rows[0]?.taxes ?? 0),
-  );
-  const nwPath = pathFor(rows.map((r) => r.netWorth), yNW);
+  // Net worth line path.
+  let nwPath = `M ${xAt(0)} ${nwY(rows[0]!.netWorth)}`;
+  for (let i = 1; i < rows.length; i++) {
+    nwPath += ` L ${xAt(i)} ${nwY(rows[i]!.netWorth)}`;
+  }
 
-  // Y-axis ticks: 0, mid, max
-  const yTicks = [0, maxStack / 2, maxStack];
+  // X axis ticks: first, middle, last.
+  const xTickIdxs = [
+    0,
+    Math.floor(rows.length / 2),
+    rows.length - 1,
+  ];
+  const cfTicks = [cfLo, (cfLo + cfHi) / 2, cfHi];
+  const nwTicks = [nwLo, (nwLo + nwHi) / 2, nwHi];
 
   return (
-    <svg
-      viewBox={`0 0 ${W} ${H}`}
-      role="img"
-      aria-label="Cash flow over time"
-      class="chart"
-    >
-      <g class="grid">
-        {yTicks.map((v) => (
+    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Cash flow and net worth" class="chart">
+      {/* Top chart: cash flow */}
+      <g>
+        {/* Background grid */}
+        {cfTicks.map((v) => (
           <line
             x1={M.left}
             x2={W - M.right}
-            y1={yExp(0) - (v / maxStack) * innerH}
-            y2={yExp(0) - (v / maxStack) * innerH}
+            y1={cfY(v)}
+            y2={cfY(v)}
             stroke="currentColor"
-            stroke-opacity="0.1"
+            stroke-opacity="0.08"
           />
         ))}
-      </g>
-      <path d={expensesArea} class="series series--expenses" />
-      <path d={taxesArea} class="series series--taxes" />
-      <path d={incomeArea} class="series series--income" />
-      <path d={nwPath} class="series series--networth" fill="none" />
-
-      <g class="axis axis--y">
-        {yTicks.map((v) => (
+        {/* Bars: income, expenses, taxes (per year) */}
+        {rows.map((r, i) => {
+          const x = xAt(i) - barW - barGap / 2;
+          const yIn = cfY(r.income);
+          const yEx = cfY(r.expenses);
+          const yTx = cfY(r.taxes);
+          return (
+            <g key={r.year}>
+              <rect
+                x={x}
+                y={yIn}
+                width={barW}
+                height={M.top + TOP_H - yIn}
+                class="series series--income-bar"
+              />
+              <rect
+                x={x + barW + barGap}
+                y={yEx}
+                width={barW}
+                height={M.top + TOP_H - yEx}
+                class="series series--expenses-bar"
+              />
+              <rect
+                x={x + 2 * (barW + barGap)}
+                y={yTx}
+                width={barW}
+                height={M.top + TOP_H - yTx}
+                class="series series--taxes-bar"
+              />
+            </g>
+          );
+        })}
+        {/* Top y-axis labels */}
+        {cfTicks.map((v) => (
           <text
             x={M.left - 6}
-            y={yExp(0) - (v / maxStack) * innerH + 3}
+            y={cfY(v) + 3}
             text-anchor="end"
             font-size="10"
+            class="muted"
           >
             {fmtMoney(v)}
           </text>
         ))}
+        {/* Top label */}
+        <text x={M.left} y={M.top - 4} font-size="10" class="muted">
+          Cash flow (income · expenses · taxes, $ / yr)
+        </text>
       </g>
+
+      {/* Bottom chart: net worth line */}
+      <g>
+        {/* Background grid */}
+        {nwTicks.map((v) => (
+          <line
+            x1={M.left}
+            x2={W - M.right}
+            y1={nwY(v)}
+            y2={nwY(v)}
+            stroke="currentColor"
+            stroke-opacity="0.08"
+          />
+        ))}
+        {/* Net worth line */}
+        <path d={nwPath} class="series series--networth" fill="none" />
+        {/* Bottom y-axis labels */}
+        {nwTicks.map((v) => (
+          <text
+            x={M.left - 6}
+            y={nwY(v) + 3}
+            text-anchor="end"
+            font-size="10"
+            class="muted"
+          >
+            {fmtMoney(v)}
+          </text>
+        ))}
+        {/* Bottom label */}
+        <text x={M.left} y={nwTop - 4} font-size="10" class="muted">
+          Net worth
+        </text>
+      </g>
+
+      {/* Shared x-axis labels (years) */}
       <g class="axis axis--x">
-        {[0, Math.floor(rows.length / 2), rows.length - 1].map((i) => {
+        {xTickIdxs.map((i) => {
           const row = rows[i];
           if (!row) return null;
           return (
@@ -107,30 +184,6 @@ export function CashFlowChart({ rows }: CashFlowChartProps) {
           );
         })}
       </g>
-
-      <g class="legend" transform={`translate(${M.left},${M.top - 4})`}>
-        <Legend label="Income" cls="income" />
-        <Legend label="Taxes" cls="taxes" />
-        <Legend label="Expenses" cls="expenses" />
-        <Legend label="Net worth" cls="networth" />
-      </g>
     </svg>
-  );
-}
-
-function Legend({ label, cls }: { label: string; cls: string }) {
-  return (
-    <g transform="translate(0,0)">
-      <rect class={`legend-swatch legend-swatch--${cls}`} x="0" y="-8" width="10" height="10" />
-      <text x="14" y="1" font-size="10">
-        {label}
-      </text>
-      <g transform="translate(70,0)">
-        <rect class={`legend-swatch legend-swatch--${cls}`} x="0" y="-8" width="10" height="10" />
-        <text x="14" y="1" font-size="10">
-          {label} 2
-        </text>
-      </g>
-    </g>
   );
 }
