@@ -220,6 +220,22 @@ Mantissa includes components for:
 
 - Taxable, pretax, and Roth withdrawals
 - Required minimum distributions
+
+`withdrawal_strategy` controls how the engine sizes annual withdrawals
+once you're retired. The `withdrawal_rate` field is consulted only by
+two strategies:
+
+- `percent_of_portfolio` — withdraw `withdrawal_rate` × portfolio value
+  each year, floored at essential expenses.
+- `floor_ceiling` — anchor the floor/ceiling bands around
+  `withdrawal_rate` of the planned portfolio.
+
+Other strategies (`fixed`, `guardrails`, `dynamic`) ignore
+`withdrawal_rate` and pick a different size each year. Setting it
+under those strategies triggers a `mantissa validate` warning so
+the value doesn't silently no-op. If you want a constant real-dollar
+withdrawal, use `withdrawal_strategy: "fixed"` and skip
+`withdrawal_rate`; the engine will use base-spending as the anchor.
 - Roth conversion schedules and bracket-filling logic
 - Capital-gain harvesting and tax-lot selection
 - QCD and charitable-giving concepts

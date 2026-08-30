@@ -189,6 +189,7 @@ function Ready({ result }: { result: RunResult }) {
           percentiles={result.mc.percentiles}
           cashFlow={result.cashFlow}
           medianFinal={result.kpis.medianFinalNetWorth}
+          yearlyPercentiles={result.mc.yearlyPercentiles}
         />
       </section>
       <details>

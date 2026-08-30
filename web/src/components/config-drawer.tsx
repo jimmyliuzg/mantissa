@@ -69,12 +69,18 @@ export function ConfigDrawer({ store }: ConfigDrawerProps) {
         ))}
       </fieldset>
 
-      <fieldset>
-        <legend>Spouse</legend>
-        {FIELDS.filter((f) => f.path.startsWith("spouse.")).map((f) => (
-          <Field key={f.path} field={f} value={getPath(config, f.path)} onChange={(v) => store.setConfigField(f.path, v)} />
-        ))}
-      </fieldset>
+      {/* Spouse is optional in the engine (issue #3). When the config
+          has no spouse (spouse === null or absent), the entire
+          fieldset is hidden so the user doesn't see empty mm/dd/yyyy
+          inputs that have no meaning for their plan. */}
+      {getPath(config, "spouse") != null && (
+        <fieldset>
+          <legend>Spouse</legend>
+          {FIELDS.filter((f) => f.path.startsWith("spouse.")).map((f) => (
+            <Field key={f.path} field={f} value={getPath(config, f.path)} onChange={(v) => store.setConfigField(f.path, v)} />
+          ))}
+        </fieldset>
+      )}
 
       <fieldset>
         <legend>Economics</legend>

@@ -139,13 +139,12 @@ export function buildSlimConfig(answers: WizardAnswers): unknown {
       retirement_date: retirementDate(answers.primaryRetirementAge, answers.primaryAge),
       longevity_age: answers.primaryLongevity,
     },
-    // Spouse is REQUIRED by the engine parser. When single, we
-    // synthesize a stub with the same birth year + longevity as the
-    // primary, so the engine's projection horizon (max of both
-    // spouses' death years) is dominated by the primary. A stub
-    // born in 2100 with longevity 120 would otherwise project to
-    // year 2220 — 194 years of brokerage compounding produces
-    // $700M+ medians for any working professional.
+    // Spouse is optional in the engine (issue #3). When the user
+    // is single, emit null so the engine projects to the primary's
+    // death year + 1 and treats the household as single from the
+    // start (no spousal SS, no survivor transition). ACA family size
+    // is computed dynamically from the snapshot; family_size in the
+    // config is now a warning if present, so we omit it.
     spouse: answers.hasSpouse
       ? {
           name: "Spouse",
@@ -156,12 +155,7 @@ export function buildSlimConfig(answers: WizardAnswers): unknown {
           ),
           longevity_age: answers.spouseLongevity ?? answers.primaryLongevity,
         }
-      : {
-          name: "(none)",
-          birth_date: birthDate(answers.primaryAge),
-          retirement_date: retirementDate(answers.primaryRetirementAge, answers.primaryAge),
-          longevity_age: answers.primaryLongevity,
-        },
+      : null,
     economic: {
       inflation: 0.025,
       medical_inflation: 0.04,

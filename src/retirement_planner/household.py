@@ -386,7 +386,7 @@ def stochastic_alive_snapshot(
 def survivor_snapshot(
     year: int,
     primary,
-    spouse,
+    spouse=None,
     dependents=None,
 ) -> SurvivorSnapshot:
     """Build the longevity-derived survivor snapshot for *year*.
@@ -396,11 +396,25 @@ def survivor_snapshot(
     existing tax rules via ``determine_filing_status`` (R3): MFJ in the death
     year, then QSS for two years when dependents qualify, then HOH when
     dependents remain or Single otherwise.
+
+    Issue #3: ``spouse`` may be None for single-household configs. In that
+    case there is no second death and no estate event; filing status is
+    Single from the start.
     """
     primary_death = configured_death_year(primary)
-    spouse_death = configured_death_year(spouse)
+    if spouse is not None:
+        spouse_death = configured_death_year(spouse)
+    else:
+        # Single-household: no second death, but mirror the primary's
+        # death year so the helper math (max, equality) stays defined.
+        spouse_death = primary_death
     primary_alive = year <= primary_death
-    spouse_alive = year <= spouse_death
+    # Issue #3: single-household means there is no spouse alive flag —
+    # there is simply no second person. We report `spouse_alive = True`
+    # so the survivor_expense_ratio (which triggers on survivor
+    # transitions) does not apply, and filing status is Single from
+    # the start rather than transitioning to Single on a death.
+    spouse_alive = spouse is None or year <= spouse_death
 
     equal_deaths = primary_death == spouse_death
     first_death_year = (
@@ -408,16 +422,17 @@ def survivor_snapshot(
     second_death_year = max(primary_death, spouse_death)
 
     is_primary_death_year = year == primary_death
-    is_spouse_death_year = year == spouse_death
-    is_first_death_year = (year == first_death_year) and not equal_deaths
-    is_second_death_year = (year == second_death_year)
+    is_spouse_death_year = spouse is not None and year == spouse_death
+    is_first_death_year = (
+        (year == first_death_year) and not equal_deaths and spouse is not None)
+    is_second_death_year = (year == second_death_year) and spouse is not None
     estate_event = is_second_death_year
 
     if primary_alive and spouse_alive:
         survivor: Optional[str] = None
-    elif primary_alive:
+    elif primary_alive and not spouse_alive:
         survivor = "primary"
-    elif spouse_alive:
+    elif spouse_alive and not primary_alive:
         survivor = "spouse"
     else:
         survivor = None
@@ -438,14 +453,14 @@ def survivor_snapshot(
     # pre-Medicare gate are honored.
     aca_family_size = (
         sum(1 for person, alive in ((primary, primary_alive),
-                                    (spouse, spouse_alive))
+                                    (spouse, spouse_alive) if spouse is not None else (None, False))
             if alive
             and (year - person.birth_date.year) < 65
             and person.coverage_at_age(year - person.birth_date.year) == "aca")
         + active_dependent_count(year, dependents))
     medicare_adult_count = sum(
         1 for person, alive in ((primary, primary_alive),
-                                (spouse, spouse_alive))
+                                (spouse, spouse_alive) if spouse is not None else (None, False))
         if alive
         and (year - person.birth_date.year) >= 65
         and person.coverage_at_age(year - person.birth_date.year) == "medicare")

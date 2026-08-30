@@ -104,6 +104,13 @@ def validate_config(config: dict, strict: bool = False) -> ValidationResult:
 
     for key in ("primary", "spouse"):
         person = config.get(key)
+        # `spouse` is optional (issue #3): a missing or null value
+        # means a single-household plan. `primary` is still required.
+        if key == "spouse" and person is None:
+            if "spouse" in config and config["spouse"] is not None:
+                pass  # fall through to the dict check below for {} etc.
+            else:
+                continue
         if not isinstance(person, dict):
             _issue(result, f"$.{key}", "required object", code="required")
             continue
@@ -219,6 +226,27 @@ def validate_config(config: dict, strict: bool = False) -> ValidationResult:
         _number(result, config["stress_level"], "$.stress_level", 0, 1)
     if "survivor_expense_ratio" in config:
         _number(result, config["survivor_expense_ratio"], "$.survivor_expense_ratio", 0, 1)
+
+    # Issue #1: `withdrawal_rate` is consulted only by the
+    # `percent_of_portfolio` and `floor_ceiling` strategies. When set
+    # under any other strategy (including the default `fixed`), the
+    # value has no effect. Surface this as a warning so users don't
+    # silently edit a value that doesn't do anything.
+    if "withdrawal_rate" in config:
+        strategy = config.get("withdrawal_strategy", "fixed")
+        if strategy not in ("percent_of_portfolio", "floor_ceiling"):
+            _issue(
+                result,
+                "$.withdrawal_rate",
+                (
+                    f"withdrawal_rate is set but withdrawal_strategy is "
+                    f"'{strategy}'; this field is only consulted under "
+                    f"'percent_of_portfolio' or 'floor_ceiling'."
+                ),
+                severity="warning",
+                code="unused_field",
+            )
+
     return result
 
 

@@ -146,6 +146,17 @@ result = {
     "mc": {
         "percentiles": [_norm_pctile(mc, p) for p in (10, 25, 50, 75, 90)],
         "method": mc.get("method", "gaussian"),
+        # Per-age net-worth percentiles across all runs. The engine
+        # returns a dict keyed by primary_age with p10/p25/p50/p75/p90
+        # values; we re-shape to a sorted array for the fan chart.
+        "yearlyPercentiles": [
+            {"age": int(age), "p10": pct["p10"], "p25": pct["p25"],
+             "p50": pct["p50"], "p75": pct["p75"], "p90": pct["p90"]}
+            for age, pct in sorted(
+                (mc.get("yearly_percentiles") or {}).items(),
+                key=lambda kv: int(kv[0])
+            )
+        ],
     },
     "warnings": [],  # engine does not surface structured warnings; fill later
 }

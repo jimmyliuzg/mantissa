@@ -70,7 +70,7 @@ footer { display: flex; justify-content: space-between; align-items: center; pad
 .landing h1 { margin: 24px 0 8px; font-size: 28px; }
 .landing .lede { color: var(--fg-muted); max-width: 60ch; }
 
-.tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 24px; }
+.tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 24px; }
 .tile { display: flex; flex-direction: column; gap: 4px; padding: 20px; background: var(--bg-elev); border: 1px solid var(--border); border-radius: 8px; text-align: left; font: inherit; color: inherit; cursor: pointer; }
 .tile[disabled] { opacity: 0.5; cursor: not-allowed; }
 .tile-title { font-weight: 600; }
@@ -189,9 +189,15 @@ button:focus-visible, a:focus-visible, [role="button"]:focus-visible { outline-o
 .series--taxes { fill: var(--series-taxes); fill-opacity: 0.5; stroke: var(--series-taxes); stroke-width: 1; }
 .series--expenses { fill: var(--series-expenses); fill-opacity: 0.5; stroke: var(--series-expenses); stroke-width: 1; }
 .series--networth { stroke: var(--series-networth); stroke-width: 1.5; }
+.series--income-bar { fill: var(--series-income); fill-opacity: 0.85; }
+.series--expenses-bar { fill: var(--series-expenses); fill-opacity: 0.85; }
+.series--taxes-bar { fill: var(--series-taxes); fill-opacity: 0.85; }
 .series--fan { stroke: var(--series-fan-edge); stroke-width: 6; }
 .series--fan-edge { stroke: var(--series-fan-edge); stroke-width: 1.5; }
 .series--fan-median { fill: var(--series-fan-median); }
+.series--fan-outer { fill: var(--series-fan); fill-opacity: 0.18; stroke: none; }
+.series--fan-inner { fill: var(--series-fan); fill-opacity: 0.35; stroke: none; }
+.series--fan-median { fill: none; stroke: var(--series-fan-median); stroke-width: 1.5; stroke-dasharray: 4 3; }
 
 .legend-swatch--income { fill: var(--series-income); fill-opacity: 0.5; }
 .legend-swatch--taxes { fill: var(--series-taxes); fill-opacity: 0.5; }
