@@ -12,22 +12,16 @@ describe("buildSlimConfig", () => {
     expect(Array.isArray(cfg.expenses)).toBe(true);
   });
 
-  it("synthesizes a same-year stub spouse when hasSpouse=false", () => {
-    // The stub must share the primary's birth year and longevity so the
-    // engine's projection horizon is not extended 100+ years into the
-    // future (otherwise the brokerage account compounds forever).
+  it("emits null spouse when hasSpouse=false (engine accepts null since issue #3)", () => {
+    // The engine now treats null spouse as a single-household plan.
+    // The slim builder no longer needs to fabricate a stub spouse.
     const cfg = buildSlimConfig({
       ...DEFAULT_ANSWERS,
       hasSpouse: false,
       primaryAge: 35,
       primaryLongevity: 92,
-    }) as {
-      spouse: { name: string; birth_date: string; longevity_age: number };
-      primary: { birth_date: string; longevity_age: number };
-    };
-    expect(cfg.spouse.name).toBe("(none)");
-    expect(cfg.spouse.birth_date).toBe(cfg.primary.birth_date);
-    expect(cfg.spouse.longevity_age).toBe(cfg.primary.longevity_age);
+    }) as { spouse: unknown };
+    expect(cfg.spouse).toBeNull();
   });
 
   it("emits a real spouse object when hasSpouse=true", () => {
@@ -152,8 +146,12 @@ describe("buildSlimConfig", () => {
     );
   });
 
-  it("emits an ISO date for every date field", () => {
-    const cfg = buildSlimConfig(DEFAULT_ANSWERS) as {
+  it("emits an ISO date for every date field (default config has a spouse)", () => {
+    // DEFAULT_ANSWERS.hasSpouse is false, so the slim config emits
+    // spouse: null. The engine accepts null. We test the ISO-date
+    // invariant on a config where hasSpouse=true so all date fields
+    // are present.
+    const cfg = buildSlimConfig({ ...DEFAULT_ANSWERS, hasSpouse: true }) as {
       primary: { birth_date: string; retirement_date: string };
       spouse: { birth_date: string; retirement_date: string };
       income_streams: Array<{ start_date: string; end_date: string }>;
