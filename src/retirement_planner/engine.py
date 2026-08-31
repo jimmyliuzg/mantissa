@@ -1280,7 +1280,9 @@ class RetirementPlanner:
             # start).  Trigger age is relative to the younger person.
             younger_birth = max(
                 self.scenario.primary.birth_date.year,
-                self.scenario.spouse.birth_date.year,
+                self.scenario.spouse.birth_date.year
+                if self.scenario.spouse is not None
+                else self.scenario.primary.birth_date.year,
             )
             latest_trigger = 0
             for ev in self.scenario.age_events:
@@ -2454,8 +2456,13 @@ class RetirementPlanner:
                 # MFJ (both alive) until the single sampled death year, then
                 # the run ends. No survivor transitions, rollover, or estate.
                 snap = stochastic_alive_snapshot(
-                    year, self.scenario.dependents, primary_age, spouse_age)
-                filing_status = FilingStatus.MFJ
+                    year,
+                    self.scenario.dependents,
+                    primary_age,
+                    spouse_age,
+                    spouse_present=self.scenario.spouse is not None,
+                )
+                filing_status = normalize_filing_status(snap.filing_status)
             else:
                 snap = survivor_snapshot(
                     year, self.scenario.primary, self.scenario.spouse,
@@ -2478,8 +2485,13 @@ class RetirementPlanner:
             if stochastic:
                 if primary_age > stochastic_death_age:
                     break
-            elif (primary_age > self.scenario.primary.longevity_age
-                    and spouse_age > self.scenario.spouse.longevity_age):
+            elif (
+                primary_age > self.scenario.primary.longevity_age
+                and (
+                    self.scenario.spouse is None
+                    or spouse_age > self.scenario.spouse.longevity_age
+                )
+            ):
                 break
 
             # --- Step 1: Investment returns (with optional volatility) ---
@@ -3171,8 +3183,13 @@ class RetirementPlanner:
             )
             filing_status = normalize_filing_status(snap.filing_status)
 
-            if (primary_age > self.scenario.primary.longevity_age
-                    and spouse_age > self.scenario.spouse.longevity_age):
+            if (
+                primary_age > self.scenario.primary.longevity_age
+                and (
+                    self.scenario.spouse is None
+                    or spouse_age > self.scenario.spouse.longevity_age
+                )
+            ):
                 break
 
             # Grow balances at deterministic (volatility-free) rates

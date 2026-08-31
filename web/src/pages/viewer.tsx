@@ -1,19 +1,21 @@
+import type { RunResult } from "@engine";
 import { useEffect, useMemo, useState } from "preact/hooks";
-import { type RunResult } from "@engine";
-import { ConfigDrawer } from "../components/config-drawer";
-import { KpiRow } from "../components/kpi-row";
 import { CashFlowChart } from "../components/cash-flow-chart";
+import { ConfigDrawer } from "../components/config-drawer";
+import { EngineStatus } from "../components/engine-status";
+import { KpiRow } from "../components/kpi-row";
 import { MonteCarloFan } from "../components/monte-carlo-fan";
+import { PlanReview } from "../components/plan-review";
 import { ShareBar } from "../components/share-bar";
 import { fmtMoney, fmtPct } from "../lib/format";
-import { useDebouncedEffect } from "../lib/use-debounced-effect";
 import {
+  type ShareableSnapshot,
   decodeConfig,
   decodeSnapshot,
   readShareFromLocation,
-  type ShareableSnapshot,
 } from "../lib/share-codec";
-import { createPlanStore, type EngineState } from "../state/plan-store";
+import { useDebouncedEffect } from "../lib/use-debounced-effect";
+import { type EngineState, createPlanStore } from "../state/plan-store";
 
 /**
  * M4 viewer: editable, shareable. Loads the config from one of three
@@ -27,6 +29,7 @@ import { createPlanStore, type EngineState } from "../state/plan-store";
  */
 export function Viewer() {
   const initial = useMemo(() => loadInitial(), []);
+  const [showReview, setShowReview] = useState(() => initial?.kind === "config");
 
   if (!initial) {
     return (
@@ -36,6 +39,12 @@ export function Viewer() {
           <a href="#/">← back to upload</a>
         </p>
       </section>
+    );
+  }
+
+  if (showReview && initial.kind === "config") {
+    return (
+      <PlanReview config={initial.config} sims={initial.sims} onRun={() => setShowReview(false)} />
     );
   }
 
@@ -128,6 +137,7 @@ function ViewerBody({ initial }: { initial: InitialState }) {
 
   return (
     <section class="viewer viewer--editable">
+      <EngineStatus />
       <header class="viewer-header">
         <div>
           <h1>{(store.config.value as { name?: string } | null)?.name ?? "Mantissa plan"}</h1>
@@ -137,26 +147,21 @@ function ViewerBody({ initial }: { initial: InitialState }) {
           </p>
         </div>
         <div class="viewer-actions">
-          <ShareBar
-            store={store}
-            result={stateValue.kind === "ready" ? stateValue.result : null}
-          />
+          <ShareBar store={store} result={stateValue.kind === "ready" ? stateValue.result : null} />
           <DownloadButton config={store.config.value} />
         </div>
       </header>
 
       {isSnapshot && (
-        <p class="snapshot-banner" role="status">
+        <output class="snapshot-banner">
           Showing a shared snapshot. Edit any field to re-run the engine with your changes.
-        </p>
+        </output>
       )}
 
       <div class="layout">
         <ConfigDrawer store={store} />
         <div class="results">
-          {stateValue.kind === "error" && (
-            <p class="error">{stateValue.message}</p>
-          )}
+          {stateValue.kind === "error" && <p class="error">{stateValue.message}</p>}
           {stateValue.kind === "ready" ? (
             <Ready result={stateValue.result} />
           ) : (
@@ -253,8 +258,8 @@ function PlanSummary({ kpis }: { kpis: RunResult["kpis"] }) {
   if (r >= 0.75) {
     return (
       <p class="plan-summary" data-tone="good">
-        Success rate {fmtPct(r)} — the plan holds up in most market scenarios. Median terminal
-        net worth is {fmtMoney(nw)}.
+        Success rate {fmtPct(r)} — the plan holds up in most market scenarios. Median terminal net
+        worth is {fmtMoney(nw)}.
       </p>
     );
   }

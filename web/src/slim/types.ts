@@ -6,11 +6,9 @@
  * answers in a flat WizardAnswers shape, then `buildSlimConfig()`
  * serializes to the engine's expected schema.
  *
- * Engine quirks this code accommodates (see plan findings #3 and #4):
- *   - `spouse` must be a full object, not null or {}. We synthesize a
- *     "harmless" stub with a far-future birth date when the user is
- *     single, so the config validates and the engine runs without
- *     attributing any income/expenses to the stub.
+ * Engine contract this code accommodates (see plan findings #3 and #4):
+ *   - `spouse` may be `null` for a single household. The engine applies
+ *     single-filer tax rules and projects through the primary's longevity.
  *   - `income_streams[].id`, `monthly_amount`, `end_date`, `is_w2`,
  *     `social_security_taxable` are required by the engine parser even
  *     though the schema doesn't enforce them.
@@ -85,7 +83,6 @@ function riskParams(risk: RiskTolerance): { mean: number; vol: number } {
     case "high":
       return { mean: 0.08, vol: 0.18 };
     case "medium":
-    default:
       return { mean: 0.06, vol: 0.13 };
   }
 }
@@ -164,35 +161,37 @@ export function buildSlimConfig(answers: WizardAnswers): unknown {
       investment_return_volatility: vol,
     },
     accounts,
-    income_streams: monthlyIncome > 0
-      ? [
-          {
-            id: "salary",
-            name: "Salary",
-            owner: "primary",
-            monthly_amount: monthlyIncome,
-            start_date: startDate,
-            end_date: retirementDate(answers.primaryRetirementAge, answers.primaryAge),
-            growth_rate: 0.02,
-            is_w2: true,
-            social_security_taxable: true,
-          },
-        ]
-      : [],
-    expenses: monthlySpending > 0
-      ? [
-          {
-            id: "living",
-            name: "Living expenses",
-            monthly_amount: monthlySpending,
-            start_date: startDate,
-            end_date: endDate,
-            category: "essential",
-            essential: true,
-            inflation_adjusted: true,
-          },
-        ]
-      : [],
+    income_streams:
+      monthlyIncome > 0
+        ? [
+            {
+              id: "salary",
+              name: "Salary",
+              owner: "primary",
+              monthly_amount: monthlyIncome,
+              start_date: startDate,
+              end_date: retirementDate(answers.primaryRetirementAge, answers.primaryAge),
+              growth_rate: 0.02,
+              is_w2: true,
+              social_security_taxable: true,
+            },
+          ]
+        : [],
+    expenses:
+      monthlySpending > 0
+        ? [
+            {
+              id: "living",
+              name: "Living expenses",
+              monthly_amount: monthlySpending,
+              start_date: startDate,
+              end_date: endDate,
+              category: "essential",
+              essential: true,
+              inflation_adjusted: true,
+            },
+          ]
+        : [],
     social_security: answers.hasSocialSecurity
       ? {
           primary_pia: answers.monthlySocialSecurity,

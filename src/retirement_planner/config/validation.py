@@ -262,11 +262,11 @@ def schema_dict() -> dict:
             "schema_version": {"type": "integer", "const": CURRENT_SCHEMA_VERSION},
             "name": {"type": "string"}, "description": {"type": "string"},
             "primary": {"$ref": "#/$defs/person"},
-            "spouse": {"$ref": "#/$defs/person"},
+            "spouse": {"anyOf": [{"$ref": "#/$defs/person"}, {"type": "null"}]},
             "accounts": {"type": "array", "items": {"$ref": "#/$defs/account"}},
             "monetary_convention": {"enum": ["real", "nominal"]},
         },
-        "required": ["primary", "spouse"],
+        "required": ["primary"],
         "$defs": {
             "person": {"type": "object", "required": ["name", "birth_date", "retirement_date"]},
             "account": {"type": "object", "required": ["id", "name", "type", "balance"]},

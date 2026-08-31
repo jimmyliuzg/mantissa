@@ -426,7 +426,7 @@ class Scenario:
     name: str
     description: str
     primary: Person
-    spouse: Person
+    spouse: Optional[Person]
     economic: EconomicAssumptions
     accounts: List[Account]
     income_streams: List[IncomeStream]
@@ -471,12 +471,16 @@ class Scenario:
                 "retirement_date": self.primary.retirement_date.isoformat(),
                 "longevity_age": self.primary.longevity_age,
             },
-            "spouse": {
-                "name": self.spouse.name,
-                "birth_date": self.spouse.birth_date.isoformat(),
-                "retirement_date": self.spouse.retirement_date.isoformat(),
-                "longevity_age": self.spouse.longevity_age,
-            },
+            "spouse": (
+                {
+                    "name": self.spouse.name,
+                    "birth_date": self.spouse.birth_date.isoformat(),
+                    "retirement_date": self.spouse.retirement_date.isoformat(),
+                    "longevity_age": self.spouse.longevity_age,
+                }
+                if self.spouse is not None
+                else None
+            ),
             "legacy_goal": self.legacy_goal,
             "state": self.state,
             "survivor_expense_ratio": self.survivor_expense_ratio,

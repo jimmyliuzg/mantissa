@@ -244,13 +244,18 @@ def _section_cover(styles: dict, scenario, generated_at: str) -> list:
     info_data = [
         ["Plan Name", scenario.name],
         ["Primary", f"{scenario.primary.name} (b. {scenario.primary.birth_date})"],
-        ["Spouse", f"{scenario.spouse.name} (b. {scenario.spouse.birth_date})"],
         ["Primary Retirement", str(scenario.primary.retirement_date)],
-        ["Spouse Retirement", str(scenario.spouse.retirement_date)],
+    ]
+    if scenario.spouse is not None:
+        info_data.extend([
+            ["Spouse", f"{scenario.spouse.name} (b. {scenario.spouse.birth_date})"],
+            ["Spouse Retirement", str(scenario.spouse.retirement_date)],
+        ])
+    info_data.extend([
         ["State", scenario.state],
         ["Legacy Goal", _fmt_money(scenario.legacy_goal)],
         ["Generated", generated_at],
-    ]
+    ])
     t = Table(info_data, colWidths=[2 * inch, 4 * inch])
     t.setStyle(TableStyle([
         ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),

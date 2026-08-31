@@ -353,24 +353,26 @@ def stochastic_alive_snapshot(
     dependents,
     primary_age: float,
     spouse_age: float,
+    spouse_present: bool = True,
 ) -> "SurvivorSnapshot":
-    """Synthetic 'both alive' snapshot for the stochastic-mortality MC path.
+    """Synthetic alive-household snapshot for stochastic-mortality MC.
 
-    The stochastic path models the household as one unit that dies together
-    at a single sampled year (see the stochastic mortality plan). Every
-    modeled year both spouses are alive (MFJ); there are no survivor
-    transitions, no spousal rollover, and no estate tax. The run simply
-    ends once the sampled death age is passed.
+    The stochastic path models every configured household member as alive
+    until one sampled end year. It has no survivor transitions, spousal
+    rollover, or estate tax. A single household remains a single filer.
     """
     medicare_adult_count = (
-        (1 if primary_age >= 65 else 0) + (1 if spouse_age >= 65 else 0))
-    aca_family_size = 2 + active_dependent_count(year, dependents)
+        (1 if primary_age >= 65 else 0)
+        + (1 if spouse_present and spouse_age >= 65 else 0)
+    )
+    aca_family_size = (1 + int(spouse_present)
+                       + active_dependent_count(year, dependents))
     return SurvivorSnapshot(
         year=year,
         primary_alive=True,
-        spouse_alive=True,
+        spouse_alive=spouse_present,
         survivor=None,
-        filing_status=FilingStatus.MFJ,
+        filing_status=FilingStatus.MFJ if spouse_present else FilingStatus.SINGLE,
         is_primary_death_year=False,
         is_spouse_death_year=False,
         is_first_death_year=False,
@@ -438,12 +440,18 @@ def survivor_snapshot(
         survivor = None
 
     has_dependents = active_dependent_count(year, dependents) > 0
-    filing_status = determine_filing_status(
-        primary_alive=primary_alive,
-        spouse_alive=spouse_alive,
-        year_of_death_spouse=first_death_year,
-        current_year=year,
-        has_dependents=has_dependents,
+    # Keep spouse_alive true above only to suppress two-person survivor
+    # transitions. A single household must still use single-filer tax rules.
+    filing_status = (
+        FilingStatus.SINGLE
+        if spouse is None
+        else determine_filing_status(
+            primary_alive=primary_alive,
+            spouse_alive=spouse_alive,
+            year_of_death_spouse=first_death_year,
+            current_year=year,
+            has_dependents=has_dependents,
+        )
     )
 
     # ACA family size: ACA-eligible (under-65, ACA coverage) living adults
