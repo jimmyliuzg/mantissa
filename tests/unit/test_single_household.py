@@ -22,7 +22,8 @@ from datetime import date
 import pytest
 
 from retirement_planner import MonteCarloEngine, RetirementPlanner
-from retirement_planner.config.validation import validate_config
+from retirement_planner.config.validation import schema_dict, validate_config
+from retirement_planner.household import stochastic_alive_snapshot
 from retirement_planner.models import Person
 
 
@@ -96,11 +97,20 @@ def test_validate_accepts_missing_spouse():
     assert result.valid, f"errors: {[e.as_dict() for e in result.errors]}"
 
 
+def test_schema_allows_null_or_missing_spouse():
+    schema = schema_dict()
+    assert schema["required"] == ["primary"]
+    assert schema["properties"]["spouse"] == {
+        "anyOf": [{"$ref": "#/$defs/person"}, {"type": "null"}]
+    }
+
+
 def test_from_config_spouse_is_none_when_null():
     cfg = _base_single_household_config()
     path = _write_config(cfg)
     pl = RetirementPlanner.from_config(path)
     assert pl.scenario.spouse is None
+    assert pl.scenario.to_dict()["spouse"] is None
 
 
 def test_from_config_spouse_is_none_when_missing():
@@ -139,6 +149,28 @@ def test_single_household_projection_horizon_is_primary_only():
         f"single-household horizon should end at {expected_end_year} "
         f"(primary's death year), got {last_row['year']}"
     )
+    assert {row["filing_status"] for row in rows} == {"single"}
+
+
+def test_stochastic_single_household_snapshot_uses_single_filer_rules():
+    snapshot = stochastic_alive_snapshot(
+        2026, [], primary_age=35, spouse_age=35, spouse_present=False
+    )
+    assert snapshot.filing_status.value == "single"
+    assert not snapshot.spouse_alive
+    assert snapshot.aca_family_size == 1
+
+
+def test_single_household_medical_expense_runs_without_spouse_dereference():
+    cfg = _base_single_household_config()
+    cfg["expenses"].append({
+        "id": "medical", "name": "Medical", "monthly_amount": 500,
+        "start_date": "2026-01-01", "end_date": "2090-12-31",
+        "category": "medical", "essential": True,
+        "inflation_adjusted": True,
+    })
+    pl = RetirementPlanner.from_config(_write_config(cfg))
+    assert pl.project_cash_flow()
 
 
 # --- Parity test: single-household horizon + sanity ---

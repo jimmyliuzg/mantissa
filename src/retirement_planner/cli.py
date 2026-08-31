@@ -143,7 +143,7 @@ def inspect(config, fmt):
     data = {
         "name": s.name,
         "primary": s.primary.name,
-        "spouse": s.spouse.name,
+        "spouse": s.spouse.name if s.spouse is not None else None,
         "monetary_convention": s.monetary_convention.value,
         "accounts": [{"id": a.id, "type": a.account_type,
                       "tax_treatment": a.tax_treatment, "owner": a.owner,

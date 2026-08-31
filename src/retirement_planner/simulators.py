@@ -148,7 +148,7 @@ class MonteCarloEngine:
         # can draw a fan band that widens/narrows as the projection
         # gets more uncertain. Keyed by primary_age.
         yearly_percentiles: Dict[int, Dict[str, float]] = {}
-        if results and results[0].get("net_worth_by_year"):
+        if any(result.get("net_worth_by_year") for result in results):
             ages = sorted({a for r in results
                           for a in r.get("net_worth_by_year", {})})
             for age in ages:
