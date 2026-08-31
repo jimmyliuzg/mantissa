@@ -5,11 +5,9 @@ Asserts:
   1. Landing page exposes a wizard entry point that navigates to /#/wizard.
   2. The wizard renders 9 step markers in the progress bar.
   3. We can step through with default answers and reach the Review screen.
-  4. Clicking "Open in viewer" navigates to /#/review, the engine
-     bootstraps, the projection runs, and the KPI row renders.
-  5. The KPI value for the primary retirement scenario (defaults) is
-     non-empty and reflects the wizard's high-balance, high-spending
-     default profile.
+  4. Clicking "Open in viewer" opens the detailed config review first,
+     including the generated current account snapshot.
+  5. Running from that review bootstraps the engine and renders KPIs.
 """
 from __future__ import annotations
 
@@ -52,9 +50,20 @@ def main() -> int:
         page.wait_for_selector(".review-table", timeout=5_000)
         print("==> reached review step")
 
-        # Click "Open in viewer →"
-        print("==> opening in viewer")
+        # Click "Open in viewer →" and verify the config review gate.
+        print("==> opening config review")
         page.click(".wizard-footer__final .btn--primary")
+        page.wait_for_selector(".config-review", timeout=10_000)
+        account_rows = page.eval_on_selector_all(
+            ".review-data-table tbody tr", "els => els.length"
+        )
+        if account_rows != 1:
+            print(f"FAIL: expected one generated account in review, got {account_rows}")
+            return 3
+        print("==> config review includes generated account snapshot")
+
+        print("==> running reviewed plan")
+        page.click(".config-review .btn--primary")
         page.wait_for_selector(".kpi-row .kpi-value", timeout=180_000)
 
         kpis = page.eval_on_selector_all(
@@ -69,7 +78,7 @@ def main() -> int:
         print(f"==> success rate: {success}%")
         if success < 50:
             print(f"FAIL: success rate {success}% < 50% (under-funded plan)")
-            return 3
+            return 4
 
         # Also verify the engine actually ran the slim config — pull
         # the runtime from the header.
@@ -79,7 +88,7 @@ def main() -> int:
         print(f"==> header: {header!r}")
         if "ready" not in header:
             print(f"FAIL: header did not show 'ready': {header!r}")
-            return 4
+            return 5
 
         print("==> M3 OK")
         b.close()

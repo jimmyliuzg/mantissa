@@ -44,6 +44,8 @@ def main() -> int:
             "(c) => sessionStorage.setItem('mantissa:config', JSON.stringify(c))", cfg
         )
         page.goto("http://127.0.0.1:8767/#/review", wait_until="load")
+        page.wait_for_selector(".config-review", timeout=30_000)
+        page.click(".config-review .btn--primary")
         page.wait_for_selector(".kpi-row .kpi-value", timeout=180_000)
         baseline = page.eval_on_selector_all(
             ".kpi .kpi-value", "els => els.map(e => e.textContent.trim())"
@@ -72,11 +74,13 @@ def main() -> int:
             print(f"FAIL: snapshot ({len(snapshot_url)}) not larger than config ({len(config_url)})")
             return 4
 
-        # --- Open the config URL in a fresh context; engine runs ---
+        # --- Open the config URL in a fresh context; review before run ---
         ctx2 = b.new_context()
         page2 = ctx2.new_page()
         t0 = time.time()
         page2.goto(config_url, wait_until="load", timeout=60_000)
+        page2.wait_for_selector(".config-review", timeout=30_000)
+        page2.click(".config-review .btn--primary")
         page2.wait_for_selector(".kpi-row .kpi-value", timeout=180_000)
         config_kpis = page2.eval_on_selector_all(
             ".kpi .kpi-value", "els => els.map(e => e.textContent.trim())"

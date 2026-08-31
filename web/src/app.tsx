@@ -1,9 +1,8 @@
 import { useEffect, useState } from "preact/hooks";
+import { TopBar } from "./components/top-bar";
 import { Landing } from "./pages/landing";
 import { Viewer } from "./pages/viewer";
 import { Wizard } from "./pages/wizard";
-import { TopBar } from "./components/top-bar";
-import { EngineStatus } from "./components/engine-status";
 
 /**
  * Tiny client-side router. v1 has three routes:
@@ -36,12 +35,13 @@ export function App() {
   return (
     <div class="app">
       <TopBar />
-      {/* Engine status banner only makes sense on the viewer, where
-          the Pyodide boot actually runs. Landing and wizard pages
-          don't need to show the engine loading state. */}
-      {route === "viewer" && <EngineStatus />}
       <main>
-        {route === "landing" && <Landing onOpenViewer={() => navigate("#/review")} onOpenWizard={() => navigate("#/wizard")} />}
+        {route === "landing" && (
+          <Landing
+            onOpenViewer={() => navigate("#/review")}
+            onOpenWizard={() => navigate("#/wizard")}
+          />
+        )}
         {route === "viewer" && <Viewer />}
         {route === "wizard" && <Wizard />}
       </main>
