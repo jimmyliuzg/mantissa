@@ -47,3 +47,6 @@ examples/my_plan.json
 # Internal docs (not for public repo)
 AUDIT_IMPLEMENTATION_PLAN.md
 IMPLEMENTATION_PLAN.md
+.pi/
+.mypy_cache/
+.ruff_cache/
