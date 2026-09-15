@@ -1,5 +1,5 @@
-import { signal, type Signal } from "@preact/signals";
-import { engine, type RunResult } from "@engine";
+import { type RunResult, engine } from "@engine";
+import { type Signal, signal } from "@preact/signals";
 import { setPath } from "../lib/config-edit";
 
 /**
@@ -38,6 +38,10 @@ export function createPlanStore(initial: unknown, initialSims = 1000): PlanStore
   async function rerun(): Promise<void> {
     const myRun = ++runCounter;
     state.value = { kind: "running" };
+    // Yield a frame so the progress UI paints before the (blocking)
+    // Pyodide call hogs the main thread.
+    await new Promise((r) => setTimeout(r, 30));
+    if (myRun !== runCounter) return;
     const t0 = performance.now();
     try {
       const result = await engine.run(config.value, {

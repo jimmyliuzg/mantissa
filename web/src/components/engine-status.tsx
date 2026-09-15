@@ -1,5 +1,5 @@
-import { useEffect, useState } from "preact/hooks";
 import { engine } from "@engine";
+import { useEffect, useState } from "preact/hooks";
 
 type Status = "idle" | "loading" | "ready" | "error";
 
@@ -45,9 +45,14 @@ export function EngineStatus() {
   if (status === "ready") return null;
 
   return (
-    <div class={`engine-status engine-status--${status}`} role="status">
+    <div class={`engine-status engine-status--${status}`} role="status" aria-live="polite">
+      {status === "loading" && (
+        <div class="run-progress-bar" aria-hidden="true">
+          <span />
+        </div>
+      )}
       {status === "idle" && "Engine idle · loads on first run"}
-      {status === "loading" && "Loading engine (Pyodide + mantissa)…"}
+      {status === "loading" && "Loading engine (Pyodide + mantissa)… first run takes ~10 s."}
       {status === "error" && `Engine failed: ${err}`}
     </div>
   );

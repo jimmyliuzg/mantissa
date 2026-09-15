@@ -59,8 +59,35 @@ a { color: var(--accent); }
 .brand-sub { color: var(--fg-muted); font-size: 12px; }
 
 .engine-status { padding: 8px 12px; border-radius: 6px; margin-top: 12px; font-size: 13px; border: 1px solid var(--border); background: var(--bg-elev); }
-.engine-status--loading { border-color: #d4c000; background: #fff7d6; color: #665a00; }
+.engine-status--loading { border-color: #d4c000; background: #fff7d6; color: #665a00; overflow: hidden; }
 .engine-status--error   { border-color: var(--bad); color: var(--bad); }
+
+/* Indeterminate engine progress: thin top bar + staged status. Real %
+   isn't available (Pyodide run is atomic), so the bar slides instead
+   of filling to a fake percent. */
+.run-progress { border: 1px solid var(--border); border-radius: 8px; background: var(--bg-elev); margin-top: 12px; overflow: hidden; }
+.run-progress-bar { height: 4px; background: var(--border); overflow: hidden; }
+.run-progress-bar > span { display: block; height: 100%; width: 40%; background: var(--accent); border-radius: 999px; animation: run-slide 1.2s ease-in-out infinite; }
+@keyframes run-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(250%); } }
+.run-progress-body { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; }
+.run-progress-body strong { font-size: 13px; }
+.run-progress-body p { margin: 2px 0 0; }
+.spinner { width: 16px; height: 16px; margin-top: 2px; flex: none; border-radius: 50%; border: 2px solid var(--border); border-top-color: var(--accent); animation: spin 0.8s linear infinite; }
+.spinner--small { width: 12px; height: 12px; margin-top: 0; border-width: 2px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.run-badge { display: inline-flex; align-items: center; gap: 6px; padding: 1px 8px; border: 1px solid var(--border); border-radius: 999px; font-size: 12px; }
+.run-badge--busy { border-color: var(--accent); color: var(--accent); }
+.run-badge--ready { color: var(--good); }
+.run-badge--error { color: var(--bad); border-color: var(--bad); }
+.results--stale { opacity: 0.65; }
+.skeleton { min-height: 86px; position: relative; overflow: hidden; }
+.skeleton--tall { min-height: 220px; }
+.skeleton::after { content: ""; position: absolute; inset: 0; background: linear-gradient(100deg, transparent 30%, var(--border) 50%, transparent 70%); animation: shimmer 1.4s infinite; }
+@keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
+@media (prefers-reduced-motion: reduce) {
+  .run-progress-bar > span, .spinner, .skeleton::after { animation: none; }
+  .run-progress-bar > span { width: 100%; }
+}
 @media (prefers-color-scheme: dark) {
   .engine-status--loading { background: #2a2300; color: #f0d050; }
 }

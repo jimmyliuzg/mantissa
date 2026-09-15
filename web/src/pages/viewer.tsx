@@ -1,11 +1,12 @@
 import type { RunResult } from "@engine";
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { CashFlowChart } from "../components/cash-flow-chart";
 import { ConfigDrawer } from "../components/config-drawer";
 import { EngineStatus } from "../components/engine-status";
 import { KpiRow } from "../components/kpi-row";
 import { MonteCarloFan } from "../components/monte-carlo-fan";
 import { PlanReview } from "../components/plan-review";
+import { RunBadge, RunProgress } from "../components/run-progress";
 import { ShareBar } from "../components/share-bar";
 import { fmtMoney, fmtPct } from "../lib/format";
 import {
@@ -15,7 +16,7 @@ import {
   readShareFromLocation,
 } from "../lib/share-codec";
 import { useDebouncedEffect } from "../lib/use-debounced-effect";
-import { type EngineState, createPlanStore } from "../state/plan-store";
+import { createPlanStore } from "../state/plan-store";
 
 /**
  * M4 viewer: editable, shareable. Loads the config from one of three
@@ -100,6 +101,10 @@ function ViewerBody({ initial }: { initial: InitialState }) {
   // when the engine runs.
   const stateValue = store.state.value;
   const [isSnapshot, setIsSnapshot] = useState(initial.kind === "snapshot");
+  // Stale-while-revalidate: keep the last good result on screen while
+  // a re-run is in flight so edits don't blank the charts.
+  const lastReady = useRef<RunResult | null>(initial.kind === "snapshot" ? initial.result : null);
+  if (stateValue.kind === "ready") lastReady.current = stateValue.result;
 
   // Bootstrap engine on first mount.
   useEffect(() => {
@@ -138,11 +143,12 @@ function ViewerBody({ initial }: { initial: InitialState }) {
   return (
     <section class="viewer viewer--editable">
       <EngineStatus />
+      <RunProgress state={stateValue} sims={store.sims.value} />
       <header class="viewer-header">
         <div>
           <h1>{(store.config.value as { name?: string } | null)?.name ?? "Mantissa plan"}</h1>
           <p class="muted small">
-            {store.sims.value.toLocaleString()} simulations · {runStatusLabel(stateValue)}
+            {store.sims.value.toLocaleString()} simulations · <RunBadge state={stateValue} />
             {isSnapshot && stateValue.kind === "ready" && " · shared snapshot"}
           </p>
         </div>
@@ -164,8 +170,15 @@ function ViewerBody({ initial }: { initial: InitialState }) {
           {stateValue.kind === "error" && <p class="error">{stateValue.message}</p>}
           {stateValue.kind === "ready" ? (
             <Ready result={stateValue.result} />
-          ) : (
+          ) : lastReady.current ? (
+            <div class="results--stale" aria-busy="true">
+              <p class="muted small">Updating with your latest edits…</p>
+              <Ready result={lastReady.current} />
+            </div>
+          ) : stateValue.kind === "idle" ? (
             <p class="muted">Waiting for first run…</p>
+          ) : (
+            <ResultsSkeleton />
           )}
         </div>
       </div>
@@ -225,19 +238,19 @@ function DownloadButton({ config }: { config: unknown }) {
   );
 }
 
-function runStatusLabel(s: EngineState): string {
-  switch (s.kind) {
-    case "idle":
-      return "idle";
-    case "loading":
-      return "loading engine…";
-    case "running":
-      return "running…";
-    case "ready":
-      return "ready";
-    case "error":
-      return "error";
-  }
+/** Shimmer placeholders shown while the first run has no prior result. */
+function ResultsSkeleton() {
+  return (
+    <div aria-hidden="true">
+      <div class="kpi-row">
+        <div class="kpi skeleton" />
+        <div class="kpi skeleton" />
+        <div class="kpi skeleton" />
+      </div>
+      <div class="panel skeleton skeleton--tall" />
+      <div class="panel skeleton skeleton--tall" />
+    </div>
+  );
 }
 
 function PlanSummary({ kpis }: { kpis: RunResult["kpis"] }) {
