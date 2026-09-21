@@ -35,7 +35,7 @@ export function ShareBar({ store, result }: ShareBarProps) {
 
   async function copy(kind: "config" | "snapshot") {
     const sims = store.sims.value;
-    const seed = 42;
+    const seed = store.seed;
     const config = store.config.value;
     let hash: string;
     if (kind === "config") {

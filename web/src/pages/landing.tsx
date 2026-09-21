@@ -10,6 +10,29 @@ interface LandingProps {
  */
 export function Landing({ onOpenViewer, onOpenWizard }: LandingProps) {
   const [err, setErr] = useState<string | null>(null);
+  const [demoLoading, setDemoLoading] = useState(false);
+
+  // Demo path: fetch the bundled sample config, stage it the same way
+  // an upload would, then route to the viewer. BASE_URL makes it work
+  // under any deploy base (/mantissa/ on GitHub Pages).
+  async function onDemo(e: Event) {
+    e.preventDefault();
+    if (demoLoading) return;
+    setDemoLoading(true);
+    setErr(null);
+    try {
+      const base = (import.meta as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? "/";
+      const res = await fetch(`${base.replace(/\/$/, "")}/demo.json`);
+      if (!res.ok) throw new Error(`demo fetch failed (${res.status})`);
+      const parsed = JSON.parse(await res.text());
+      sessionStorage.setItem("mantissa:config", JSON.stringify(parsed));
+      onOpenViewer();
+    } catch (e) {
+      setErr(`Could not load the demo: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setDemoLoading(false);
+    }
+  }
 
   async function onFile(file: File) {
     setErr(null);
@@ -45,11 +68,11 @@ export function Landing({ onOpenViewer, onOpenWizard }: LandingProps) {
             }}
           />
         </label>
-        <button class="tile tile--wizard" onClick={onOpenWizard}>
+        <button type="button" class="tile tile--wizard" onClick={onOpenWizard}>
           <span class="tile-title">Start from scratch</span>
           <span class="tile-body">8-question wizard, then open in the viewer.</span>
         </button>
-        <button class="tile tile--md" disabled>
+        <button type="button" class="tile tile--md" disabled>
           <span class="tile-title">View a markdown report</span>
           <span class="tile-body">Read-only rendering. Coming soon.</span>
         </button>
@@ -62,7 +85,7 @@ export function Landing({ onOpenViewer, onOpenWizard }: LandingProps) {
         <p>
           Run <code>mantissa init &gt; my-plan.json</code> from the CLI, edit it, and drop it here.
           See the <a href="https://github.com/jimmyliuzg/mantissa">Mantissa repo</a> for the schema.
-          Want to <a href="#/review">try a viewer demo</a>?
+          Want to <button type="button" class="linkish" onClick={onDemo} disabled={demoLoading}>{demoLoading ? "loading demo…" : "try a viewer demo"}</button>?
         </p>
       </details>
     </section>

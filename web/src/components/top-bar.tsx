@@ -1,7 +1,9 @@
 export function TopBar() {
   return (
     <header class="topbar">
-      <a href="/" class="brand">
+      {/* Hash route, not "/": on GitHub Pages (base /mantissa/) a root
+          href would leave the app. */}
+      <a href="#/" class="brand">
         <span class="logo">M</span>
         <span class="brand-text">Mantissa</span>
         <span class="brand-sub">Plan Viewer</span>

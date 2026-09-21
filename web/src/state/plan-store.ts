@@ -21,6 +21,9 @@ export type EngineState =
 export interface PlanStore {
   config: Signal<unknown>;
   sims: Signal<number>;
+  /** RNG seed for every run. Comes from the share link so recipients
+   *  reproduce the sender's numbers; defaults to 42. */
+  seed: number;
   state: Signal<EngineState>;
   setConfigField: (path: string, value: unknown) => void;
   setSims: (n: number) => void;
@@ -28,9 +31,10 @@ export interface PlanStore {
   rerun: () => Promise<void>;
 }
 
-export function createPlanStore(initial: unknown, initialSims = 1000): PlanStore {
+export function createPlanStore(initial: unknown, initialSims = 1000, initialSeed = 42): PlanStore {
   const config = signal<unknown>(initial);
   const sims = signal<number>(initialSims);
+  const seed = initialSeed;
   const state = signal<EngineState>({ kind: "idle" });
 
   let runCounter = 0;
@@ -47,7 +51,7 @@ export function createPlanStore(initial: unknown, initialSims = 1000): PlanStore
       const result = await engine.run(config.value, {
         simulations: sims.value,
         method: "gaussian",
-        seed: 42,
+        seed,
       });
       // Drop stale results — only the most recent run wins.
       if (myRun !== runCounter) return;
@@ -91,5 +95,5 @@ export function createPlanStore(initial: unknown, initialSims = 1000): PlanStore
     }
   }
 
-  return { config, sims, state, setConfigField, setSims, bootstrap, rerun };
+  return { config, sims, seed, state, setConfigField, setSims, bootstrap, rerun };
 }
