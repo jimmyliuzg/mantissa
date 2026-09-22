@@ -85,7 +85,11 @@ export function Landing({ onOpenViewer, onOpenWizard }: LandingProps) {
         <p>
           Run <code>mantissa init &gt; my-plan.json</code> from the CLI, edit it, and drop it here.
           See the <a href="https://github.com/jimmyliuzg/mantissa">Mantissa repo</a> for the schema.
-          Want to <button type="button" class="linkish" onClick={onDemo} disabled={demoLoading}>{demoLoading ? "loading demo…" : "try a viewer demo"}</button>?
+          Want to{" "}
+          <button type="button" class="linkish" onClick={onDemo} disabled={demoLoading}>
+            {demoLoading ? "loading demo…" : "try a viewer demo"}
+          </button>
+          ?
         </p>
       </details>
     </section>
