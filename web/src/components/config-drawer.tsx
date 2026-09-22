@@ -23,7 +23,13 @@ interface FieldDef {
 const FIELDS: ReadonlyArray<FieldDef> = [
   { path: "name", label: "Plan name", kind: "text" },
   { path: "state", label: "State (2-letter)", kind: "text" },
-  { path: "withdrawal_rate", label: "Withdrawal rate", kind: "number", step: 0.005, hint: "0.04 = 4%" },
+  {
+    path: "withdrawal_rate",
+    label: "Withdrawal rate",
+    kind: "number",
+    step: 0.005,
+    hint: "0.04 = 4%",
+  },
 
   { path: "primary.birth_date", label: "Primary birth date", kind: "date" },
   { path: "primary.retirement_date", label: "Primary retirement date", kind: "date" },
@@ -33,10 +39,26 @@ const FIELDS: ReadonlyArray<FieldDef> = [
   { path: "spouse.retirement_date", label: "Spouse retirement date", kind: "date" },
   { path: "spouse.longevity_age", label: "Spouse longevity age", kind: "number", step: 1 },
 
-  { path: "economic.inflation", label: "Inflation", kind: "number", step: 0.001, hint: "0.025 = 2.5%" },
+  {
+    path: "economic.inflation",
+    label: "Inflation",
+    kind: "number",
+    step: 0.001,
+    hint: "0.025 = 2.5%",
+  },
   { path: "economic.medical_inflation", label: "Medical inflation", kind: "number", step: 0.001 },
-  { path: "economic.investment_return_mean", label: "Mean real return", kind: "number", step: 0.005 },
-  { path: "economic.investment_return_volatility", label: "Return volatility", kind: "number", step: 0.005 },
+  {
+    path: "economic.investment_return_mean",
+    label: "Mean real return",
+    kind: "number",
+    step: 0.005,
+  },
+  {
+    path: "economic.investment_return_volatility",
+    label: "Return volatility",
+    kind: "number",
+    step: 0.005,
+  },
 ];
 
 /**
@@ -51,21 +73,31 @@ export function ConfigDrawer({ store }: ConfigDrawerProps) {
   return (
     <aside class="drawer" aria-label="Edit plan">
       <header>
-        <h3>Plan</h3>
+        <h2>Plan</h2>
         <p class="muted small">Edits re-run the engine after 400 ms.</p>
       </header>
 
       <fieldset>
         <legend>Top level</legend>
         {FIELDS.filter((f) => !f.path.includes(".")).map((f) => (
-          <Field key={f.path} field={f} value={getPath(config, f.path)} onChange={(v) => store.setConfigField(f.path, v)} />
+          <Field
+            key={f.path}
+            field={f}
+            value={getPath(config, f.path)}
+            onChange={(v) => store.setConfigField(f.path, v)}
+          />
         ))}
       </fieldset>
 
       <fieldset>
         <legend>Primary</legend>
         {FIELDS.filter((f) => f.path.startsWith("primary.")).map((f) => (
-          <Field key={f.path} field={f} value={getPath(config, f.path)} onChange={(v) => store.setConfigField(f.path, v)} />
+          <Field
+            key={f.path}
+            field={f}
+            value={getPath(config, f.path)}
+            onChange={(v) => store.setConfigField(f.path, v)}
+          />
         ))}
       </fieldset>
 
@@ -77,7 +109,12 @@ export function ConfigDrawer({ store }: ConfigDrawerProps) {
         <fieldset>
           <legend>Spouse</legend>
           {FIELDS.filter((f) => f.path.startsWith("spouse.")).map((f) => (
-            <Field key={f.path} field={f} value={getPath(config, f.path)} onChange={(v) => store.setConfigField(f.path, v)} />
+            <Field
+              key={f.path}
+              field={f}
+              value={getPath(config, f.path)}
+              onChange={(v) => store.setConfigField(f.path, v)}
+            />
           ))}
         </fieldset>
       )}
@@ -85,7 +122,12 @@ export function ConfigDrawer({ store }: ConfigDrawerProps) {
       <fieldset>
         <legend>Economics</legend>
         {FIELDS.filter((f) => f.path.startsWith("economic.")).map((f) => (
-          <Field key={f.path} field={f} value={getPath(config, f.path)} onChange={(v) => store.setConfigField(f.path, v)} />
+          <Field
+            key={f.path}
+            field={f}
+            value={getPath(config, f.path)}
+            onChange={(v) => store.setConfigField(f.path, v)}
+          />
         ))}
       </fieldset>
 
@@ -133,9 +175,7 @@ export function ConfigDrawer({ store }: ConfigDrawerProps) {
             <option value="5000">5,000 · thorough</option>
           </select>
         </label>
-        <p class="muted small">
-          5k sims takes ~100 s in browser. Use 1k for the explore loop.
-        </p>
+        <p class="muted small">5k sims takes ~100 s in browser. Use 1k for the explore loop.</p>
       </fieldset>
 
       <AdvancedJson store={store} config={config} />
@@ -233,8 +273,7 @@ function ListField({
   return (
     <details open={open} onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}>
       <summary>
-        <strong>{title}</strong>{" "}
-        <span class="muted small">({list.length})</span>
+        <strong>{title}</strong> <span class="muted small">({list.length})</span>
       </summary>
       <div class="list-field">
         {list.length === 0 && <p class="muted small">none</p>}

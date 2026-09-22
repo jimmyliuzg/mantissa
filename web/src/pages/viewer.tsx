@@ -9,6 +9,7 @@ import { PlanReview } from "../components/plan-review";
 import { RunBadge, RunProgress } from "../components/run-progress";
 import { ShareBar } from "../components/share-bar";
 import { fmtMoney, fmtPct } from "../lib/format";
+import { SUCCESS_THRESHOLDS, successTone } from "../lib/success";
 import {
   type ShareableSnapshot,
   decodeConfig,
@@ -192,7 +193,7 @@ function Ready({ result }: { result: RunResult }) {
       <KpiRow kpis={result.kpis} />
       <PlanSummary kpis={result.kpis} />
       <section class="panel">
-        <h3>Cash flow</h3>
+        <h2>Cash flow</h2>
         <CashFlowChart rows={result.cashFlow} />
         <p class="muted small">
           Income {fmtMoney(result.cashFlow.reduce((s, r) => s + r.income, 0))} · Expenses{" "}
@@ -202,7 +203,7 @@ function Ready({ result }: { result: RunResult }) {
         </p>
       </section>
       <section class="panel">
-        <h3>Monte Carlo fan</h3>
+        <h2>Monte Carlo fan</h2>
         <MonteCarloFan
           percentiles={result.mc.percentiles}
           cashFlow={result.cashFlow}
@@ -257,28 +258,29 @@ function PlanSummary({ kpis }: { kpis: RunResult["kpis"] }) {
   const r = kpis.successRate;
   const nw = kpis.medianFinalNetWorth;
   const oos = kpis.outOfSavingsRate;
+  const t = successTone(r);
 
-  if (r >= 0.95) {
+  if (r >= SUCCESS_THRESHOLDS.excellent) {
     const overSaving = nw > 5_000_000;
     return (
-      <p class="plan-summary" data-tone={overSaving ? "info" : "good"}>
+      <p class="plan-summary" data-tone={overSaving ? "info" : t}>
         {overSaving
           ? `Success rate ${fmtPct(r)} with a median terminal net worth of ${fmtMoney(nw)} — this plan is over-saving. You could retire earlier, spend more in retirement, or set a smaller legacy goal. Try lowering "Annual spending in retirement" in the wizard to see what changes.`
           : `Success rate ${fmtPct(r)} — your plan covers retirement spending in nearly all market scenarios. Median terminal net worth is ${fmtMoney(nw)}.`}
       </p>
     );
   }
-  if (r >= 0.75) {
+  if (r >= SUCCESS_THRESHOLDS.good) {
     return (
-      <p class="plan-summary" data-tone="good">
+      <p class="plan-summary" data-tone={t}>
         Success rate {fmtPct(r)} — the plan holds up in most market scenarios. Median terminal net
         worth is {fmtMoney(nw)}.
       </p>
     );
   }
-  if (r >= 0.5) {
+  if (r >= SUCCESS_THRESHOLDS.fair) {
     return (
-      <p class="plan-summary" data-tone="warn">
+      <p class="plan-summary" data-tone={t}>
         Success rate {fmtPct(r)} — the plan works in a majority of market scenarios but is
         vulnerable to extended downturns. Median terminal net worth is {fmtMoney(nw)}. Try
         increasing savings, lowering retirement spending, or delaying retirement.
@@ -286,7 +288,7 @@ function PlanSummary({ kpis }: { kpis: RunResult["kpis"] }) {
     );
   }
   return (
-    <p class="plan-summary" data-tone="bad">
+    <p class="plan-summary" data-tone={t}>
       Success rate {fmtPct(r)} — the plan runs out of money in {fmtPct(oos)} of scenarios. The
       numbers below show the median outcome, which assumes an average market. Consider higher
       savings, lower retirement spending, or a later retirement date.

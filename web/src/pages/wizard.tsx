@@ -1,4 +1,5 @@
 import { useState } from "preact/hooks";
+import { fmtMoney } from "../lib/format";
 import { buildSlimConfig, DEFAULT_ANSWERS, type WizardAnswers } from "../slim/types";
 
 const STEPS: ReadonlyArray<{
@@ -56,7 +57,7 @@ export function Wizard() {
   return (
     <section class="wizard">
       <header class="wizard-header">
-        <h2>Start from scratch</h2>
+        <h1>Start from scratch</h1>
         <Progress current={step} total={STEPS.length} />
       </header>
 
@@ -266,8 +267,8 @@ function Step({ stepKey, answers, onChange }: StepProps) {
       return (
         <StepGroup title="Investment risk tolerance">
           <p class="muted small">
-            Low = mostly bonds. Medium = 60/40. High = mostly stocks. The engine uses this
-            for the mean and volatility of simulated returns.
+            Low = mostly bonds. Medium = 60/40. High = mostly stocks. The engine uses this for the
+            mean and volatility of simulated returns.
           </p>
           <ChoiceField
             value={answers.risk}
@@ -287,7 +288,10 @@ function Step({ stepKey, answers, onChange }: StepProps) {
 
 function Review({ answers }: { answers: WizardAnswers }) {
   const rows: Array<[string, string]> = [
-    ["Primary age / retire / longevity", `${answers.primaryAge} / ${answers.primaryRetirementAge} / ${answers.primaryLongevity}`],
+    [
+      "Primary age / retire / longevity",
+      `${answers.primaryAge} / ${answers.primaryRetirementAge} / ${answers.primaryLongevity}`,
+    ],
     [
       "Spouse",
       answers.hasSpouse
@@ -306,10 +310,10 @@ function Review({ answers }: { answers: WizardAnswers }) {
   ];
   return (
     <div>
-      <h3>Review</h3>
+      <h2>Review</h2>
       <p class="muted small">
-        These answers produce a Mantissa config. You can edit anything in the viewer, or download the JSON to
-        use with the CLI.
+        These answers produce a Mantissa config. You can edit anything in the viewer, or download
+        the JSON to use with the CLI.
       </p>
       <table class="review-table">
         <tbody>
@@ -328,7 +332,7 @@ function Review({ answers }: { answers: WizardAnswers }) {
 function StepGroup({ title, children }: { title: string; children: preact.ComponentChildren }) {
   return (
     <div>
-      <h3>{title}</h3>
+      <h2>{title}</h2>
       <div class="step-group">{children}</div>
     </div>
   );
@@ -380,7 +384,13 @@ function NumberField({
   );
 }
 
-function MoneyField(props: { label: string; value: number; onChange: (v: number) => void; step?: number; hint?: string }) {
+function MoneyField(props: {
+  label: string;
+  value: number;
+  onChange: (v: number) => void;
+  step?: number;
+  hint?: string;
+}) {
   return <NumberField {...props} min={0} step={props.step ?? 1} />;
 }
 
@@ -409,26 +419,55 @@ function ChoiceField<T extends string | boolean>({
   );
 }
 
-function fmtMoney(n: number): string {
-  return n.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 });
-}
-
 const STATES: ReadonlyArray<{ code: string; name: string }> = [
-  { code: "AL", name: "Alabama" }, { code: "AK", name: "Alaska" }, { code: "AZ", name: "Arizona" },
-  { code: "AR", name: "Arkansas" }, { code: "CA", name: "California" }, { code: "CO", name: "Colorado" },
-  { code: "CT", name: "Connecticut" }, { code: "DE", name: "Delaware" }, { code: "FL", name: "Florida" },
-  { code: "GA", name: "Georgia" }, { code: "HI", name: "Hawaii" }, { code: "ID", name: "Idaho" },
-  { code: "IL", name: "Illinois" }, { code: "IN", name: "Indiana" }, { code: "IA", name: "Iowa" },
-  { code: "KS", name: "Kansas" }, { code: "KY", name: "Kentucky" }, { code: "LA", name: "Louisiana" },
-  { code: "ME", name: "Maine" }, { code: "MD", name: "Maryland" }, { code: "MA", name: "Massachusetts" },
-  { code: "MI", name: "Michigan" }, { code: "MN", name: "Minnesota" }, { code: "MS", name: "Mississippi" },
-  { code: "MO", name: "Missouri" }, { code: "MT", name: "Montana" }, { code: "NE", name: "Nebraska" },
-  { code: "NV", name: "Nevada" }, { code: "NH", name: "New Hampshire" }, { code: "NJ", name: "New Jersey" },
-  { code: "NM", name: "New Mexico" }, { code: "NY", name: "New York" }, { code: "NC", name: "North Carolina" },
-  { code: "ND", name: "North Dakota" }, { code: "OH", name: "Ohio" }, { code: "OK", name: "Oklahoma" },
-  { code: "OR", name: "Oregon" }, { code: "PA", name: "Pennsylvania" }, { code: "RI", name: "Rhode Island" },
-  { code: "SC", name: "South Carolina" }, { code: "SD", name: "South Dakota" }, { code: "TN", name: "Tennessee" },
-  { code: "TX", name: "Texas" }, { code: "UT", name: "Utah" }, { code: "VT", name: "Vermont" },
-  { code: "VA", name: "Virginia" }, { code: "WA", name: "Washington" }, { code: "WV", name: "West Virginia" },
-  { code: "WI", name: "Wisconsin" }, { code: "WY", name: "Wyoming" },
+  { code: "AL", name: "Alabama" },
+  { code: "AK", name: "Alaska" },
+  { code: "AZ", name: "Arizona" },
+  { code: "AR", name: "Arkansas" },
+  { code: "CA", name: "California" },
+  { code: "CO", name: "Colorado" },
+  { code: "CT", name: "Connecticut" },
+  { code: "DE", name: "Delaware" },
+  { code: "FL", name: "Florida" },
+  { code: "GA", name: "Georgia" },
+  { code: "HI", name: "Hawaii" },
+  { code: "ID", name: "Idaho" },
+  { code: "IL", name: "Illinois" },
+  { code: "IN", name: "Indiana" },
+  { code: "IA", name: "Iowa" },
+  { code: "KS", name: "Kansas" },
+  { code: "KY", name: "Kentucky" },
+  { code: "LA", name: "Louisiana" },
+  { code: "ME", name: "Maine" },
+  { code: "MD", name: "Maryland" },
+  { code: "MA", name: "Massachusetts" },
+  { code: "MI", name: "Michigan" },
+  { code: "MN", name: "Minnesota" },
+  { code: "MS", name: "Mississippi" },
+  { code: "MO", name: "Missouri" },
+  { code: "MT", name: "Montana" },
+  { code: "NE", name: "Nebraska" },
+  { code: "NV", name: "Nevada" },
+  { code: "NH", name: "New Hampshire" },
+  { code: "NJ", name: "New Jersey" },
+  { code: "NM", name: "New Mexico" },
+  { code: "NY", name: "New York" },
+  { code: "NC", name: "North Carolina" },
+  { code: "ND", name: "North Dakota" },
+  { code: "OH", name: "Ohio" },
+  { code: "OK", name: "Oklahoma" },
+  { code: "OR", name: "Oregon" },
+  { code: "PA", name: "Pennsylvania" },
+  { code: "RI", name: "Rhode Island" },
+  { code: "SC", name: "South Carolina" },
+  { code: "SD", name: "South Dakota" },
+  { code: "TN", name: "Tennessee" },
+  { code: "TX", name: "Texas" },
+  { code: "UT", name: "Utah" },
+  { code: "VT", name: "Vermont" },
+  { code: "VA", name: "Virginia" },
+  { code: "WA", name: "Washington" },
+  { code: "WV", name: "West Virginia" },
+  { code: "WI", name: "Wisconsin" },
+  { code: "WY", name: "Wyoming" },
 ];
