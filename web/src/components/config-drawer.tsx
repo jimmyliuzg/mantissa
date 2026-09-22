@@ -1,4 +1,4 @@
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { getPath } from "../lib/config-edit";
 import type { PlanStore } from "../state/plan-store";
 
@@ -162,8 +162,21 @@ function Field({
           step={field.step}
           value={raw}
           onInput={(e) => {
-            const v = (e.currentTarget as HTMLInputElement).value;
-            onChange(v === "" ? null : Number(v));
+            const el = e.currentTarget as HTMLInputElement;
+            // Empty or partial input ("-", "1e") must not commit —
+            // Number("") is 0 and Number("-") is NaN; either would
+            // corrupt the config and break the engine run.
+            const rawInput = el.value.trim();
+            if (rawInput === "" || rawInput === "-" || rawInput === ".") return;
+            const v = Number(rawInput);
+            if (!Number.isFinite(v)) return;
+            onChange(v);
+          }}
+          onBlur={(e) => {
+            // Rejected input (left empty) still shows in the DOM because
+            // no commit happened. Restore the real config value on blur.
+            const el = e.currentTarget as HTMLInputElement;
+            if (el.value.trim() === "") el.value = raw;
           }}
         />
         {field.hint && <small class="muted">{field.hint}</small>}
@@ -251,11 +264,14 @@ function AdvancedJson({ store, config }: { store: PlanStore; config: unknown }) 
   const [text, setText] = useState(() => JSON.stringify(config, null, 2));
   const [err, setErr] = useState<string | null>(null);
 
-  // Keep the textarea in sync if config changes from elsewhere (e.g. on
-  // initial load or after a successful non-text edit).
-  // We deliberately do NOT write every keystroke back into config — that
-  // would re-run the engine on every character. The user must click
-  // "Apply" to commit.
+  // Re-sync whenever config changes from elsewhere (drawer field edits,
+  // initial load, Apply). Without this the textarea keeps its initial
+  // snapshot and pressing Apply later would REVERT newer edits.
+  // Keystrokes don't touch config, so typing is never clobbered —
+  // Apply itself changes config, which reformats the text to match.
+  useEffect(() => {
+    setText(JSON.stringify(config, null, 2));
+  }, [config]);
   return (
     <details>
       <summary>

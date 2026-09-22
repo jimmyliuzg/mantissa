@@ -10,7 +10,9 @@
   --neutral: #6b6b6b;
   --series-income: #4a90c2;
   --series-taxes: #c25450;
-  --series-expenses: #d6a93d;
+  /* #a87d1f: old #d6a93d was 2.19:1 on white — fails the 3:1 bar for
+     meaningful graphics. This passes (3.74:1) and stays gold. */
+  --series-expenses: #a87d1f;
   --series-networth: #1a1a1a;
   --series-fan: #2e5cb844;
   --series-fan-edge: #2e5cb8;
@@ -33,6 +35,11 @@
     --series-taxes: #f08077;
     --series-expenses: #e0b864;
     --series-networth: #ececea;
+    /* Fan tokens MUST be overridden too — #2e5cb8 on #14140f is
+       nearly invisible. Mirror the accent shift (6e9be0). */
+    --series-fan: #6e9be044;
+    --series-fan-edge: #6e9be0;
+    --series-fan-median: #6e9be0;
   }
 }
 
@@ -45,6 +52,9 @@ code, pre, .mono, .data { font-family: var(--mono); font-size: 12px; }
 .data { background: var(--bg-elev); border: 1px solid var(--border); padding: 12px; max-height: 360px; overflow: auto; }
 
 a { color: var(--accent); }
+/* Inline action that reads as a link (button semantics for a11y). */
+.linkish { background: none; border: 0; padding: 0; font: inherit; color: var(--accent); cursor: pointer; text-decoration: underline; }
+.linkish:disabled { opacity: 0.6; cursor: wait; }
 .muted { color: var(--fg-muted); }
 .small { font-size: 12px; }
 .error { color: var(--bad); }

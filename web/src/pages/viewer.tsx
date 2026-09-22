@@ -96,9 +96,9 @@ function loadInitial(): InitialState | null {
 }
 
 function ViewerBody({ initial }: { initial: InitialState }) {
-  const [store] = useState(() => createPlanStore(initial.config, initial.sims));
-  // Manually seeded: share links can encode any seed; default to 42
-  // when the engine runs.
+  const [store] = useState(() => createPlanStore(initial.config, initial.sims, initial.seed));
+  // Seed comes from the share link (loadInitial); createPlanStore
+  // defaults it to 42 when absent.
   const stateValue = store.state.value;
   const [isSnapshot, setIsSnapshot] = useState(initial.kind === "snapshot");
   // Stale-while-revalidate: keep the last good result on screen while

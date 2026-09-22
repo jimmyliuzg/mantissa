@@ -361,9 +361,18 @@ function NumberField({
         max={max}
         step={step ?? 1}
         onInput={(e) => {
-          const v = Number((e.currentTarget as HTMLInputElement).value);
+          const el = e.currentTarget as HTMLInputElement;
+          // Number("") === 0 — an empty field would commit age 0.
+          // Reject empty/partial input until it parses.
+          const raw = el.value.trim();
+          if (raw === "" || raw === "-" || raw === ".") return;
+          const v = Number(raw);
           if (!Number.isFinite(v)) return;
           onChange(v);
+        }}
+        onBlur={(e) => {
+          const el = e.currentTarget as HTMLInputElement;
+          if (el.value.trim() === "") el.value = String(value);
         }}
       />
       {hint && <small class="muted">{hint}</small>}
