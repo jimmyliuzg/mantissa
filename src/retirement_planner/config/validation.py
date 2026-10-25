@@ -59,7 +59,7 @@ _SCHEMA_KEYS = {
     "social_security", "glidepath", "withdrawal_strategy", "withdrawal_rate",
     "guardrail_floor_pct", "guardrail_ceiling_pct", "legacy_goal", "state",
     "family_size", "savings_order", "monetary_convention", "stress_level",
-    "survivor_expense_ratio", "_comment", "start_year", "balance_date", "tax_inputs", "withdrawal_access_policy",
+    "input_metadata", "survivor_expense_ratio", "_comment", "start_year", "balance_date", "tax_inputs", "withdrawal_access_policy",
 }
 
 
@@ -133,6 +133,16 @@ def validate_config(config: dict, strict: bool = False) -> ValidationResult:
     if config.get("withdrawal_access_policy", "penalty_free") not in {"penalty_free", "unrestricted"}:
         _issue(result, "$.withdrawal_access_policy", "must be penalty_free or unrestricted")
 
+    metadata = config.get("input_metadata", {})
+    if not isinstance(metadata, dict):
+        _issue(result, "$.input_metadata", "must be an object")
+    else:
+        if metadata.get("account_breakdown", "provided") not in {"provided", "missing"}:
+            _issue(result, "$.input_metadata.account_breakdown", "must be provided or missing")
+        estimates = metadata.get("estimated_fields", [])
+        if not isinstance(estimates, list) or any(not isinstance(p, str) for p in estimates):
+            _issue(result, "$.input_metadata.estimated_fields", "must be an array of field paths")
+
     accounts = config.get("accounts", [])
     if not isinstance(accounts, list):
         _issue(result, "$.accounts", "must be an array", code="type")
@@ -154,6 +164,17 @@ def validate_config(config: dict, strict: bool = False) -> ValidationResult:
         for field_name in ("name", "type", "balance"):
             if field_name not in account:
                 _issue(result, f"{path}.{field_name}", "required field", code="required")
+        from .readiness import INCOME_PROFILES
+        profile = account.get("investment_income_profile")
+        if profile is not None and (not isinstance(profile, str) or profile not in INCOME_PROFILES):
+            _issue(result, path + ".investment_income_profile", "unsupported income profile")
+        for field in ("interest_yield", "dividend_yield", "qualified_dividend_share", "unrealized_gain_fraction", "capital_gain_yield"):
+            if field in account:
+                _number(result, account[field], path + "." + field, 0, 1)
+        if all(isinstance(account.get(f, 0), (int, float)) for f in ("interest_yield", "dividend_yield", "capital_gain_yield")) and sum(account.get(f, 0) for f in ("interest_yield", "dividend_yield", "capital_gain_yield")) > 1:
+            _issue(result, path, "combined distribution yield must not exceed 1")
+        if "reinvest_distributions" in account and not isinstance(account["reinvest_distributions"], bool):
+            _issue(result, path + ".reinvest_distributions", "must be a boolean")
         expected = ACCOUNT_TAX_DEFAULTS.get(account.get("type"))
         declared = account.get("tax_treatment", expected)
         if expected and declared != expected and not (account.get("type") == "401k" and declared == "roth"):
@@ -442,6 +463,7 @@ def schema_dict() -> dict:
             "start_year": {"type": "integer", "minimum":2024, "maximum":2200},
             "balance_date": {"type":"string", "format":"date"},
             "tax_inputs": {"type":"object"},
+            "input_metadata": {"type":"object"},
         },
         "required": ["primary"],
         "$defs": {
@@ -455,6 +477,13 @@ def schema_dict() -> dict:
                             "cost_basis": {"type":["number", "null"], "minimum":0},
                             "contribution_caps_by_year": {"type":"object", "additionalProperties":{"type":"number", "minimum":0}},
                             "contribution_end_date": {"type":["string", "null"], "format":"date"},
+                            "unrealized_gain_fraction": {"type":"number", "minimum":0, "maximum":1},
+                            "interest_yield": {"type":"number", "minimum":0, "maximum":1},
+                            "capital_gain_yield": {"type":"number", "minimum":0, "maximum":1},
+                            "dividend_yield": {"type":"number", "minimum":0, "maximum":1},
+                            "qualified_dividend_share": {"type":"number", "minimum":0, "maximum":1},
+                            "reinvest_distributions": {"type":"boolean"},
+                            "investment_income_profile": {"enum":["none", "stock_index", "balanced", "income", "cash"]},
                             "return_volatility": {"type":["number", "null"], "minimum":0}}},
         },
     }

@@ -10,11 +10,11 @@ export function KpiRow({ kpis }: KpiRowProps) {
   const items: Array<{ label: string; value: string; tone?: "good" | "warn" | "bad" | "neutral" }> =
     [
       {
-        label: "Success rate",
+        label: kpis.provisional ? "Provisional success rate" : "Success rate",
         value: fmtPct(kpis.successRate),
         // Same band as the plan summary below the charts — one table
         // (lib/success) so the two can never disagree.
-        tone: successTone(kpis.successRate),
+        tone: kpis.provisional ? "neutral" : successTone(kpis.successRate),
       },
       { label: "Median final net worth", value: fmtMoney(kpis.medianFinalNetWorth) },
       { label: "P10 final net worth", value: fmtMoney(kpis.p10FinalNetWorth), tone: "neutral" },
@@ -25,6 +25,12 @@ export function KpiRow({ kpis }: KpiRowProps) {
         value: fmtPct(kpis.outOfSavingsRate),
         tone: kpis.outOfSavingsRate > 0.1 ? "bad" : "neutral",
       },
+      ...(kpis.accessAssessed === false ? [{ label: "Account access", value: "Unassessed", tone: "warn" as const }] : []),
+      ...(kpis.spendingCutFrequency === undefined ? [] : [
+        { label: "Runs needing spending cuts", value: fmtPct(kpis.spendingCutFrequency) },
+        { label: "Median years with cuts", value: String(kpis.medianYearsWithSpendingCuts ?? 0) },
+        { label: "Deepest annual spending cut", value: fmtPct(kpis.maximumSpendingCutFraction ?? 0) },
+      ]),
       ...(kpis.accessFailureRate === undefined
         ? []
         : [

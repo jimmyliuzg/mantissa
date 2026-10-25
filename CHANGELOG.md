@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — optional refinements and realized spending
+
+- Preserve the short wizard path while adding optional account breakdown, statement date, basis, Roth principal, investment-income profiles and spending flexibility.
+- Resolve assumptions in Python once and expose provided/estimated/missing readiness; total-only account access stays unassessed.
+- Correct canonical wizard/editor return and Social Security fields, annual start dates and explicit initial legacy goal.
+- Model taxable interest, qualified/nonqualified dividends, long-term fund distributions and reinvestment basis within total return; feed taxes, NIIT and healthcare income.
+- Apply spending strategies to actual expense IDs before funding and deductions; report cut frequency, years and depth.
+- Scope separate goal outcomes and native equity cohorts as upcoming priorities 4 and 5.
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),

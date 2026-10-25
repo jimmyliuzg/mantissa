@@ -113,7 +113,10 @@ fd, path = tempfile.mkstemp(suffix=".json"); os.close(fd)
 with open(path, "w") as f:
     json.dump(cfg, f, default=str)
 
-planner = RetirementPlanner.from_config(path)
+try:
+    planner = RetirementPlanner.from_config(path)
+finally:
+    os.unlink(path)
 project = planner.project_cash_flow()
 mc = MonteCarloEngine(planner).run(
     num_simulations=int(MANTISSA_SIMS),
@@ -127,9 +130,14 @@ def _norm_pctile(mc, p):
 result = {
     "kpis": {
         "successRate": mc.get("success_rate", 0.0),
+        "provisional": planner.input_readiness["provisional"],
+        "accessAssessed": planner.input_readiness["access_assessed"],
+        "spendingCutFrequency": mc["spending_cut_frequency"],
+        "medianYearsWithSpendingCuts": mc["median_years_with_spending_cuts"],
+        "maximumSpendingCutFraction": mc["maximum_spending_cut_fraction"],
         **({"accessFailureRate": mc["access_failure_rate"],
             "portfolioDepletionRate": mc["portfolio_depletion_rate"]}
-           if "access_failure_rate" in mc and mc.get("withdrawal_access_policy") != "unrestricted" else {}),
+           if "access_failure_rate" in mc and planner.input_readiness["access_assessed"] and mc.get("withdrawal_access_policy") != "unrestricted" else {}),
         "medianFinalNetWorth": mc.get("median_final_nw", 0.0),
         "p10FinalNetWorth": mc.get("p10_final_nw", 0.0),
         "p90FinalNetWorth": mc.get("p90_final_nw", 0.0),
@@ -144,6 +152,9 @@ result = {
             "spouseAge": r.get("spouse_age"),
             "income": r.get("income", 0.0),
             "expenses": r.get("expenses", 0.0),
+            "plannedExpenses": r.get("planned_expenses", 0.0),
+            "spendingCut": r.get("spending_cut", 0.0),
+            "investmentIncome": r.get("investment_income", 0.0),
             "taxes": r.get("taxes", 0.0),
             "netWorth": r.get("net_worth", 0.0),
             "netCashFlow": r.get("net_cash_flow", 0.0),
@@ -167,6 +178,7 @@ result = {
             )
         ],
     },
+    "inputReadiness": planner.input_readiness,
     "warnings": [
         {"year": None, "category": "model", "message": message, "severity": "warning"}
         for message in dict.fromkeys(planner.model_warnings)

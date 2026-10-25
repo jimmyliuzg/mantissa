@@ -192,6 +192,13 @@ function Ready({ result }: { result: RunResult }) {
   return (
     <>
       <ModelWarnings warnings={result.warnings} />
+      {result.inputReadiness && <section class="panel">
+        <h2>{result.inputReadiness.provisional ? "Refine this estimate" : "Input readiness"}</h2>
+        <p class="muted small">Readiness records input completeness. It does not verify statements or guarantee an outcome. Edit the relevant fields in the config editor, then rerun.</p>
+        <details><summary>Provided, estimated and missing inputs</summary>
+          <ul>{result.inputReadiness.items.map((item) => <li key={item.path}><strong>{item.path}: {item.status}</strong> — {item.detail}</li>)}</ul>
+        </details>
+      </section>}
       <KpiRow kpis={result.kpis} />
       <PlanSummary kpis={result.kpis} />
       <section class="panel">
@@ -257,6 +264,10 @@ function ResultsSkeleton() {
 }
 
 function PlanSummary({ kpis }: { kpis: RunResult["kpis"] }) {
+  if (kpis.provisional) return <p class="plan-summary" data-tone="info">
+    This is a provisional estimate. Review the missing and estimated inputs above before using it to set a retirement date.
+    {kpis.accessAssessed === false && " Account access is unassessed until savings are separated by account type."}
+  </p>;
   const r = kpis.successRate;
   const nw = kpis.medianFinalNetWorth;
   const oos = kpis.outOfSavingsRate;

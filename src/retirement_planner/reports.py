@@ -9,6 +9,10 @@ def generate_summary_report(mc_results: Dict[str, Any], cash_flow: List[Dict[str
     """Generate a high-level summary report from Monte Carlo results and cash flow data."""
     return {
         "success_rate": mc_results.get("success_rate", 0.0),
+        "input_readiness": mc_results.get("input_readiness"),
+        "spending_cut_frequency": mc_results.get("spending_cut_frequency"),
+        "median_years_with_spending_cuts": mc_results.get("median_years_with_spending_cuts"),
+        "maximum_spending_cut_fraction": mc_results.get("maximum_spending_cut_fraction"),
         "withdrawal_access_policy": mc_results.get("withdrawal_access_policy"),
         "access_failure_rate": mc_results.get("access_failure_rate"),
         "portfolio_depletion_rate": mc_results.get("portfolio_depletion_rate"),
@@ -46,6 +50,10 @@ def generate_mc_report(mc_results: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "success_rate": mc_results.get("success_rate", 0.0),
+        "input_readiness": mc_results.get("input_readiness"),
+        "spending_cut_frequency": mc_results.get("spending_cut_frequency"),
+        "median_years_with_spending_cuts": mc_results.get("median_years_with_spending_cuts"),
+        "maximum_spending_cut_fraction": mc_results.get("maximum_spending_cut_fraction"),
         "withdrawal_access_policy": mc_results.get("withdrawal_access_policy"),
         "access_failure_rate": mc_results.get("access_failure_rate"),
         "portfolio_depletion_rate": mc_results.get("portfolio_depletion_rate"),

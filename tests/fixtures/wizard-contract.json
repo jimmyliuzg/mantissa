@@ -1,0 +1,485 @@
+[
+  {
+    "name": "aggregate",
+    "answers": {},
+    "config": {
+      "name": "Wizard plan",
+      "description": "Created with the Mantissa web wizard; optional inputs may be provisional.",
+      "start_year": 2031,
+      "input_metadata": {
+        "account_breakdown": "missing",
+        "estimated_fields": [
+          "primary.birth_date",
+          "primary.retirement_date",
+          "economic.inflation",
+          "economic.medical_inflation",
+          "economic.housing_appreciation",
+          "economic.equity_real_return",
+          "economic.bond_real_return",
+          "social_security.primary_benefit_at_67",
+          "legacy_goal"
+        ]
+      },
+      "primary": {
+        "name": "Primary",
+        "birth_date": "1995-01-01",
+        "retirement_date": "2060-01-01",
+        "longevity_age": 92
+      },
+      "spouse": null,
+      "economic": {
+        "inflation": 0.025,
+        "medical_inflation": 0.04,
+        "housing_appreciation": 0.035,
+        "equity_real_return": 0.06,
+        "bond_real_return": 0.02
+      },
+      "accounts": [
+        {
+          "id": "aggregate",
+          "name": "Total savings (account types unknown)",
+          "type": "other",
+          "tax_treatment": "taxable",
+          "balance": 250000,
+          "owner": "primary",
+          "investment_income_profile": "stock_index"
+        }
+      ],
+      "income_streams": [
+        {
+          "id": "salary",
+          "name": "Salary",
+          "owner": "primary",
+          "monthly_amount": 10000,
+          "start_date": "2031-01-01",
+          "end_date": "2060-01-01",
+          "growth_rate": 0.02,
+          "is_w2": true
+        }
+      ],
+      "expenses": [
+        {
+          "id": "living",
+          "name": "Essential living",
+          "monthly_amount": 5000,
+          "start_date": "2031-01-01",
+          "end_date": "2089-12-31",
+          "category": "essential",
+          "is_must_spend": true,
+          "min_reduction": 0
+        }
+      ],
+      "social_security": {
+        "primary_benefit_at_67": 2400,
+        "primary_claiming_age": 67,
+        "spouse_benefit_at_67": 0,
+        "spouse_claiming_age": 67
+      },
+      "withdrawal_strategy": "fixed",
+      "withdrawal_access_policy": "penalty_free",
+      "withdrawal_rate": 0.04,
+      "legacy_goal": 0,
+      "state": "CA",
+      "monetary_convention": "real",
+      "savings_order": [
+        "aggregate"
+      ],
+      "glidepath": {
+        "equity_by_age": {
+          "30": 0.8,
+          "50": 0.6,
+          "70": 0.44999999999999996,
+          "90": 0.44999999999999996
+        },
+        "pre_retirement_years": 5,
+        "post_retirement_years": 5,
+        "tent_equity_pct": 0.39999999999999997,
+        "tent_ramp_years": 5
+      }
+    }
+  },
+  {
+    "name": "low",
+    "answers": {
+      "risk": "low",
+      "hasSocialSecurity": false,
+      "primaryAge": 64,
+      "primaryRetirementAge": 65,
+      "primaryLongevity": 68,
+      "accountBreakdown": true,
+      "cashAssets": 100000,
+      "brokerageAssets": 200000,
+      "traditionalAssets": 100000,
+      "rothAssets": 50000,
+      "brokerageBasis": 150000,
+      "rothPrincipal": 20000,
+      "rothFirstYear": 2020,
+      "flexibleSpendingPercent": 25,
+      "spendingStrategy": "dynamic"
+    },
+    "config": {
+      "name": "Wizard plan",
+      "description": "Created with the Mantissa web wizard; optional inputs may be provisional.",
+      "start_year": 2031,
+      "input_metadata": {
+        "account_breakdown": "provided",
+        "estimated_fields": [
+          "primary.birth_date",
+          "primary.retirement_date",
+          "economic.inflation",
+          "economic.medical_inflation",
+          "economic.housing_appreciation",
+          "economic.equity_real_return",
+          "economic.bond_real_return",
+          "social_security.primary_benefit_at_67",
+          "legacy_goal"
+        ]
+      },
+      "primary": {
+        "name": "Primary",
+        "birth_date": "1966-01-01",
+        "retirement_date": "2031-01-01",
+        "longevity_age": 68
+      },
+      "spouse": null,
+      "economic": {
+        "inflation": 0.025,
+        "medical_inflation": 0.04,
+        "housing_appreciation": 0.035,
+        "equity_real_return": 0.06,
+        "bond_real_return": 0.02
+      },
+      "accounts": [
+        {
+          "id": "cash",
+          "name": "Cash",
+          "type": "checking",
+          "tax_treatment": "taxable",
+          "balance": 100000,
+          "owner": "primary",
+          "asset_class": "cash",
+          "investment_income_profile": "cash"
+        },
+        {
+          "id": "brokerage",
+          "name": "Brokerage",
+          "type": "brokerage",
+          "tax_treatment": "taxable",
+          "balance": 200000,
+          "owner": "primary",
+          "investment_income_profile": "stock_index",
+          "cost_basis": 150000
+        },
+        {
+          "id": "traditional",
+          "name": "Traditional retirement",
+          "type": "trad_ira",
+          "tax_treatment": "pre_tax",
+          "balance": 100000,
+          "owner": "primary"
+        },
+        {
+          "id": "roth",
+          "name": "Roth IRA",
+          "type": "roth_ira",
+          "tax_treatment": "roth",
+          "balance": 50000,
+          "owner": "primary",
+          "roth_contribution_basis": 20000,
+          "roth_first_contribution_year": 2020
+        }
+      ],
+      "income_streams": [
+        {
+          "id": "salary",
+          "name": "Salary",
+          "owner": "primary",
+          "monthly_amount": 10000,
+          "start_date": "2031-01-01",
+          "end_date": "2031-01-01",
+          "growth_rate": 0.02,
+          "is_w2": true
+        }
+      ],
+      "expenses": [
+        {
+          "id": "living",
+          "name": "Essential living",
+          "monthly_amount": 3750,
+          "start_date": "2031-01-01",
+          "end_date": "2036-12-31",
+          "category": "essential",
+          "is_must_spend": true,
+          "min_reduction": 0
+        },
+        {
+          "id": "flexible",
+          "name": "Flexible spending",
+          "monthly_amount": 1250,
+          "start_date": "2031-01-01",
+          "end_date": "2036-12-31",
+          "category": "discretionary",
+          "is_must_spend": false,
+          "min_reduction": 0.25
+        }
+      ],
+      "social_security": {
+        "primary_benefit_at_67": 0,
+        "primary_claiming_age": 67,
+        "spouse_benefit_at_67": 0,
+        "spouse_claiming_age": 67
+      },
+      "withdrawal_strategy": "dynamic",
+      "withdrawal_access_policy": "penalty_free",
+      "withdrawal_rate": 0.04,
+      "legacy_goal": 0,
+      "state": "CA",
+      "monetary_convention": "real",
+      "savings_order": [
+        "cash"
+      ],
+      "glidepath": {
+        "equity_by_age": {
+          "30": 0.5,
+          "50": 0.3,
+          "70": 0.2,
+          "90": 0.2
+        },
+        "pre_retirement_years": 5,
+        "post_retirement_years": 5,
+        "tent_equity_pct": 0.2,
+        "tent_ramp_years": 5
+      }
+    }
+  },
+  {
+    "name": "high",
+    "answers": {
+      "risk": "high",
+      "hasSocialSecurity": false,
+      "primaryAge": 64,
+      "primaryRetirementAge": 65,
+      "primaryLongevity": 68,
+      "accountBreakdown": true,
+      "cashAssets": 100000,
+      "brokerageAssets": 200000,
+      "traditionalAssets": 100000,
+      "rothAssets": 50000,
+      "unrealizedGainPercent": 25
+    },
+    "config": {
+      "name": "Wizard plan",
+      "description": "Created with the Mantissa web wizard; optional inputs may be provisional.",
+      "start_year": 2031,
+      "input_metadata": {
+        "account_breakdown": "provided",
+        "estimated_fields": [
+          "primary.birth_date",
+          "primary.retirement_date",
+          "economic.inflation",
+          "economic.medical_inflation",
+          "economic.housing_appreciation",
+          "economic.equity_real_return",
+          "economic.bond_real_return",
+          "social_security.primary_benefit_at_67",
+          "legacy_goal"
+        ]
+      },
+      "primary": {
+        "name": "Primary",
+        "birth_date": "1966-01-01",
+        "retirement_date": "2031-01-01",
+        "longevity_age": 68
+      },
+      "spouse": null,
+      "economic": {
+        "inflation": 0.025,
+        "medical_inflation": 0.04,
+        "housing_appreciation": 0.035,
+        "equity_real_return": 0.06,
+        "bond_real_return": 0.02
+      },
+      "accounts": [
+        {
+          "id": "cash",
+          "name": "Cash",
+          "type": "checking",
+          "tax_treatment": "taxable",
+          "balance": 100000,
+          "owner": "primary",
+          "asset_class": "cash",
+          "investment_income_profile": "cash"
+        },
+        {
+          "id": "brokerage",
+          "name": "Brokerage",
+          "type": "brokerage",
+          "tax_treatment": "taxable",
+          "balance": 200000,
+          "owner": "primary",
+          "investment_income_profile": "stock_index",
+          "unrealized_gain_fraction": 0.25
+        },
+        {
+          "id": "traditional",
+          "name": "Traditional retirement",
+          "type": "trad_ira",
+          "tax_treatment": "pre_tax",
+          "balance": 100000,
+          "owner": "primary"
+        },
+        {
+          "id": "roth",
+          "name": "Roth IRA",
+          "type": "roth_ira",
+          "tax_treatment": "roth",
+          "balance": 50000,
+          "owner": "primary"
+        }
+      ],
+      "income_streams": [
+        {
+          "id": "salary",
+          "name": "Salary",
+          "owner": "primary",
+          "monthly_amount": 10000,
+          "start_date": "2031-01-01",
+          "end_date": "2031-01-01",
+          "growth_rate": 0.02,
+          "is_w2": true
+        }
+      ],
+      "expenses": [
+        {
+          "id": "living",
+          "name": "Essential living",
+          "monthly_amount": 5000,
+          "start_date": "2031-01-01",
+          "end_date": "2036-12-31",
+          "category": "essential",
+          "is_must_spend": true,
+          "min_reduction": 0
+        }
+      ],
+      "social_security": {
+        "primary_benefit_at_67": 0,
+        "primary_claiming_age": 67,
+        "spouse_benefit_at_67": 0,
+        "spouse_claiming_age": 67
+      },
+      "withdrawal_strategy": "fixed",
+      "withdrawal_access_policy": "penalty_free",
+      "withdrawal_rate": 0.04,
+      "legacy_goal": 0,
+      "state": "CA",
+      "monetary_convention": "real",
+      "savings_order": [
+        "cash"
+      ],
+      "glidepath": {
+        "equity_by_age": {
+          "30": 1,
+          "50": 0.85,
+          "70": 0.7,
+          "90": 0.7
+        },
+        "pre_retirement_years": 5,
+        "post_retirement_years": 5,
+        "tent_equity_pct": 0.6499999999999999,
+        "tent_ramp_years": 5
+      }
+    }
+  },
+  {
+    "name": "spouse",
+    "answers": {
+      "hasSpouse": true,
+      "spouseAge": 33,
+      "spouseRetirementAge": 63,
+      "spouseLongevity": 95,
+      "annualIncome": 0,
+      "annualSpending": 0
+    },
+    "config": {
+      "name": "Wizard plan",
+      "description": "Created with the Mantissa web wizard; optional inputs may be provisional.",
+      "start_year": 2031,
+      "input_metadata": {
+        "account_breakdown": "missing",
+        "estimated_fields": [
+          "primary.birth_date",
+          "primary.retirement_date",
+          "economic.inflation",
+          "economic.medical_inflation",
+          "economic.housing_appreciation",
+          "economic.equity_real_return",
+          "economic.bond_real_return",
+          "social_security.primary_benefit_at_67",
+          "legacy_goal",
+          "spouse.birth_date",
+          "spouse.retirement_date",
+          "accounts.owner"
+        ]
+      },
+      "primary": {
+        "name": "Primary",
+        "birth_date": "1995-01-01",
+        "retirement_date": "2060-01-01",
+        "longevity_age": 92
+      },
+      "spouse": {
+        "name": "Spouse",
+        "birth_date": "1997-01-01",
+        "retirement_date": "2060-01-01",
+        "longevity_age": 95
+      },
+      "economic": {
+        "inflation": 0.025,
+        "medical_inflation": 0.04,
+        "housing_appreciation": 0.035,
+        "equity_real_return": 0.06,
+        "bond_real_return": 0.02
+      },
+      "accounts": [
+        {
+          "id": "aggregate",
+          "name": "Total savings (account types unknown)",
+          "type": "other",
+          "tax_treatment": "taxable",
+          "balance": 250000,
+          "owner": "primary",
+          "investment_income_profile": "stock_index"
+        }
+      ],
+      "income_streams": [],
+      "expenses": [],
+      "social_security": {
+        "primary_benefit_at_67": 2400,
+        "primary_claiming_age": 67,
+        "spouse_benefit_at_67": 0,
+        "spouse_claiming_age": 67
+      },
+      "withdrawal_strategy": "fixed",
+      "withdrawal_access_policy": "penalty_free",
+      "withdrawal_rate": 0.04,
+      "legacy_goal": 0,
+      "state": "CA",
+      "monetary_convention": "real",
+      "savings_order": [
+        "aggregate"
+      ],
+      "glidepath": {
+        "equity_by_age": {
+          "30": 0.8,
+          "50": 0.6,
+          "70": 0.44999999999999996,
+          "90": 0.44999999999999996
+        },
+        "pre_retirement_years": 5,
+        "post_retirement_years": 5,
+        "tent_equity_pct": 0.39999999999999997,
+        "tent_ramp_years": 5
+      }
+    }
+  }
+]

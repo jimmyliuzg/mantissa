@@ -31,6 +31,9 @@ const KNOWN_TOP_LEVEL = new Set([
   "name",
   "description",
   "schema_version",
+  "input_metadata",
+  "start_year",
+  "balance_date",
   "primary",
   "spouse",
   "economic",
@@ -146,6 +149,9 @@ export function summarizePlan(config: unknown): PlanReviewSummary {
 
   const assumptions: Array<[string, unknown]> = [
     ["State", root.state],
+    ["Opening year", root.start_year],
+    ["Statement date", root.balance_date],
+    ["Input estimates", root.input_metadata],
     ["Withdrawal strategy", root.withdrawal_strategy],
     ["Withdrawal rate", root.withdrawal_rate],
     ["Monetary convention", root.monetary_convention],

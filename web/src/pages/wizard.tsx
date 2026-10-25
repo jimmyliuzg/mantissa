@@ -1,6 +1,6 @@
 import { useState } from "preact/hooks";
 import { fmtMoney } from "../lib/format";
-import { buildSlimConfig, DEFAULT_ANSWERS, type WizardAnswers } from "../slim/types";
+import { buildSlimConfig, DEFAULT_ANSWERS, savingsTotal, type WizardAnswers } from "../slim/types";
 
 const STEPS: ReadonlyArray<{
   key: keyof WizardAnswers | "review";
@@ -19,7 +19,7 @@ const STEPS: ReadonlyArray<{
 ];
 
 /**
- * 10-step wizard. The user answers 8 questions, sees a review step,
+ * Nine-step wizard. The user answers 8 questions, sees a review step,
  * then either downloads the JSON or hands it to the viewer.
  */
 export function Wizard() {
@@ -30,7 +30,16 @@ export function Wizard() {
     setAnswers((a) => ({ ...a, [key]: value }));
   }
 
+  function validStep() {
+    const inputs = document.querySelectorAll<HTMLInputElement>(".wizard-step input");
+    for (const input of inputs) {
+      if (!input.checkValidity()) { input.reportValidity(); return false; }
+    }
+    return true;
+  }
+
   function next() {
+    if (!validStep()) return;
     setStep((s) => Math.min(STEPS.length - 1, s + 1));
   }
   function prev() {
@@ -134,7 +143,7 @@ function Step({ stepKey, answers, onChange }: StepProps) {
             value={answers.primaryRetirementAge}
             onChange={(v) => onChange("primaryRetirementAge", v)}
             min={answers.primaryAge + 1}
-            max={80}
+            max={Math.max(80, answers.primaryAge + 1)}
           />
           <NumberField
             label="Plan through age (longevity)"
@@ -171,7 +180,7 @@ function Step({ stepKey, answers, onChange }: StepProps) {
                 value={answers.spouseRetirementAge ?? answers.primaryRetirementAge}
                 onChange={(v) => onChange("spouseRetirementAge", v)}
                 min={(answers.spouseAge ?? answers.primaryAge) + 1}
-                max={80}
+                max={Math.max(80, (answers.spouseAge ?? answers.primaryAge) + 1)}
               />
               <NumberField
                 label="Spouse's longevity"
@@ -190,12 +199,37 @@ function Step({ stepKey, answers, onChange }: StepProps) {
           <p class="muted small">
             Total across all retirement and brokerage accounts. Don't include your home.
           </p>
-          <MoneyField
+          <ChoiceField value={answers.accountBreakdown} options={[
+            { value: false, label: "Use a total for now" },
+            { value: true, label: "Break down my accounts (optional)" },
+          ]} onChange={(v) => onChange("accountBreakdown", v)} />
+          {!answers.accountBreakdown && <MoneyField
             label="Investable assets"
             value={answers.investableAssets}
             onChange={(v) => onChange("investableAssets", v)}
             step={10_000}
-          />
+          />}
+          {answers.accountBreakdown && <>
+            <MoneyField label="Cash and savings" value={answers.cashAssets} onChange={(v) => onChange("cashAssets", v)} />
+            <MoneyField label="Taxable brokerage" value={answers.brokerageAssets} onChange={(v) => onChange("brokerageAssets", v)} />
+            <MoneyField label="Traditional IRA / 401(k)" value={answers.traditionalAssets} onChange={(v) => onChange("traditionalAssets", v)} />
+            <MoneyField label="Roth IRA" value={answers.rothAssets} onChange={(v) => onChange("rothAssets", v)} />
+            <p>Total: {fmtMoney(savingsTotal(answers))}. New savings go to cash or brokerage. Account ownership defaults to the primary person; workplace Roth and individual owners can be refined in the editor.</p>
+          </>}
+          <label class="row"><span>Statement date (optional)</span><input type="date" value={answers.balanceDate} onInput={(e) => onChange("balanceDate", e.currentTarget.value)} /></label>
+          <p class="muted small">The annual model starts next January. Entered balances carry unchanged to that date. Skipping the breakdown leaves account access unassessed.</p>
+          <details><summary>Refine tax assumptions (optional)</summary>
+            {answers.accountBreakdown && <>
+              <OptionalNumber label="Brokerage cost basis ($)" value={answers.brokerageBasis} onChange={(v) => onChange("brokerageBasis", v)} />
+              <OptionalNumber label="Or approximate unrealized gain (% of value)" value={answers.unrealizedGainPercent} onChange={(v) => onChange("unrealizedGainPercent", v)} max={100} />
+              <OptionalNumber label="Roth IRA regular contributions remaining ($)" value={answers.rothPrincipal} onChange={(v) => onChange("rothPrincipal", v)} />
+              <OptionalNumber label="First Roth contribution year" value={answers.rothFirstYear} onChange={(v) => onChange("rothFirstYear", v)} max={new Date().getFullYear()} />
+            </>}
+            <label class="row"><span>Taxable investment income</span><select value={answers.incomeProfile} onChange={(e) => onChange("incomeProfile", e.currentTarget.value as WizardAnswers["incomeProfile"])}>
+              <option value="stock_index">Stock index estimate</option><option value="balanced">Balanced estimate</option><option value="income">Income-focused estimate</option><option value="none">No annual distributions</option>
+            </select></label>
+            <p class="muted small">Profiles use illustrative yields, included in total return, with reinvestment. Review the resolved yields after running; advanced JSON supports exact yields and cash distributions. Blank basis remains unknown. Exact basis takes priority over the gain estimate.</p>
+          </details>
         </StepGroup>
       );
     case "annualIncome":
@@ -213,13 +247,19 @@ function Step({ stepKey, answers, onChange }: StepProps) {
     case "annualSpending":
       return (
         <StepGroup title="Retirement spending">
-          <p class="muted small">In today's dollars. The engine will inflate this for you.</p>
+          <p class="muted small">In today's dollars. Used before and after retirement; refine time periods in the editor.</p>
           <MoneyField
             label="Annual spending in retirement"
             value={answers.annualSpending}
             onChange={(v) => onChange("annualSpending", v)}
             step={2_500}
           />
+          <details><summary>Allow flexible spending (optional)</summary>
+            <NumberField label="Flexible share of annual spending (%)" value={answers.flexibleSpendingPercent} onChange={(v) => onChange("flexibleSpendingPercent", v)} min={0} max={100} />
+            <NumberField label="Maximum cut to flexible spending (%)" value={answers.maximumFlexibleCutPercent} onChange={(v) => onChange("maximumFlexibleCutPercent", v)} min={0} max={100} />
+            <ChoiceField value={answers.spendingStrategy} options={[{ value: "fixed", label: "Keep spending fixed" }, { value: "dynamic", label: "Adjust to portfolio health" }, { value: "guardrails", label: "Use portfolio guardrails" }]} onChange={(v) => onChange("spendingStrategy", v)} />
+            <p class="muted small">Cuts apply only to the flexible category and stay within your limit. Essential spending remains protected. Adjustments start when both people are retired.</p>
+          </details>
         </StepGroup>
       );
     case "state":
@@ -258,7 +298,7 @@ function Step({ stepKey, answers, onChange }: StepProps) {
               value={answers.monthlySocialSecurity}
               onChange={(v) => onChange("monthlySocialSecurity", v)}
               step={100}
-              hint="$2,400/mo is roughly the 2026 average. ssa.gov has your personalized estimate."
+              hint="Illustrative estimate for the primary person. Use your personalized ssa.gov estimate; add spousal benefits in the editor."
             />
           )}
         </StepGroup>
@@ -267,8 +307,7 @@ function Step({ stepKey, answers, onChange }: StepProps) {
       return (
         <StepGroup title="Investment risk tolerance">
           <p class="muted small">
-            Low = mostly bonds. Medium = 60/40. High = mostly stocks. The engine uses this for the
-            mean and volatility of simulated returns.
+            Low = mostly bonds. Medium = balanced. High = mostly stocks. These change the stock/bond allocation and retirement glidepath; the same market assumptions apply to each.
           </p>
           <ChoiceField
             value={answers.risk}
@@ -298,7 +337,11 @@ function Review({ answers }: { answers: WizardAnswers }) {
         ? `yes — age ${answers.spouseAge}, retire ${answers.spouseRetirementAge}, longevity ${answers.spouseLongevity}`
         : "no (single household)",
     ],
-    ["Investable assets", fmtMoney(answers.investableAssets)],
+    ["Investable assets", fmtMoney(savingsTotal(answers))],
+    ["Account detail", answers.accountBreakdown ? "Provided; refine owners in editor" : "Total only — account access unassessed"],
+    ["Statement date", answers.balanceDate || "Current estimate; date unconfirmed"],
+    ["Legacy goal", "$0 initially; edit to add a legacy target"],
+    ["Spending flexibility", `${answers.flexibleSpendingPercent}% flexible; ${answers.maximumFlexibleCutPercent}% maximum cut; ${answers.spendingStrategy}`],
     ["Annual income", fmtMoney(answers.annualIncome)],
     ["Annual spending", fmtMoney(answers.annualSpending)],
     ["State", answers.state],
@@ -382,6 +425,14 @@ function NumberField({
       {hint && <small class="muted">{hint}</small>}
     </label>
   );
+}
+
+function OptionalNumber({ label, value, onChange, max }: { label: string; value: number | null; onChange: (v: number | null) => void; max?: number }) {
+  return <label class="row"><span>{label}</span><input type="number" min={0} max={max} value={value ?? ""} placeholder="Unknown / skip" onInput={(e) => {
+    const raw = e.currentTarget.value;
+    if (raw === "") onChange(null);
+    else if (Number.isFinite(Number(raw))) onChange(Number(raw));
+  }} /></label>;
 }
 
 function MoneyField(props: {

@@ -167,6 +167,12 @@ class Account:
     return_volatility: Optional[float] = None
 
 
+    interest_yield: float = 0.0  # Nominal annual yield, included in total return.
+    dividend_yield: float = 0.0
+    capital_gain_yield: float = 0.0  # Long-term capital-gain fund distributions.
+    qualified_dividend_share: float = 0.0
+    reinvest_distributions: bool = True
+
     def project_balance(self, years: int, rate: float) -> float:
         return self.balance * (1 + rate) ** years
 
@@ -545,3 +551,5 @@ class TaxableIncome:
     capital_gains: float = 0.0  # Long-term capital gains from taxable brokerage sales
     tax_free: float = 0.0       # Roth withdrawals, HSA qualified distributions
     total: float = 0.0          # Convenience total (set by caller)
+    qualified_dividends: float = 0.0
+    investment_ordinary: float = 0.0  # Included in ordinary; NIIT classification only.

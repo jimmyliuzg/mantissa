@@ -35,11 +35,18 @@ def _print_mc_results(mc_results: dict, label: str = "MONTE CARLO RESULTS"):
     click.echo(f"  P90 Final NW:        {_fmt_money(mc_results['p90_final_nw'])}")
     click.echo(f"  Median Lifetime Tax: {_fmt_money(mc_results['median_taxes'])}")
     click.echo(f"  Out of Savings Rate: {mc_results['out_of_savings_rate'] * 100:.1f}%")
-    if mc_results.get("withdrawal_access_policy") == "penalty_free":
+    if mc_results.get("input_readiness", {}).get("provisional"):
+        click.echo("  Input readiness:     provisional (missing or estimated inputs)")
+    if not mc_results.get("input_readiness", {}).get("access_assessed", True):
+        click.echo("  Account Access:      unassessed (account breakdown missing)")
+    elif mc_results.get("withdrawal_access_policy") == "penalty_free":
         click.echo(f"  Account Access Fail: {mc_results['access_failure_rate'] * 100:.1f}%")
         click.echo(f"  Portfolio Depleted:  {mc_results['portfolio_depletion_rate'] * 100:.1f}%")
     elif mc_results.get("withdrawal_access_policy") == "unrestricted":
         click.echo("  Account Access:      not validated (unrestricted policy)")
+    if "spending_cut_frequency" in mc_results:
+        click.echo(f"  Runs with cuts:      {mc_results['spending_cut_frequency'] * 100:.1f}%")
+        click.echo(f"  Deepest annual cut:  {mc_results['maximum_spending_cut_fraction'] * 100:.1f}%")
     click.echo(f"  Simulations:         {mc_results['num_simulations']:,}")
     click.echo("=" * 52)
     dist = mc_results.get("mortality_distribution")

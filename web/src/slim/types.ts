@@ -1,22 +1,6 @@
-/**
- * Wizard types and the slim-config builder.
- *
- * The slim config is the smallest Mantissa config that the engine can
- * parse end-to-end (verified in the M0 spike). The wizard collects
- * answers in a flat WizardAnswers shape, then `buildSlimConfig()`
- * serializes to the engine's expected schema.
- *
- * Engine contract this code accommodates (see plan findings #3 and #4):
- *   - `spouse` may be `null` for a single household. The engine applies
- *     single-filer tax rules and projects through the primary's longevity.
- *   - `income_streams[].id`, `monthly_amount`, `end_date`, `is_w2`,
- *     `social_security_taxable` are required by the engine parser even
- *     though the schema doesn't enforce them.
- *   - `expenses[].id`, `monthly_amount`, `end_date`, `category`,
- *     `essential`, `inflation_adjusted` likewise.
- */
-
+/** Optional refinements serialize to the same Python config used by the CLI. */
 export type RiskTolerance = "low" | "medium" | "high";
+export type IncomeProfile = "none" | "stock_index" | "balanced" | "income";
 
 export interface WizardAnswers {
   primaryAge: number;
@@ -27,8 +11,22 @@ export interface WizardAnswers {
   spouseRetirementAge: number | null;
   spouseLongevity: number | null;
   investableAssets: number;
+  accountBreakdown: boolean;
+  cashAssets: number;
+  brokerageAssets: number;
+  traditionalAssets: number;
+  rothAssets: number;
+  balanceDate: string;
+  brokerageBasis: number | null;
+  unrealizedGainPercent: number | null;
+  rothPrincipal: number | null;
+  rothFirstYear: number | null;
+  incomeProfile: IncomeProfile;
   annualIncome: number;
   annualSpending: number;
+  flexibleSpendingPercent: number;
+  maximumFlexibleCutPercent: number;
+  spendingStrategy: "fixed" | "dynamic" | "guardrails";
   state: string;
   hasSocialSecurity: boolean;
   monthlySocialSecurity: number;
@@ -36,184 +34,82 @@ export interface WizardAnswers {
 }
 
 export const DEFAULT_ANSWERS: WizardAnswers = {
-  primaryAge: 35,
-  primaryRetirementAge: 65,
-  primaryLongevity: 92,
-  hasSpouse: false,
-  spouseAge: null,
-  spouseRetirementAge: null,
-  spouseLongevity: null,
-  investableAssets: 250_000,
-  annualIncome: 120_000,
-  annualSpending: 60_000,
-  state: "CA",
-  hasSocialSecurity: true,
-  monthlySocialSecurity: 2_400,
-  risk: "medium",
+  primaryAge: 35, primaryRetirementAge: 65, primaryLongevity: 92,
+  hasSpouse: false, spouseAge: null, spouseRetirementAge: null, spouseLongevity: null,
+  investableAssets: 250_000, accountBreakdown: false,
+  cashAssets: 0, brokerageAssets: 0, traditionalAssets: 0, rothAssets: 0,
+  balanceDate: "", brokerageBasis: null, unrealizedGainPercent: null,
+  rothPrincipal: null, rothFirstYear: null, incomeProfile: "stock_index",
+  annualIncome: 120_000, annualSpending: 60_000,
+  flexibleSpendingPercent: 0, maximumFlexibleCutPercent: 25, spendingStrategy: "fixed",
+  state: "CA", hasSocialSecurity: true, monthlySocialSecurity: 2_400, risk: "medium",
 };
 
-function today(): string {
-  // YYYY-MM-DD in the user's local zone. Used for start dates; engine
-  // treats them as anchors for active years.
-  return new Date().toISOString().slice(0, 10);
+export function savingsTotal(a: WizardAnswers): number {
+  return a.accountBreakdown
+    ? a.cashAssets + a.brokerageAssets + a.traditionalAssets + a.rothAssets
+    : a.investableAssets;
 }
 
-function birthDate(age: number): string {
-  const now = new Date();
-  // If today is the user's birthday already this year, age is exact;
-  // otherwise subtract one. Either way, an approximate ISO date is
-  // what the engine expects.
-  return new Date(now.getFullYear() - age, now.getMonth(), now.getDate())
-    .toISOString()
-    .slice(0, 10);
-}
-
-function retirementDate(age: number, currentAge: number): string {
-  const yearsUntil = Math.max(0, age - currentAge);
-  const now = new Date();
-  return new Date(now.getFullYear() + yearsUntil, now.getMonth(), now.getDate())
-    .toISOString()
-    .slice(0, 10);
-}
-
-function riskParams(risk: RiskTolerance): { mean: number; vol: number } {
-  switch (risk) {
-    case "low":
-      return { mean: 0.04, vol: 0.08 };
-    case "high":
-      return { mean: 0.08, vol: 0.18 };
-    case "medium":
-      return { mean: 0.06, vol: 0.13 };
+export function buildSlimConfig(a: WizardAnswers, now = new Date()) {
+  const year = now.getFullYear();
+  const startYear = year + 1;
+  const start = `${startYear}-01-01`;
+  const birth = (age: number) => `${year - age}-01-01`;
+  const retirement = (age: number, current: number) => `${Math.max(startYear, year + age - current)}-01-01`;
+  const spouseAge = a.spouseAge ?? a.primaryAge;
+  const spouseLongevity = a.spouseLongevity ?? a.primaryLongevity;
+  const endYear = Math.max(year + a.primaryLongevity - a.primaryAge,
+    a.hasSpouse ? year + spouseLongevity - spouseAge : 0) + 2;
+  const profile = a.incomeProfile;
+  const accounts: Array<Record<string, unknown>> = [];
+  const add = (id: string, name: string, type: string, tax: string, balance: number, extra = {}) => {
+    if (balance > 0) accounts.push({ id, name, type, tax_treatment: tax, balance, owner: "primary", ...extra });
+  };
+  const estimated = ["primary.birth_date", "primary.retirement_date", "economic.inflation", "economic.medical_inflation", "economic.housing_appreciation", "economic.equity_real_return", "economic.bond_real_return", "social_security.primary_benefit_at_67", "legacy_goal"];
+  if (a.hasSpouse) estimated.push("spouse.birth_date", "spouse.retirement_date", "accounts.owner");
+  if (a.accountBreakdown) {
+    add("cash", "Cash", "checking", "taxable", a.cashAssets, { asset_class: "cash", investment_income_profile: "cash" });
+    add("brokerage", "Brokerage", "brokerage", "taxable", a.brokerageAssets, {
+      investment_income_profile: profile,
+      ...(a.brokerageBasis !== null ? { cost_basis: a.brokerageBasis } :
+        a.unrealizedGainPercent !== null ? { unrealized_gain_fraction: a.unrealizedGainPercent / 100 } : {}),
+    });
+    add("traditional", "Traditional retirement", "trad_ira", "pre_tax", a.traditionalAssets);
+    add("roth", "Roth IRA", "roth_ira", "roth", a.rothAssets, {
+      ...(a.rothPrincipal !== null ? { roth_contribution_basis: a.rothPrincipal } : {}),
+      ...(a.rothFirstYear !== null ? { roth_first_contribution_year: a.rothFirstYear } : {}),
+    });
+  } else {
+    add("aggregate", "Total savings (account types unknown)", "other", "taxable", a.investableAssets, { investment_income_profile: profile });
   }
-}
-
-/**
- * Synthesize a single-account config that holds all the user's
- * investable assets. We pick `taxable` so the engine doesn't apply
- * contribution caps or required minimum distributions.
- */
-function accountsFromAssets(assets: number): unknown[] {
-  if (assets <= 0) return [];
-  return [
-    {
-      id: "brokerage",
-      name: "Brokerage",
-      type: "brokerage",
-      tax_treatment: "taxable",
-      balance: assets,
-      growth_rate: 0.07,
-    },
-  ];
-}
-
-/**
- * Build the slim config. Returns a deep object that the engine
- * accepts. The shape follows the example config in
- * `examples/sample_config.json`, NOT the schema validator's looser
- * subset (Finding #3 from the M0 spike).
- */
-export function buildSlimConfig(answers: WizardAnswers): unknown {
-  const { mean, vol } = riskParams(answers.risk);
-  const startDate = today();
-  // End date: max(primary longevity, spouse longevity) + a few years buffer.
-  const maxLongevity = Math.max(
-    answers.primaryLongevity,
-    answers.spouseLongevity ?? answers.primaryLongevity,
-  );
-  const longevityEndYear = new Date().getFullYear() + (maxLongevity - answers.primaryAge) + 5;
-  const endDate = `${longevityEndYear}-12-31`;
-
-  const accounts = accountsFromAssets(answers.investableAssets);
-  const monthlyIncome = Math.round(answers.annualIncome / 12);
-  const monthlySpending = Math.round(answers.annualSpending / 12);
-
+  // All new savings go to an unrestricted taxable destination. This avoids
+  // inventing IRA eligibility, contribution capacity or household ownership.
+  const savingsId = a.accountBreakdown ? (a.cashAssets > 0 ? "cash" : "brokerage") : "aggregate";
+  if (!accounts.some((acc) => acc.id === savingsId)) {
+    accounts.push({ id: savingsId, name: "New taxable savings", type: "brokerage", tax_treatment: "taxable", balance: 0, cost_basis: 0, investment_income_profile: profile });
+  }
+  const equity = { low: 0.3, medium: 0.6, high: 0.85 }[a.risk];
+  const flexible = a.annualSpending * a.flexibleSpendingPercent / 100;
+  const expense = (id: string, name: string, amount: number, required: boolean) => ({
+    id, name, monthly_amount: amount / 12, start_date: start, end_date: `${endYear}-12-31`,
+    category: required ? "essential" : "discretionary", is_must_spend: required,
+    min_reduction: required ? 0 : a.maximumFlexibleCutPercent / 100,
+  });
   return {
-    name: "Wizard plan",
-    description: "Created with the Mantissa web wizard.",
-    primary: {
-      name: "Primary",
-      birth_date: birthDate(answers.primaryAge),
-      retirement_date: retirementDate(answers.primaryRetirementAge, answers.primaryAge),
-      longevity_age: answers.primaryLongevity,
-    },
-    // Spouse is optional in the engine (issue #3). When the user
-    // is single, emit null so the engine projects to the primary's
-    // death year + 1 and treats the household as single from the
-    // start (no spousal SS, no survivor transition). ACA family size
-    // is computed dynamically from the snapshot; family_size in the
-    // config is now a warning if present, so we omit it.
-    spouse: answers.hasSpouse
-      ? {
-          name: "Spouse",
-          birth_date: birthDate(answers.spouseAge ?? answers.primaryAge),
-          retirement_date: retirementDate(
-            answers.spouseRetirementAge ?? answers.primaryRetirementAge,
-            answers.spouseAge ?? answers.primaryAge,
-          ),
-          longevity_age: answers.spouseLongevity ?? answers.primaryLongevity,
-        }
-      : null,
-    economic: {
-      inflation: 0.025,
-      medical_inflation: 0.04,
-      housing_appreciation: 0.035,
-      investment_return_mean: mean,
-      investment_return_volatility: vol,
-    },
+    name: "Wizard plan", description: "Created with the Mantissa web wizard; optional inputs may be provisional.",
+    start_year: startYear,
+    ...(a.balanceDate ? { balance_date: a.balanceDate } : {}),
+    input_metadata: { account_breakdown: a.accountBreakdown ? "provided" : "missing", estimated_fields: estimated },
+    primary: { name: "Primary", birth_date: birth(a.primaryAge), retirement_date: retirement(a.primaryRetirementAge, a.primaryAge), longevity_age: a.primaryLongevity },
+    spouse: a.hasSpouse ? { name: "Spouse", birth_date: birth(spouseAge), retirement_date: retirement(a.spouseRetirementAge ?? a.primaryRetirementAge, spouseAge), longevity_age: spouseLongevity } : null,
+    economic: { inflation: 0.025, medical_inflation: 0.04, housing_appreciation: 0.035, equity_real_return: 0.06, bond_real_return: 0.02 },
     accounts,
-    income_streams:
-      monthlyIncome > 0
-        ? [
-            {
-              id: "salary",
-              name: "Salary",
-              owner: "primary",
-              monthly_amount: monthlyIncome,
-              start_date: startDate,
-              end_date: retirementDate(answers.primaryRetirementAge, answers.primaryAge),
-              growth_rate: 0.02,
-              is_w2: true,
-              social_security_taxable: true,
-            },
-          ]
-        : [],
-    expenses:
-      monthlySpending > 0
-        ? [
-            {
-              id: "living",
-              name: "Living expenses",
-              monthly_amount: monthlySpending,
-              start_date: startDate,
-              end_date: endDate,
-              category: "essential",
-              essential: true,
-              inflation_adjusted: true,
-            },
-          ]
-        : [],
-    social_security: answers.hasSocialSecurity
-      ? {
-          primary_pia: answers.monthlySocialSecurity,
-          claiming_age_primary: 67,
-        }
-      : null,
-    withdrawal_strategy: "fixed",
-    withdrawal_rate: 0.04,
-    state: answers.state,
-    monetary_convention: "real",
-    savings_order: accounts.map((a) => (a as { id: string }).id),
-    // Default glidepath: 100% equity in early career, ramps to 40%
-    // by retirement with a 5-year bond tent, then back to 40-50%
-    // post-retirement. Without a glidepath the engine assumes 100%
-    // equity forever, which makes a 60-year horizon compound to
-    // lottery-ticket numbers regardless of contributions.
-    glidepath: {
-      equity_by_age: { 30: 1.0, 50: 0.8, 60: 0.5, 70: 0.4, 90: 0.4 },
-      pre_retirement_years: 10,
-      post_retirement_years: 5,
-      tent_equity_pct: 0.4,
-      tent_ramp_years: 10,
-    },
+    income_streams: a.annualIncome > 0 ? [{ id: "salary", name: "Salary", owner: "primary", monthly_amount: a.annualIncome / 12, start_date: start, end_date: retirement(a.primaryRetirementAge, a.primaryAge), growth_rate: 0.02, is_w2: true }] : [],
+    expenses: [expense("living", "Essential living", a.annualSpending - flexible, true), expense("flexible", "Flexible spending", flexible, false)].filter((e) => e.monthly_amount > 0),
+    social_security: { primary_benefit_at_67: a.hasSocialSecurity ? a.monthlySocialSecurity : 0, primary_claiming_age: 67, spouse_benefit_at_67: 0, spouse_claiming_age: 67 },
+    withdrawal_strategy: a.spendingStrategy, withdrawal_access_policy: "penalty_free", withdrawal_rate: 0.04,
+    legacy_goal: 0, state: a.state, monetary_convention: "real", savings_order: [savingsId],
+    glidepath: { equity_by_age: { 30: Math.min(1, equity + 0.2), 50: equity, 70: Math.max(0.2, equity - 0.15), 90: Math.max(0.2, equity - 0.15) }, pre_retirement_years: 5, post_retirement_years: 5, tent_equity_pct: Math.max(0.2, equity - 0.2), tent_ramp_years: 5 },
   };
 }

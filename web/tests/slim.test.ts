@@ -1,174 +1,30 @@
 import { describe, expect, it } from "vitest";
-import { buildSlimConfig, DEFAULT_ANSWERS } from "../src/slim/types";
+import { buildSlimConfig, DEFAULT_ANSWERS, savingsTotal, type WizardAnswers } from "../src/slim/types";
+import fixtures from "../../tests/fixtures/wizard-contract.json";
 
-describe("buildSlimConfig", () => {
-  it("returns an object with the engine-required top-level shape", () => {
-    const cfg = buildSlimConfig(DEFAULT_ANSWERS) as Record<string, unknown>;
-    expect(cfg).toHaveProperty("primary");
-    expect(cfg).toHaveProperty("spouse");
-    expect(cfg).toHaveProperty("economic");
-    expect(Array.isArray(cfg.accounts)).toBe(true);
-    expect(Array.isArray(cfg.income_streams)).toBe(true);
-    expect(Array.isArray(cfg.expenses)).toBe(true);
+const now = new Date(2030, 5, 15);
+describe("wizard engine contract", () => {
+  it.each(fixtures)("matches the native engine fixture: $name", ({ answers, config }) => {
+    expect(buildSlimConfig({ ...DEFAULT_ANSWERS, ...answers } as WizardAnswers, now)).toEqual(config);
   });
-
-  it("emits null spouse when hasSpouse=false (engine accepts null since issue #3)", () => {
-    // The engine now treats null spouse as a single-household plan.
-    // The slim builder no longer needs to fabricate a stub spouse.
-    const cfg = buildSlimConfig({
-      ...DEFAULT_ANSWERS,
-      hasSpouse: false,
-      primaryAge: 35,
-      primaryLongevity: 92,
-    }) as { spouse: unknown };
-    expect(cfg.spouse).toBeNull();
+  it("keeps full annual income rather than rounding monthly values", () => {
+    const cfg = buildSlimConfig({ ...DEFAULT_ANSWERS, annualIncome: 100_000 }, now);
+    expect(cfg.income_streams[0]!.monthly_amount * 12).toBeCloseTo(100_000);
+    expect(cfg.income_streams[0]!.start_date).toBe("2031-01-01");
   });
-
-  it("emits a real spouse object when hasSpouse=true", () => {
-    const cfg = buildSlimConfig({
-      ...DEFAULT_ANSWERS,
-      hasSpouse: true,
-      spouseAge: 33,
-      spouseRetirementAge: 65,
-      spouseLongevity: 94,
-    }) as { spouse: { name: string; birth_date: string; longevity_age: number } };
-    expect(cfg.spouse.name).toBe("Spouse");
-    expect(cfg.spouse.longevity_age).toBe(94);
-    expect(cfg.spouse.birth_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  it("uses the sum of optional account balances", () => {
+    expect(savingsTotal({ ...DEFAULT_ANSWERS, accountBreakdown: true, cashAssets: 100, traditionalAssets: 200 })).toBe(300);
   });
-
-  it("maps risk tolerance to economic params", () => {
-    const low = buildSlimConfig({ ...DEFAULT_ANSWERS, risk: "low" }) as {
-      economic: { investment_return_mean: number; investment_return_volatility: number };
-    };
-    const med = buildSlimConfig({ ...DEFAULT_ANSWERS, risk: "medium" }) as {
-      economic: { investment_return_mean: number; investment_return_volatility: number };
-    };
-    const high = buildSlimConfig({ ...DEFAULT_ANSWERS, risk: "high" }) as {
-      economic: { investment_return_mean: number; investment_return_volatility: number };
-    };
-    expect(low.economic.investment_return_volatility).toBeLessThan(
-      med.economic.investment_return_volatility,
-    );
-    expect(med.economic.investment_return_volatility).toBeLessThan(
-      high.economic.investment_return_volatility,
-    );
+  it("preserves unknown basis and explicit zero separately", () => {
+    const cfg = buildSlimConfig({ ...DEFAULT_ANSWERS, accountBreakdown: true, brokerageAssets: 1000, brokerageBasis: 0, rothAssets: 1000 }, now);
+    expect(cfg.accounts.find((a) => a.id === "brokerage")!.cost_basis).toBe(0);
+    expect(cfg.accounts.find((a) => a.id === "roth")).not.toHaveProperty("roth_contribution_basis");
   });
-
-  it("rounds monthly income / spending to integers", () => {
-    const cfg = buildSlimConfig({
-      ...DEFAULT_ANSWERS,
-      annualIncome: 100_000,
-      annualSpending: 36_000,
-    }) as {
-      income_streams: Array<{ monthly_amount: number }>;
-      expenses: Array<{ monthly_amount: number }>;
-    };
-    expect(cfg.income_streams[0]?.monthly_amount).toBe(8_333);
-    expect(cfg.expenses[0]?.monthly_amount).toBe(3_000);
-  });
-
-  it("emits one brokerage account equal to the user's assets", () => {
-    const cfg = buildSlimConfig({
-      ...DEFAULT_ANSWERS,
-      investableAssets: 500_000,
-    }) as { accounts: Array<{ type: string; balance: number }> };
-    expect(cfg.accounts).toHaveLength(1);
-    expect(cfg.accounts[0]?.type).toBe("brokerage");
-    expect(cfg.accounts[0]?.balance).toBe(500_000);
-  });
-
-  it("omits income_streams and expenses rows when the user enters 0", () => {
-    const cfg = buildSlimConfig({
-      ...DEFAULT_ANSWERS,
-      annualIncome: 0,
-      annualSpending: 0,
-    }) as { income_streams: unknown[]; expenses: unknown[] };
-    expect(cfg.income_streams).toHaveLength(0);
-    expect(cfg.expenses).toHaveLength(0);
-  });
-
-  it("emits a default glidepath so a 60-year horizon doesn't compound to lottery numbers", () => {
-    // Without a glidepath the engine assumes 100% equity forever,
-    // which produces $90B+ terminal net worth for any reasonable
-    // starting balance. The default glidepath ramps equity from 100%
-    // at age 30 to 40% at retirement with a bond tent.
-    const cfg = buildSlimConfig(DEFAULT_ANSWERS) as {
-      glidepath: {
-        equity_by_age: Record<number, number>;
-        tent_equity_pct: number;
-      };
-    };
-    expect(cfg.glidepath).toBeDefined();
-    // Equity must decrease from young to old.
-    const young = cfg.glidepath.equity_by_age[30] ?? 1;
-    const old = cfg.glidepath.equity_by_age[70] ?? 0;
-    expect(young).toBeGreaterThan(old);
-    // Bond tent must be lower than the pre-tent allocation.
-    expect(cfg.glidepath.tent_equity_pct).toBeLessThan(0.6);
-  });
-
-  it("populates every engine-required field on income_streams and expenses", () => {
-    // Engine requires id, name, owner, monthly_amount, start_date,
-    // end_date, growth_rate, is_w2, social_security_taxable on
-    // income_streams; id, name, monthly_amount, start_date, end_date,
-    // category, essential, inflation_adjusted on expenses.
-    const cfg = buildSlimConfig(DEFAULT_ANSWERS) as {
-      income_streams: Array<Record<string, unknown>>;
-      expenses: Array<Record<string, unknown>>;
-    };
-    const incKeys = Object.keys(cfg.income_streams[0] ?? {}).sort();
-    expect(incKeys).toEqual(
-      [
-        "end_date",
-        "growth_rate",
-        "id",
-        "is_w2",
-        "monthly_amount",
-        "name",
-        "owner",
-        "social_security_taxable",
-        "start_date",
-      ].sort(),
-    );
-    const expKeys = Object.keys(cfg.expenses[0] ?? {}).sort();
-    expect(expKeys).toEqual(
-      [
-        "category",
-        "end_date",
-        "essential",
-        "id",
-        "inflation_adjusted",
-        "monthly_amount",
-        "name",
-        "start_date",
-      ].sort(),
-    );
-  });
-
-  it("emits an ISO date for every date field (default config has a spouse)", () => {
-    // DEFAULT_ANSWERS.hasSpouse is false, so the slim config emits
-    // spouse: null. The engine accepts null. We test the ISO-date
-    // invariant on a config where hasSpouse=true so all date fields
-    // are present.
-    const cfg = buildSlimConfig({ ...DEFAULT_ANSWERS, hasSpouse: true }) as {
-      primary: { birth_date: string; retirement_date: string };
-      spouse: { birth_date: string; retirement_date: string };
-      income_streams: Array<{ start_date: string; end_date: string }>;
-      expenses: Array<{ start_date: string; end_date: string }>;
-    };
-    const dateFields = [
-      cfg.primary.birth_date,
-      cfg.primary.retirement_date,
-      cfg.spouse.birth_date,
-      cfg.spouse.retirement_date,
-      cfg.income_streams[0]?.start_date,
-      cfg.income_streams[0]?.end_date,
-      cfg.expenses[0]?.start_date,
-      cfg.expenses[0]?.end_date,
-    ];
-    for (const d of dateFields) {
-      expect(d).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-    }
+  it("disables benefits with canonical zero fields", () => {
+    const cfg = buildSlimConfig({ ...DEFAULT_ANSWERS, hasSocialSecurity: false }, now);
+    expect(cfg.social_security.primary_benefit_at_67).toBe(0);
+    expect(cfg.social_security.spouse_benefit_at_67).toBe(0);
+    expect(cfg.expenses[0]!.is_must_spend).toBe(true);
+    expect(cfg.legacy_goal).toBe(0);
   });
 });

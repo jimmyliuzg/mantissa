@@ -31,3 +31,21 @@ def test_browser_result_preserves_model_warnings():
     assert "accessFailureRate" in result["kpis"]
     assert "portfolioDepletionRate" in result["kpis"]
     assert all("accessShortfall" in row for row in result["cashFlow"])
+
+
+def test_total_only_browser_result_does_not_imply_account_access_validation():
+    source = (Path(__file__).resolve().parents[2] / "web/src/engine/pyodide.ts").read_text()
+    code = source.split("    const code = `", 1)[1].split("\n`;", 1)[0]
+    config = json.loads((Path(__file__).parents[1] / "fixtures/wizard-contract.json").read_text())[0]['config']
+    namespace = {"MANTISSA_CONFIG": config, "MANTISSA_SIMS": 1,
+                 "MANTISSA_METHOD": "gaussian", "MANTISSA_SEED": 42}
+    program = ast.parse(code)
+    last = program.body.pop()
+    exec(compile(program, "browser-adapter", "exec"), namespace)
+    result = json.loads(eval(compile(ast.Expression(last.value), "browser-result", "eval"), namespace))
+    assert result['kpis']['provisional'] is True
+    assert result['kpis']['accessAssessed'] is False
+    assert 'accessFailureRate' not in result['kpis']
+    assert result['inputReadiness']['access_assessed'] is False
+    assert result['kpis']['spendingCutFrequency'] == 0
+    assert all(row['accessibleSpendingBalance'] is None for row in result['cashFlow'])

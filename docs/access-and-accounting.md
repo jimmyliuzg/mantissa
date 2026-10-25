@@ -42,7 +42,7 @@ Recognized retirement account types infer their tax treatment when omitted; cont
 
 The price index is `(1 + inflation) ** (year - start_year)`; the base-year row has index 1. In that row investment growth uses real returns in both conventions. Later nominal rows include the index step as well as real growth. This avoids an extra first-year inflation gain relative to base-year income, expenses and tax conversion. Annual rows include that year's market growth and cash flows, while `get_account_balance` remains a simple elapsed-years estimate rather than the cash-flow projection API.
 
-Opening account balances and tax basis are nominal opening amounts, which equal real amounts at index 1. Tax basis is not inflation indexed: internally its REAL representation is rebased each year so its nominal value stays fixed. Contributions create nominal basis at their transaction year's index. Proportional sales realize nominal gains, including inflation-only gains. Cash/checking withdrawals do not manufacture capital gains; bank interest and investment distributions still require separate tax-drag modeling.
+Opening account balances and tax basis are nominal opening amounts, which equal real amounts at index 1. Tax basis is not inflation indexed: internally its REAL representation is rebased each year so its nominal value stays fixed. Contributions create nominal basis at their transaction year's index. Proportional sales realize nominal gains, including inflation-only gains. Cash/checking withdrawals do not manufacture capital gains; optional bank interest and investment distributions are modeled as described in [input refinements](input-refinements.md).
 
 Existing mortgage balances, monthly payments, reset payments and deduction debt limits are **nominal contractual amounts**. Debt amortizes in nominal dollars; expenses and liabilities are converted for reporting. A fixed nominal payment declines in real purchasing power. Rate resets do not increase payments by general inflation unless the supplied reset actually changes the contract payment.
 
@@ -52,7 +52,7 @@ Conversions use base-year purchasing-power schedules, like recurring expenses. P
 
 ## Verification and boundaries
 
-Anonymous regressions compare equivalent real and nominal scenarios through inflation-only gains, partial sales, house sales, purchases/new loans, mortgage payoff and ARM resets, conversion cohorts, healthcare benefits, RMDs and common stochastic returns/fees. The tests verify modeled accounting relationships; they do not implement a tax return or all account exceptions. Fixed inflation, aggregate basis, annual execution, incomplete investment distributions and inherited-account treatment remain limitations.
+Anonymous regressions compare equivalent real and nominal scenarios through inflation-only gains, partial sales, house sales, purchases/new loans, mortgage payoff and ARM resets, conversion cohorts, healthcare benefits, RMDs and common stochastic returns/fees. The tests verify modeled accounting relationships; they do not implement a tax return or all account exceptions. Fixed inflation, aggregate basis, annual execution, deterministic distribution yields and inherited-account treatment remain limitations.
 
 Policy references: [IRS Publication 590-B](https://www.irs.gov/publications/p590b), [IRS Publication 969](https://www.irs.gov/publications/p969). These describe distribution rules; the engine's conservative annual approximation and unsupported exceptions are specified above.
 

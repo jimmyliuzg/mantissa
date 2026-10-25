@@ -22,6 +22,9 @@ interface FieldDef {
  */
 const FIELDS: ReadonlyArray<FieldDef> = [
   { path: "name", label: "Plan name", kind: "text" },
+  { path: "balance_date", label: "Statement date", kind: "date" },
+  { path: "legacy_goal", label: "Legacy goal (today’s dollars)", kind: "number", step: 10000 },
+  { path: "withdrawal_strategy", label: "Spending strategy", kind: "select", options: ["fixed", "guardrails", "dynamic", "percent_of_portfolio", "floor_ceiling"] },
   { path: "state", label: "State (2-letter)", kind: "text" },
   {
     path: "withdrawal_rate",
@@ -48,14 +51,14 @@ const FIELDS: ReadonlyArray<FieldDef> = [
   },
   { path: "economic.medical_inflation", label: "Medical inflation", kind: "number", step: 0.001 },
   {
-    path: "economic.investment_return_mean",
-    label: "Mean real return",
+    path: "economic.equity_real_return",
+    label: "Equity real total return",
     kind: "number",
     step: 0.005,
   },
   {
-    path: "economic.investment_return_volatility",
-    label: "Return volatility",
+    path: "economic.bond_real_return",
+    label: "Bond real total return",
     kind: "number",
     step: 0.005,
   },
@@ -74,7 +77,7 @@ export function ConfigDrawer({ store }: ConfigDrawerProps) {
     <aside class="drawer" aria-label="Edit plan">
       <header>
         <h2>Plan</h2>
-        <p class="muted small">Edits re-run the engine after 400 ms.</p>
+        <p class="muted small">Edits re-run the engine after 400 ms. Rates are decimals: 0.02 = 2%. Optional blank fields keep engine defaults. Exact yields override the selected income profile.</p>
       </header>
 
       <fieldset>
@@ -139,6 +142,12 @@ export function ConfigDrawer({ store }: ConfigDrawerProps) {
           { name: "balance", kind: "number", step: 1000 },
           { name: "growth_rate", kind: "number", step: 0.005 },
           { name: "monthly_contribution", kind: "number", step: 50 },
+          { name: "cost_basis", kind: "number", step: 1000 },
+          { name: "roth_contribution_basis", kind: "number", step: 1000 },
+          { name: "roth_first_contribution_year", kind: "number", step: 1 },
+          { name: "interest_yield", kind: "number", step: .001 },
+          { name: "dividend_yield", kind: "number", step: .001 },
+          { name: "qualified_dividend_share", kind: "number", step: .05 },
         ]}
         store={store}
         config={config}

@@ -209,7 +209,11 @@ class MonteCarloEngine:
 
         return {
             "success_rate": success_rate,
-            "access_failure_rate": sum(r.get("access_shortfall_year") is not None for r in results) / num_simulations,
+            "input_readiness": self.planner.input_readiness,
+            "spending_cut_frequency": sum(r["years_with_spending_cuts"] > 0 for r in results) / num_simulations,
+            "median_years_with_spending_cuts": float(np.median([r["years_with_spending_cuts"] for r in results])),
+            "maximum_spending_cut_fraction": max(r["maximum_spending_cut_fraction"] for r in results),
+            "access_failure_rate": sum(r.get("access_shortfall_year") is not None for r in results) / num_simulations if self.planner.input_readiness["access_assessed"] else None,
             "portfolio_depletion_rate": sum(r.get("portfolio_depletion_year") is not None for r in results) / num_simulations,
             "withdrawal_access_policy": self.planner.scenario.withdrawal_access_policy,
             "num_simulations": num_simulations,

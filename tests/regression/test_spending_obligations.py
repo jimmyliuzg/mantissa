@@ -83,14 +83,15 @@ def test_paid_off_mortgage_does_not_leave_a_phantom_floor():
     assert rows[1]["expenses"] == pytest.approx(12_000)
 
 
-def test_funded_expenses_do_not_supply_cash_spending_cuts():
+def test_flexible_funded_expenses_are_cut_before_payment():
     p = make_planner(expenses=[expense("basic", 1000),
                               expense("giving", 1000, is_must_spend=False,
                                       min_reduction=1, funding_account="cash")])
     row = p.project_cash_flow()[0]
-    assert row["funded_expenses"] == pytest.approx(12_000)
+    assert row["funded_expenses"] == pytest.approx(9_600)
     assert row["cash_expenses"] == pytest.approx(12_000)
-    assert row["expenses"] == pytest.approx(24_000)
+    assert row["expenses"] == pytest.approx(21_600)
+    assert row["expenses_by_id"]["giving"] == pytest.approx(9_600)
 
 
 def test_medical_excess_inflation_is_not_cut():

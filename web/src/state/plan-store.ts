@@ -1,6 +1,6 @@
 import { type RunResult, engine } from "@engine";
 import { type Signal, signal } from "@preact/signals";
-import { setPath } from "../lib/config-edit";
+import { getPath, setPath } from "../lib/config-edit";
 
 /**
  * Reactive plan store. M2's single source of truth.
@@ -68,7 +68,13 @@ export function createPlanStore(initial: unknown, initialSims = 1000, initialSee
   }
 
   function setConfigField(path: string, value: unknown): void {
-    config.value = setPath(config.value, path, value);
+    let next = setPath(config.value, path, value);
+    const estimated = getPath(next, "input_metadata.estimated_fields");
+    if (Array.isArray(estimated)) {
+      const canonical = path.replace(/\.(\d+)(?=\.|$)/g, "[$1]");
+      next = setPath(next, "input_metadata.estimated_fields", estimated.filter((p) => p !== canonical));
+    }
+    config.value = next;
   }
 
   function setSims(n: number): void {

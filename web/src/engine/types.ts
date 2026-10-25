@@ -21,6 +21,11 @@ export interface RunOptions {
 
 export interface Kpis {
   successRate: number;
+  provisional?: boolean;
+  accessAssessed?: boolean;
+  spendingCutFrequency?: number;
+  medianYearsWithSpendingCuts?: number;
+  maximumSpendingCutFraction?: number;
   accessFailureRate?: number;
   portfolioDepletionRate?: number;
   medianFinalNetWorth: number;
@@ -40,8 +45,11 @@ export interface CashFlowRow {
   taxes: number;
   netWorth: number;
   netCashFlow: number;
-  accessibleSpendingBalance?: number;
-  accessShortfall?: number;
+  accessibleSpendingBalance?: number | null;
+  accessShortfall?: number | null;
+  plannedExpenses?: number;
+  spendingCut?: number;
+  investmentIncome?: number;
 }
 
 export interface McPercentilePoint {
@@ -78,6 +86,11 @@ export interface RunResult {
   cashFlow: CashFlowRow[];
   mc: McResult;
   warnings: Warning[];
+  inputReadiness?: {
+    provisional: boolean;
+    access_assessed: boolean;
+    items: Array<{ path: string; status: "provided" | "estimated" | "missing"; detail: string }>;
+  };
   /** Wall-clock runtime in milliseconds, for the UI run-status panel. */
   runtimeMs: number;
   /** When the run completed (epoch ms). */
