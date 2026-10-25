@@ -2586,6 +2586,10 @@ class RetirementPlanner:
         taxes, ACA subsidy, net worth) are returned under "projections"
         — used by the MC↔deterministic parity harness.
         """
+        from .outcomes import OutcomeTracker
+        access_assessed = (self.input_readiness["access_assessed"]
+                           and self.scenario.withdrawal_access_policy == "penalty_free")
+        outcome_tracker = OutcomeTracker(access_assessed)
         years_with_spending_cuts = 0
         maximum_spending_cut_fraction = 0.0
         total_taxes = 0.0
@@ -3106,7 +3110,8 @@ class RetirementPlanner:
             if housing_shortfall > 1 and out_of_savings_year is None:
                 out_of_savings_year = year
 
-            if spending_cut > 1.0:
+            outcome_tolerance = monetary_policy.adjust_for_inflation(1.0, year, inflation_rate)
+            if spending_cut > outcome_tolerance:
                 years_with_spending_cuts += 1
                 maximum_spending_cut_fraction = max(maximum_spending_cut_fraction, spending_cut / planned_spending)
 
@@ -3344,10 +3349,14 @@ class RetirementPlanner:
             unfunded = max(0.0, needed - covered)
             access_shortfall = min(unfunded, restricted_capacity)
             depletion_shortfall = max(0.0, unfunded - restricted_capacity)
-            if access_shortfall > 1 and access_shortfall_year is None:
+            if access_shortfall > outcome_tolerance and access_shortfall_year is None:
                 access_shortfall_year = year
-            if (depletion_shortfall > 1 or housing_shortfall > 1) and portfolio_depletion_year is None:
+            if (depletion_shortfall > outcome_tolerance or housing_shortfall > outcome_tolerance) and portfolio_depletion_year is None:
                 portfolio_depletion_year = year
+
+            annual_outcomes = outcome_tracker.observe(
+                year, unfunded, access_shortfall, depletion_shortfall,
+                housing_shortfall, spending_cut, outcome_tolerance)
 
             total_taxes += taxes
             total_aca_subsidy += subsidy_used
@@ -3426,6 +3435,7 @@ class RetirementPlanner:
                     "expenses_by_category": expense_data["by_category"],
                     "expenses_by_id": dict(actual_by_expense),
                     "planned_expenses": planned_spending,
+                    **annual_outcomes,
                     "spending_cut": spending_cut,
                     "spending_cut_fraction": spending_cut / planned_spending if planned_spending else 0.0,
                     "investment_income": investment_ordinary + investment_qualified + investment_capital_gains,
@@ -3438,9 +3448,9 @@ class RetirementPlanner:
                     "net_cash_flow": annual_income - annual_expenses - taxes + subsidy_used,
                     "account_balances": dict(balances),
                     "taxable_cash_opening": taxable_cash_opening,
-                    "accessible_spending_balance": accessible_capacity if self.input_readiness["access_assessed"] else None,
-                    "restricted_spending_balance": restricted_capacity if self.input_readiness["access_assessed"] else None,
-                    "access_shortfall": access_shortfall if self.input_readiness["access_assessed"] else None,
+                    "accessible_spending_balance": accessible_capacity if access_assessed else None,
+                    "restricted_spending_balance": restricted_capacity if access_assessed else None,
+                    "access_shortfall": access_shortfall if access_assessed else None,
                     "portfolio_depletion_shortfall": depletion_shortfall,
                     "withdrawals_by_account": {aid: sum(w.amount for w in withdrawals if w.account_id == aid and w.tax_treatment != "rmd_reinvested") for aid in balances},
                     "roth_conversion_schedule": withdrawal_engine.access.schedule(),
@@ -3492,8 +3502,28 @@ class RetirementPlanner:
         success = (final_nw_after_estate > monetary_policy.adjust_for_inflation(self.scenario.legacy_goal, year)
                    and out_of_savings_year is None)
 
+        # Single-household and stochastic paths do not emit the two-person
+        # estate event. Estimate terminal estate tax for the separate legacy
+        # goal, without changing historical cash-flow or success fields.
+        legacy_estate_tax = total_estate_tax
+        estate_tax_timing = "annual_projection"
+        if not snap.estate_event:
+            estate_filing = FilingStatus.MFJ if self.scenario.spouse is not None and snap.first_death_year is None else FilingStatus.SINGLE
+            legacy_estate_tax = monetary_policy.from_nominal_after_tax(
+                tax_law_estate(monetary_policy.to_nominal_for_tax(final_nw, year), law, estate_filing), year)
+            estate_tax_timing = "terminal_estimate"
+        goal_outcomes = outcome_tracker.finish(
+            final_nw - legacy_estate_tax,
+            monetary_policy.adjust_for_inflation(self.scenario.legacy_goal, year))
+        goal_outcomes.update({"base_year": self.start_year, "final_year": year,
+                              "monetary_convention": self.scenario.monetary_convention.value,
+                              "legacy_target_base_year": self.scenario.legacy_goal,
+                              "final_wealth_after_estate": final_nw - legacy_estate_tax,
+                              "estate_tax": legacy_estate_tax,
+                              "estate_tax_timing": estate_tax_timing})
         return {
             "success": success,
+            "outcomes": goal_outcomes,
             "model_warnings": list(self.model_warnings),
             "input_readiness": self.input_readiness,
             "years_with_spending_cuts": years_with_spending_cuts,
@@ -3510,7 +3540,7 @@ class RetirementPlanner:
             "lifetime_ss": total_ss,
             "lifetime_contributions": total_contributions,
             "out_of_savings_year": out_of_savings_year,
-            "access_shortfall_year": access_shortfall_year if self.input_readiness["access_assessed"] else None,
+            "access_shortfall_year": access_shortfall_year if access_assessed else None,
             "portfolio_depletion_year": portfolio_depletion_year,
             "withdrawal_access_policy": self.scenario.withdrawal_access_policy,
             "death_age": stochastic_death_age,

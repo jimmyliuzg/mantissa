@@ -10,7 +10,7 @@ import { PlanReview } from "../components/plan-review";
 import { RunBadge, RunProgress } from "../components/run-progress";
 import { ShareBar } from "../components/share-bar";
 import { fmtMoney, fmtPct } from "../lib/format";
-import { SUCCESS_THRESHOLDS, successTone } from "../lib/success";
+import { OutcomeSummary, SpendingDetail } from "../components/outcome-summary";
 import {
   type ShareableSnapshot,
   decodeConfig,
@@ -199,15 +199,16 @@ function Ready({ result }: { result: RunResult }) {
           <ul>{result.inputReadiness.items.map((item) => <li key={item.path}><strong>{item.path}: {item.status}</strong> — {item.detail}</li>)}</ul>
         </details>
       </section>}
-      <KpiRow kpis={result.kpis} />
-      <PlanSummary kpis={result.kpis} />
+      <KpiRow kpis={result.kpis} outcomes={result.outcomes} />
+      <OutcomeSummary result={result} />
+      <SpendingDetail rows={result.cashFlow} outcomes={result.outcomes} />
       <section class="panel">
         <h2>Cash flow</h2>
         <CashFlowChart rows={result.cashFlow} />
         <p class="muted small">
           Income {fmtMoney(result.cashFlow.reduce((s, r) => s + r.income, 0))} · Expenses{" "}
           {fmtMoney(result.cashFlow.reduce((s, r) => s + r.expenses, 0))} · Taxes{" "}
-          {fmtMoney(result.cashFlow.reduce((s, r) => s + r.taxes, 0))} · Success rate{" "}
+          {fmtMoney(result.cashFlow.reduce((s, r) => s + r.taxes, 0))} · Combined success (legacy){" "}
           {fmtPct(result.kpis.successRate)}
         </p>
       </section>
@@ -260,51 +261,5 @@ function ResultsSkeleton() {
       <div class="panel skeleton skeleton--tall" />
       <div class="panel skeleton skeleton--tall" />
     </div>
-  );
-}
-
-function PlanSummary({ kpis }: { kpis: RunResult["kpis"] }) {
-  if (kpis.provisional) return <p class="plan-summary" data-tone="info">
-    This is a provisional estimate. Review the missing and estimated inputs above before using it to set a retirement date.
-    {kpis.accessAssessed === false && " Account access is unassessed until savings are separated by account type."}
-  </p>;
-  const r = kpis.successRate;
-  const nw = kpis.medianFinalNetWorth;
-  const oos = kpis.outOfSavingsRate;
-  const t = successTone(r);
-
-  if (r >= SUCCESS_THRESHOLDS.excellent) {
-    const overSaving = nw > 5_000_000;
-    return (
-      <p class="plan-summary" data-tone={overSaving ? "info" : t}>
-        {overSaving
-          ? `Success rate ${fmtPct(r)} with a median terminal net worth of ${fmtMoney(nw)} — this plan is over-saving. You could retire earlier, spend more in retirement, or set a smaller legacy goal. Try lowering "Annual spending in retirement" in the wizard to see what changes.`
-          : `Success rate ${fmtPct(r)} — your plan covers retirement spending in nearly all market scenarios. Median terminal net worth is ${fmtMoney(nw)}.`}
-      </p>
-    );
-  }
-  if (r >= SUCCESS_THRESHOLDS.good) {
-    return (
-      <p class="plan-summary" data-tone={t}>
-        Success rate {fmtPct(r)} — the plan holds up in most market scenarios. Median terminal net
-        worth is {fmtMoney(nw)}.
-      </p>
-    );
-  }
-  if (r >= SUCCESS_THRESHOLDS.fair) {
-    return (
-      <p class="plan-summary" data-tone={t}>
-        Success rate {fmtPct(r)} — the plan works in a majority of market scenarios but is
-        vulnerable to extended downturns. Median terminal net worth is {fmtMoney(nw)}. Try
-        increasing savings, lowering retirement spending, or delaying retirement.
-      </p>
-    );
-  }
-  return (
-    <p class="plan-summary" data-tone={t}>
-      Success rate {fmtPct(r)} — the plan runs out of money in {fmtPct(oos)} of scenarios. The
-      numbers below show the median outcome, which assumes an average market. Consider higher
-      savings, lower retirement spending, or a later retirement date.
-    </p>
   );
 }

@@ -36,7 +36,7 @@ Recognized retirement account types infer their tax treatment when omitted; cont
 - Monte Carlo reports `access_failure_rate` and `portfolio_depletion_rate`. These overlap and must not be added together. The browser shows them separately under the default access policy.
 - Annual rows expose taxable cash at opening, accessible and restricted spending balances before the final draw, withdrawals by account, funding shortfalls, and remaining conversion cohorts with nominal principal and seasoning years. Accessible balance is gross capital before the tax cost of withdrawing it.
 
-`success` continues to require funded spending and the after-estate legacy goal. Access failure invalidates spending feasibility even when terminal wealth is large.
+`success` retains its historical joint definition. [Separate goal outcomes](goal-outcomes.md) now distinguish planned/adjusted budget funding, assessed account access and legacy attainment, including boundary and estate-estimate differences. Access failure invalidates spending feasibility even when terminal wealth is large.
 
 ## Monetary units and timing
 

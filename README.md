@@ -356,4 +356,8 @@ private-file names, contact details, home paths and credential patterns.
 
 ### Optional input refinement
 
-The browser keeps a total-savings shortcut, with optional account breakdown, tax basis, Roth principal, investment-income profiles and spending flexibility. Missing/estimated inputs are flagged and total-only account access remains unassessed. See [input refinements](docs/input-refinements.md) for calculation details and [upcoming priorities 4 and 5](docs/upcoming-improvements.md) for the next packages.
+The browser keeps a total-savings shortcut, with optional account breakdown, tax basis, Roth principal, investment-income profiles and spending flexibility. Missing/estimated inputs are flagged and total-only account access remains unassessed. See [input refinements](docs/input-refinements.md) for calculation details and [delivered priority 4 and upcoming priority 5](docs/upcoming-improvements.md) for the next packages.
+
+### Separate goal outcomes
+
+Results now distinguish planned spending without cuts, funded adjusted budgets, account-access gaps and after-estate legacy attainment. The historical combined success metric remains available with an explicit compatibility label. See [goal outcome definitions](docs/goal-outcomes.md) for reporting thresholds, terminal estate estimates and old-snapshot behavior.

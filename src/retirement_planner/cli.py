@@ -29,12 +29,16 @@ def _print_mc_results(mc_results: dict, label: str = "MONTE CARLO RESULTS"):
     click.echo("=" * 52)
     click.echo(f"  {label}")
     click.echo("=" * 52)
-    click.echo(f"  Success Rate:        {mc_results['success_rate'] * 100:.1f}%")
+    from .reports import outcome_metric_rows, OUTCOME_EXPLANATION
+    for label, value in outcome_metric_rows(mc_results):
+        click.echo(f"  {label}: {value}")
+    import textwrap
+    click.echo(textwrap.fill(OUTCOME_EXPLANATION, width=88, initial_indent="  ", subsequent_indent="  "))
     click.echo(f"  Median Final NW:     {_fmt_money(mc_results['median_final_nw'])}")
     click.echo(f"  P10 Final NW:        {_fmt_money(mc_results['p10_final_nw'])}")
     click.echo(f"  P90 Final NW:        {_fmt_money(mc_results['p90_final_nw'])}")
     click.echo(f"  Median Lifetime Tax: {_fmt_money(mc_results['median_taxes'])}")
-    click.echo(f"  Out of Savings Rate: {mc_results['out_of_savings_rate'] * 100:.1f}%")
+    click.echo(f"  Out of Savings Rate (legacy): {mc_results['out_of_savings_rate'] * 100:.1f}%")
     if mc_results.get("input_readiness", {}).get("provisional"):
         click.echo("  Input readiness:     provisional (missing or estimated inputs)")
     if not mc_results.get("input_readiness", {}).get("access_assessed", True):
@@ -44,7 +48,7 @@ def _print_mc_results(mc_results: dict, label: str = "MONTE CARLO RESULTS"):
         click.echo(f"  Portfolio Depleted:  {mc_results['portfolio_depletion_rate'] * 100:.1f}%")
     elif mc_results.get("withdrawal_access_policy") == "unrestricted":
         click.echo("  Account Access:      not validated (unrestricted policy)")
-    if "spending_cut_frequency" in mc_results:
+    if "spending_cut_frequency" in mc_results and not mc_results.get("outcomes"):
         click.echo(f"  Runs with cuts:      {mc_results['spending_cut_frequency'] * 100:.1f}%")
         click.echo(f"  Deepest annual cut:  {mc_results['maximum_spending_cut_fraction'] * 100:.1f}%")
     click.echo(f"  Simulations:         {mc_results['num_simulations']:,}")
@@ -349,7 +353,7 @@ def stress(config, simulations, levels, method, scenario, seed):
                    "stress levels will have no effect.\n")
 
     click.echo(f"Running {simulations:,} simulations per level...")
-    headers = ["Stress", "Success", "Median NW", "P10 NW", "OOS Rate"]
+    headers = ["Stress", "Combined Success (legacy)", "Median NW", "P10 NW", "OOS Rate"]
     rows = []
     for level in level_list:
         r = mc.run(num_simulations=simulations, scenario=scenario,
@@ -400,7 +404,10 @@ def report(config, fmt, output, simulations, stress, show_equity):
     elif fmt == "csv":
         content = _export_csv_str(cash_flow)
     else:
-        content = _export_markdown_str(cash_flow)
+        from .reports import outcome_metric_rows, OUTCOME_EXPLANATION
+        outcome_rows = [{"Outcome": label, "Value": value} for label, value in outcome_metric_rows(mc_results)]
+        content = (_export_markdown_str(outcome_rows, "Goal outcomes") + "\n" + OUTCOME_EXPLANATION + "\n\n"
+                   + _export_markdown_str(cash_flow))
 
     if output:
         with open(output, "w") as f:
@@ -473,7 +480,7 @@ def compare(config1, config2, simulations):
 
     headers = ["Metric", name1, name2]
     rows = [
-        ["Success Rate",
+        ["Combined Success Rate (legacy)",
          f"{results1['success_rate'] * 100:.1f}%",
          f"{results2['success_rate'] * 100:.1f}%"],
         ["Median Final NW",
@@ -525,7 +532,7 @@ def sensitivity(config, variable, values, simulations, output):
 
     results = analyzer.run(variable, val_list, num_simulations=simulations)
 
-    headers = ["Variable", "Value", "Success Rate", "Avg Final NW"]
+    headers = ["Variable", "Value", "Combined Success Rate (legacy)", "Avg Final NW"]
     rows = []
     for r in results:
         rows.append([

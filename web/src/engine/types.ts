@@ -50,6 +50,11 @@ export interface CashFlowRow {
   plannedExpenses?: number;
   spendingCut?: number;
   investmentIncome?: number;
+  fundingShortfall?: number;
+  fundingShortfallCauses?: string[];
+  adjustedSpendingMet?: boolean;
+  plannedSpendingMet?: boolean;
+  accountAccessMet?: boolean | null;
 }
 
 export interface McPercentilePoint {
@@ -81,8 +86,24 @@ export interface Warning {
   severity: "info" | "warning" | "error";
 }
 
+export interface GoalOutcomes {
+  schema_version: 1;
+  planned_spending_met_rate: number;
+  adjusted_spending_met_rate: number;
+  account_access_met_rate: number | null;
+  legacy_target_met_rate: number;
+  terminal_estate_estimate_runs: number;
+  denominators: { spending: number; account_access: number; legacy: number };
+  base_year: number;
+  monetary_convention: "real" | "nominal";
+  legacy_target_base_year: number;
+  first_funding_shortfall_year_counts: Record<string, number>;
+  first_funding_shortfall_cause_counts: Record<string, number>;
+}
+
 export interface RunResult {
   kpis: Kpis;
+  outcomes?: GoalOutcomes;
   cashFlow: CashFlowRow[];
   mc: McResult;
   warnings: Warning[];

@@ -9,6 +9,7 @@ def generate_summary_report(mc_results: Dict[str, Any], cash_flow: List[Dict[str
     """Generate a high-level summary report from Monte Carlo results and cash flow data."""
     return {
         "success_rate": mc_results.get("success_rate", 0.0),
+        "outcomes": mc_results.get("outcomes"),
         "input_readiness": mc_results.get("input_readiness"),
         "spending_cut_frequency": mc_results.get("spending_cut_frequency"),
         "median_years_with_spending_cuts": mc_results.get("median_years_with_spending_cuts"),
@@ -29,7 +30,7 @@ def generate_summary_report(mc_results: Dict[str, Any], cash_flow: List[Dict[str
 
 def generate_cash_flow_report(cash_flow: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Generate a structured cash flow report with rows and column metadata."""
-    columns = ["year", "income", "expenses", "taxes", "net_worth", "net_cash_flow"]
+    columns = ["year", "income", "planned_expenses", "expenses", "spending_cut", "funding_shortfall", "adjusted_spending_met", "planned_spending_met", "account_access_met", "taxes", "net_worth", "net_cash_flow"]
     return {
         "rows": cash_flow,
         "columns": columns,
@@ -50,6 +51,7 @@ def generate_mc_report(mc_results: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "success_rate": mc_results.get("success_rate", 0.0),
+        "outcomes": mc_results.get("outcomes"),
         "input_readiness": mc_results.get("input_readiness"),
         "spending_cut_frequency": mc_results.get("spending_cut_frequency"),
         "median_years_with_spending_cuts": mc_results.get("median_years_with_spending_cuts"),
@@ -101,3 +103,53 @@ def export_markdown(rows: List[Dict[str, Any]], title: str) -> str:
     for row in rows:
         lines.append("| " + " | ".join(str(row[h]) for h in headers) + " |")
     return "\n".join(lines) + "\n"
+
+
+CAUSE_LABELS = {
+    "account_access": "Account access",
+    "unassessed_access": "Account access unassessed",
+    "liquid_capital": "Spendable-capital shortfall",
+    "housing_purchase": "Housing purchase funding",
+    "funding_gap": "Combined funding gap",
+}
+
+
+def outcome_metric_rows(mc_results):
+    """One human-readable outcome definition for CLI and exported reports."""
+    outcomes = mc_results.get("outcomes")
+    if not outcomes:
+        return [("Combined Success Rate (legacy)", f"{mc_results.get('success_rate', 0):.1%}"),
+                ("Separate outcomes", "Unavailable in this older result")]
+    pct = lambda value: f"{value:.1%}" if value is not None else "Unassessed"
+    rows = [
+        ("Planned spending met without cuts", pct(outcomes["planned_spending_met_rate"])),
+        ("Adjusted budget funded", pct(outcomes["adjusted_spending_met_rate"])),
+        ("No account-access gaps", pct(outcomes["account_access_met_rate"])),
+        ("After-estate legacy target met", pct(outcomes["legacy_target_met_rate"])),
+        ("Legacy target (base-year dollars)", f"${outcomes['legacy_target_base_year']:,.0f}"),
+        ("Combined Success Rate (legacy)", pct(mc_results.get("success_rate", 0))),
+        ("Runs with spending cuts", pct(mc_results.get("spending_cut_frequency"))),
+        ("Median years with spending cuts", str(mc_results.get("median_years_with_spending_cuts", 0))),
+        ("Deepest annual budget cut", pct(mc_results.get("maximum_spending_cut_fraction"))),
+    ]
+    rows.append(("Runs with terminal estate-tax estimate", str(outcomes["terminal_estate_estimate_runs"])))
+    denominators = outcomes["denominators"]
+    rows.append(("Assessed runs: spending / access / legacy",
+                 f"{denominators['spending']} / {denominators['account_access']} / {denominators['legacy']}"))
+    years = outcomes["first_funding_shortfall_year_counts"]
+    rows.append(("Earliest funding gap (any run)", min(years) if years else "None"))
+    for cause, count in outcomes["first_funding_shortfall_cause_counts"].items():
+        rows.append((f"First gap: {CAUSE_LABELS.get(cause, cause)} (runs)", str(count)))
+    return rows
+
+
+OUTCOME_EXPLANATION = (
+    "Adjusted budgets include modeled expenses, taxes and required housing funding. "
+    "Planned spending requires that funding without cuts above one base-year dollar; "
+    "it does not test whether a reduced budget could instead have stayed higher. Legacy attainment is "
+    "independent and requires after-estate final wealth to meet or exceed the target. "
+    "Single-household and stochastic legacy goals use a terminal estate-tax estimate; "
+    "this does not change historical cash-flow or combined-success fields. "
+    "Rates use all runs except access, which excludes unassessed runs. First-gap "
+    "causes can overlap. Combined success preserves the historical joint metric."
+)

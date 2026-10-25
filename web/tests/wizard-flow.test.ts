@@ -29,7 +29,7 @@ describe("optional refinements", () => {
   it("labels provisional outcomes and unassessed access", () => {
     const host=document.createElement("div");
     render(h(KpiRow,{kpis:{successRate:1,provisional:true,accessAssessed:false,medianFinalNetWorth:1e6,p10FinalNetWorth:0,p90FinalNetWorth:2e6,medianLifetimeTaxes:0,outOfSavingsRate:0,numSimulations:10,spendingCutFrequency:.5,maximumSpendingCutFraction:.1,medianYearsWithSpendingCuts:3}}),host);
-    expect(host.textContent).toContain("Provisional success rate");
+    expect(host.textContent).toContain("Provisional combined success (legacy)");
     expect(host.textContent).toContain("Unassessed");
     expect(host.textContent).toContain("Runs needing spending cuts");
     expect(host.textContent).not.toContain("Account access failure rate");

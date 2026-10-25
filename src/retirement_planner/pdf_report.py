@@ -65,6 +65,7 @@ PIE_COLORS = [
 # ---------------------------------------------------------------------------
 from .formatting import fmt_money_millions as _fmt_money
 from .formatting import fmt_pct as _fmt_pct
+from .reports import outcome_metric_rows, OUTCOME_EXPLANATION
 
 
 def _styles():
@@ -284,15 +285,20 @@ def _section_summary(styles: dict, mc_results: dict, cash_flow: list) -> list:
     median_taxes = mc_results.get("median_taxes", 0.0)
     out_of_savings = mc_results.get("out_of_savings_rate", 0.0)
 
-    # Color-code success rate
-    sr_color = GREEN if success_rate >= 0.80 else (AMBER if success_rate >= 0.60 else RED)
+    # Outcomes are descriptive; a combined rate does not judge spending feasibility.
+    sr_color = PRIMARY_BLUE
     sr_style = ParagraphStyle("SR", parent=styles["Metric"], textColor=sr_color)
 
-    # Metric cards — 3 columns
+    outcomes = mc_results.get("outcomes")
+    if outcomes:
+        card_values = [outcomes["planned_spending_met_rate"], outcomes["adjusted_spending_met_rate"], outcomes["legacy_target_met_rate"]]
+        card_labels = ["Planned spending without cuts", "Adjusted budget funded", "After-estate legacy target met"]
+    else:
+        card_values = [success_rate, None, None]
+        card_labels = ["Combined Success Rate (legacy)", "Separate spending unavailable", "Separate legacy unavailable"]
     metrics = [
-        [Paragraph(_fmt_pct(success_rate), sr_style), Paragraph("Success Rate", styles["MetricLabel"])],
-        [Paragraph(_fmt_money(median_nw), styles["Metric"]), Paragraph("Median Final Net Worth", styles["MetricLabel"])],
-        [Paragraph(str(mc_results.get("num_simulations", 0)), styles["Metric"]), Paragraph("Simulations Run", styles["MetricLabel"])],
+        [Paragraph(_fmt_pct(v) if v is not None else "N/A", sr_style) for v in card_values],
+        [Paragraph(label, styles["MetricLabel"]) for label in card_labels],
     ]
     mt = Table(metrics, colWidths=[2.2 * inch] * 3)
     mt.setStyle(TableStyle([
@@ -313,9 +319,18 @@ def _section_summary(styles: dict, mc_results: dict, cash_flow: list) -> list:
         ["P10 Final Net Worth", _fmt_money(p10_nw)],
         ["P90 Final Net Worth", _fmt_money(p90_nw)],
         ["Median Lifetime Taxes", _fmt_money(median_taxes)],
-        ["Out of Savings Rate", _fmt_pct(out_of_savings)],
+        ["Out of Savings Rate (legacy)", _fmt_pct(out_of_savings)],
         ["Years of Data", str(len(cash_flow))],
     ]
+    if outcomes:
+        access = outcomes["account_access_met_rate"]
+        secondary = [
+            ["No account-access gaps", _fmt_pct(access) if access is not None else "Unassessed"],
+            ["Legacy target (base-year dollars)", _fmt_money(outcomes["legacy_target_base_year"])],
+            ["Combined Success Rate (legacy)", _fmt_pct(success_rate)],
+        ] + secondary
+    if mc_results.get("input_readiness", {}).get("provisional"):
+        elements.append(Paragraph("Provisional inputs: review missing and estimated assumptions.", styles["BodySmall"]))
     st = _make_table([["Metric", "Value"]] + secondary, col_widths=[3.5 * inch, 3 * inch])
     elements.append(st)
     elements.append(Spacer(1, 0.15 * inch))
@@ -532,26 +547,35 @@ def _section_monte_carlo(styles: dict, mc_results: dict) -> list:
     elements.append(_hr())
 
     success_rate = mc_results.get("success_rate", 0.0)
-    sr_color = GREEN if success_rate >= 0.80 else (AMBER if success_rate >= 0.60 else RED)
+    sr_color = PRIMARY_BLUE
     sr_style = ParagraphStyle("SR2", parent=styles["Metric"], textColor=sr_color)
 
     # Key metric
     elements.append(Spacer(1, 0.1 * inch))
-    elements.append(Paragraph(_fmt_pct(success_rate), sr_style))
+    headline_rate = (mc_results.get("outcomes") or {}).get("adjusted_spending_met_rate", success_rate)
+    elements.append(Paragraph(_fmt_pct(headline_rate), sr_style))
     elements.append(Spacer(1, 0.05 * inch))
-    elements.append(Paragraph("Probability of Success", styles["MetricLabel"]))
+    headline_label = "Adjusted budget funded" if mc_results.get("outcomes") else "Combined Success Rate (legacy)"
+    elements.append(Paragraph(headline_label, styles["MetricLabel"]))
     elements.append(Spacer(1, 0.2 * inch))
+
+    goal_rows = [[Paragraph(label, styles["BodySmall"]), Paragraph(value, styles["BodySmall"])]
+                 for label, value in outcome_metric_rows(mc_results)]
+    elements.append(_make_table([["Goal outcome", "Value"]] + goal_rows, col_widths=[4.0 * inch, 2.4 * inch]))
+    elements.append(Spacer(1, 0.12 * inch))
+    elements.append(Paragraph(OUTCOME_EXPLANATION, styles["BodySmall"]))
+    elements.append(Spacer(1, 0.12 * inch))
 
     # Percentile table
     percentiles = mc_results.get("percentiles", [])
     if percentiles:
         p_rows = [["Percentile", "Final Net Worth", "Interpretation"]]
         interp_map = {
-            10: "Worst realistic case",
-            25: "Below average",
-            50: "Expected outcome",
-            75: "Above average",
-            90: "Best realistic case",
+            10: "Lower decile",
+            25: "Lower quartile",
+            50: "Median",
+            75: "Upper quartile",
+            90: "Upper decile",
         }
         for p in percentiles:
             pct = p.get("percentile", p.get("label", ""))
@@ -566,7 +590,7 @@ def _section_monte_carlo(styles: dict, mc_results: dict) -> list:
         ["Method", mc_results.get("method", "gaussian")],
         ["Scenario", mc_results.get("scenario", "mean")],
         ["Median Peak Net Worth", _fmt_money(mc_results.get("median_peak_nw", 0))],
-        ["Out of Savings Rate", _fmt_pct(mc_results.get("out_of_savings_rate", 0))],
+        ["Out of Savings Rate (legacy)", _fmt_pct(mc_results.get("out_of_savings_rate", 0))],
         ["Simulations", str(mc_results.get("num_simulations", 0))],
     ]
     dt = _make_table([["Parameter", "Value"]] + details, col_widths=[2.5 * inch, 3.5 * inch])

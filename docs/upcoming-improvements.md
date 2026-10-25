@@ -1,10 +1,11 @@
 # Upcoming improvements: priorities 4 and 5
 
-Status: scoped for a later implementation round. These packages are not part of
-the current calculation changes. Priorities 1–3 are documented in
+Status: priority 4 is implemented; priority 5 remains scoped for a later round.
+Priority 4 definitions and compatibility details are documented in
+[separate goal outcomes](goal-outcomes.md). Priorities 1–3 are documented in
 [input refinements and realized spending](input-refinements.md).
 
-## Package 4: Separate spending, account access and legacy outcomes
+## Package 4 (implemented): Separate spending, account access and legacy outcomes
 
 Problem: the compatibility `success` metric combines funded spending and the
 terminal legacy goal. A high terminal balance can hide intervening funding gaps,

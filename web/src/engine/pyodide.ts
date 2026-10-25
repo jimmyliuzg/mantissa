@@ -128,10 +128,11 @@ def _norm_pctile(mc, p):
     return {"percentile": p, "value": mc.get(f"p{p}_final_nw", 0.0)}
 
 result = {
+    "outcomes": mc["outcomes"],
     "kpis": {
         "successRate": mc.get("success_rate", 0.0),
         "provisional": planner.input_readiness["provisional"],
-        "accessAssessed": planner.input_readiness["access_assessed"],
+        "accessAssessed": mc["outcomes"]["denominators"]["account_access"] > 0,
         "spendingCutFrequency": mc["spending_cut_frequency"],
         "medianYearsWithSpendingCuts": mc["median_years_with_spending_cuts"],
         "maximumSpendingCutFraction": mc["maximum_spending_cut_fraction"],
@@ -155,6 +156,11 @@ result = {
             "plannedExpenses": r.get("planned_expenses", 0.0),
             "spendingCut": r.get("spending_cut", 0.0),
             "investmentIncome": r.get("investment_income", 0.0),
+            "fundingShortfall": r["funding_shortfall"],
+            "fundingShortfallCauses": r["funding_shortfall_causes"],
+            "adjustedSpendingMet": r["adjusted_spending_met"],
+            "plannedSpendingMet": r["planned_spending_met"],
+            "accountAccessMet": r["account_access_met"],
             "taxes": r.get("taxes", 0.0),
             "netWorth": r.get("net_worth", 0.0),
             "netCashFlow": r.get("net_cash_flow", 0.0),

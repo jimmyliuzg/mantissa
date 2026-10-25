@@ -104,6 +104,8 @@ class MonteCarloEngine:
         Returns:
             Dictionary with success rate, percentiles, etc.
         """
+        if not isinstance(num_simulations, int) or isinstance(num_simulations, bool) or num_simulations < 1:
+            raise ValueError("num_simulations must be a positive integer")
         results = []
         rng = np.random.default_rng(seed)
         historical_rng = random.Random(seed)
@@ -207,13 +209,18 @@ class MonteCarloEngine:
         else:
             mortality_distribution = None
 
+        from .outcomes import aggregate_outcomes
+        outcomes = aggregate_outcomes(results, self.planner.start_year,
+                                      self.planner.scenario.monetary_convention.value,
+                                      self.planner.scenario.legacy_goal)
         return {
             "success_rate": success_rate,
+            "outcomes": outcomes,
             "input_readiness": self.planner.input_readiness,
             "spending_cut_frequency": sum(r["years_with_spending_cuts"] > 0 for r in results) / num_simulations,
             "median_years_with_spending_cuts": float(np.median([r["years_with_spending_cuts"] for r in results])),
             "maximum_spending_cut_fraction": max(r["maximum_spending_cut_fraction"] for r in results),
-            "access_failure_rate": sum(r.get("access_shortfall_year") is not None for r in results) / num_simulations if self.planner.input_readiness["access_assessed"] else None,
+            "access_failure_rate": 1 - outcomes["account_access_met_rate"] if outcomes["account_access_met_rate"] is not None else None,
             "portfolio_depletion_rate": sum(r.get("portfolio_depletion_year") is not None for r in results) / num_simulations,
             "withdrawal_access_policy": self.planner.scenario.withdrawal_access_policy,
             "num_simulations": num_simulations,
