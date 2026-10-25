@@ -1,4 +1,5 @@
 import { useState } from "preact/hooks";
+import { validateConfig } from "../lib/config-validation";
 
 interface LandingProps {
   onOpenViewer: () => void;
@@ -24,8 +25,10 @@ export function Landing({ onOpenViewer, onOpenWizard }: LandingProps) {
       const base = (import.meta as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? "/";
       const res = await fetch(`${base.replace(/\/$/, "")}/demo.json`);
       if (!res.ok) throw new Error(`demo fetch failed (${res.status})`);
-      const parsed = JSON.parse(await res.text());
+      const parsed = validateConfig(JSON.parse(await res.text()));
       sessionStorage.setItem("mantissa:config", JSON.stringify(parsed));
+      sessionStorage.removeItem("mantissa:run-options");
+      sessionStorage.removeItem("mantissa:reviewed-config");
       onOpenViewer();
     } catch (e) {
       setErr(`Could not load the demo: ${e instanceof Error ? e.message : String(e)}`);
@@ -37,60 +40,52 @@ export function Landing({ onOpenViewer, onOpenWizard }: LandingProps) {
   async function onFile(file: File) {
     setErr(null);
     try {
+      if (file.size > 2_000_000) throw new Error("Plan files must be smaller than 2 MB.");
       const text = await file.text();
-      const parsed = JSON.parse(text);
+      const parsed = validateConfig(JSON.parse(text));
       sessionStorage.setItem("mantissa:config", JSON.stringify(parsed));
+      sessionStorage.removeItem("mantissa:run-options");
+      sessionStorage.removeItem("mantissa:reviewed-config");
       onOpenViewer();
     } catch (e) {
-      setErr(`Could not parse JSON: ${e instanceof Error ? e.message : String(e)}`);
+      setErr(`Could not import this plan: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
   return (
     <section class="landing">
-      <h1>Review a Mantissa plan, in your browser.</h1>
+      <h1>Plan your retirement with a clearer picture.</h1>
       <p class="lede">
-        Drop a <code>.json</code> config exported from <code>mantissa</code> and see a deterministic
-        projection, Monte Carlo fan chart, tax breakdown, and warnings. Nothing is uploaded — the
-        engine runs in your tab via Pyodide.
+        Explore when you can retire, how much you can spend and how your savings may last.
+        Start with a few estimates, then add detail at your own pace. Calculations run on your
+        device; you choose whether to download or share your plan.
       </p>
 
       <div class="tiles">
-        <label class="tile tile--upload">
-          <span class="tile-title">Upload a config</span>
-          <span class="tile-body">.json file. Parsed and run locally.</span>
-          <input
-            type="file"
-            accept=".json,application/json"
-            onChange={(e) => {
-              const f = (e.currentTarget as HTMLInputElement).files?.[0];
-              if (f) void onFile(f);
-            }}
-          />
-        </label>
         <button type="button" class="tile tile--wizard" onClick={onOpenWizard}>
-          <span class="tile-title">Start from scratch</span>
-          <span class="tile-body">8-question wizard, then open in the viewer.</span>
+          <span class="tile-title">Start a plan</span>
+          <span class="tile-body">A short guided setup. Add details after your first estimate.</span>
         </button>
-        <button type="button" class="tile tile--md" disabled>
-          <span class="tile-title">View a markdown report</span>
-          <span class="tile-body">Read-only rendering. Coming soon.</span>
+        <button type="button" class="tile" onClick={onDemo} disabled={demoLoading}>
+          <span class="tile-title">{demoLoading ? "Loading sample…" : "Explore a sample plan"}</span>
+          <span class="tile-body">See how results work using fictional household information.</span>
         </button>
+        <label class="tile tile--upload">
+          <span class="tile-title">Import an existing plan</span>
+          <span class="tile-body">Choose a Mantissa .json file. Processed on your device.</span>
+          <input aria-label="Import an existing plan" type="file" accept=".json,application/json" onChange={(e) => {
+            const f = e.currentTarget.files?.[0];
+            if (f) void onFile(f);
+          }} />
+        </label>
       </div>
 
-      {err && <p class="error">{err}</p>}
+      {err && <p class="error" role="alert">{err}</p>}
 
       <details>
-        <summary>Don't have a config?</summary>
-        <p>
-          Run <code>mantissa init &gt; my-plan.json</code> from the CLI, edit it, and drop it here.
-          See the <a href="https://github.com/jimmyliuzg/mantissa">Mantissa repo</a> for the schema.
-          Want to{" "}
-          <button type="button" class="linkish" onClick={onDemo} disabled={demoLoading}>
-            {demoLoading ? "loading demo…" : "try a viewer demo"}
-          </button>
-          ?
-        </p>
+        <summary>Using the command line or an existing plan?</summary>
+        <p>Run <code>mantissa init</code> to create a starter plan, or import a config you already use.
+          See the <a href="https://github.com/jimmyliuzg/mantissa">Mantissa documentation</a> for the configuration format.</p>
       </details>
     </section>
   );

@@ -496,6 +496,8 @@ class Scenario:
     # unless they set contribution_priority explicitly or use the legacy
     # monthly_contribution field.
     savings_order: List[str] = field(default_factory=list)
+    # Optional unrestricted taxable destination for cash left after contributions.
+    surplus_account_id: Optional[str] = None
     # Monetary convention: NOMINAL (all values in year-of dollars) or
     # REAL (all values in base-year purchasing-power dollars).
     monetary_convention: MonetaryConvention = MonetaryConvention.REAL
@@ -532,6 +534,7 @@ class Scenario:
             "legacy_goal": self.legacy_goal,
             "withdrawal_access_policy": self.withdrawal_access_policy,
             "state": self.state,
+            "surplus_account_id": self.surplus_account_id,
             "survivor_expense_ratio": self.survivor_expense_ratio,
         }
     

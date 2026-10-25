@@ -124,6 +124,8 @@ export interface Engine {
    * `bootstrap()` call has resolved.
    */
   isReady(): boolean;
+  /** Stop in-flight work by releasing its worker. A later bootstrap reloads it. */
+  cancel?(): void;
   /**
    * Load the engine and any required native deps. Idempotent.
    * Subsequent calls return immediately.

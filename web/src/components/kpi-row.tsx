@@ -54,7 +54,7 @@ export function KpiRow({ kpis, outcomes }: KpiRowProps) {
     { label: "Planned spending met without cuts", value: fmtPct(outcomes.planned_spending_met_rate) },
     { label: "Adjusted budget funded", value: fmtPct(outcomes.adjusted_spending_met_rate) },
     { label: "No account-access gaps", value: outcomes.account_access_met_rate === null ? "Unassessed" : fmtPct(outcomes.account_access_met_rate) },
-    { label: "After-estate legacy target met", value: fmtPct(outcomes.legacy_target_met_rate) },
+    { label: "After-estate legacy target met", value: outcomes.legacy_target_base_year > 0 ? fmtPct(outcomes.legacy_target_met_rate) : "No target set" },
   ] : [];
   const cards = (rows: typeof items) => <div class="kpi-row" role="list">
     {rows.map((it) => <div key={it.label} class="kpi" role="listitem" data-tone={it.tone ?? "neutral"}>

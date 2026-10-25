@@ -58,7 +58,7 @@ _SCHEMA_KEYS = {
     "age_events", "dependents",
     "social_security", "glidepath", "withdrawal_strategy", "withdrawal_rate",
     "guardrail_floor_pct", "guardrail_ceiling_pct", "legacy_goal", "state",
-    "family_size", "savings_order", "monetary_convention", "stress_level",
+    "family_size", "savings_order", "surplus_account_id", "monetary_convention", "stress_level",
     "input_metadata", "survivor_expense_ratio", "_comment", "start_year", "balance_date", "tax_inputs", "withdrawal_access_policy",
 }
 
@@ -218,6 +218,14 @@ def validate_config(config: dict, strict: bool = False) -> ValidationResult:
             _number(result, cohort.get("amount"), cp + ".amount", 0)
         if (account.get("roth_contribution_basis", 0) or cohorts) and account.get("type") != "roth_ira":
             _issue(result, path, "declared Roth IRA principal requires type roth_ira")
+
+    destination_id = config.get("surplus_account_id")
+    if destination_id is not None:
+        destination = next((a for a in config.get("accounts", []) if isinstance(a, dict) and a.get("id") == destination_id), None)
+        if not isinstance(destination_id, str) or destination is None:
+            _issue(result, "$.surplus_account_id", "must reference an existing account", code="reference")
+        elif destination.get("liquid", True) is not True or destination.get("tax_treatment", ACCOUNT_TAX_DEFAULTS.get(destination.get("type"), "taxable")) != "taxable" or destination.get("type") in {"real_estate", "vehicle", "hsa", "529"}:
+            _issue(result, "$.surplus_account_id", "must be a liquid unrestricted taxable account")
 
     for index, account_id in enumerate(config.get("savings_order", [])):
         if account_id not in ids:
@@ -464,6 +472,7 @@ def schema_dict() -> dict:
             "balance_date": {"type":"string", "format":"date"},
             "tax_inputs": {"type":"object"},
             "input_metadata": {"type":"object"},
+            "surplus_account_id": {"type":["string", "null"], "description":"Liquid unrestricted taxable account receiving post-contribution cash surplus."},
         },
         "required": ["primary"],
         "$defs": {

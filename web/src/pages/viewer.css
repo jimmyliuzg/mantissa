@@ -1,0 +1,85 @@
+.plan-toolbar {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	align-items: center;
+	margin: 16px 0;
+}
+.plan-toolbar label {
+	display: flex;
+	gap: 6px;
+	align-items: center;
+	font-size: 14px;
+}
+.chart-legend {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 16px;
+	font-size: 13px;
+	margin: 8px 0;
+}
+.result-status {
+	border-left: 3px solid var(--accent);
+	padding: 12px;
+	background: var(--bg-elev);
+}
+.result-exports {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin: 16px 0;
+}
+@media print {
+	.drawer,
+	.viewer-tabs,
+	.plan-toolbar,
+	.viewer-actions,
+	.result-exports button,
+	.top-bar,
+	body > .skip-link {
+		display: none !important;
+	}
+	.layout {
+		display: block !important;
+	}
+	.layout > .results {
+		display: block !important;
+	}
+	.panel,
+	.kpi {
+		break-inside: avoid;
+	}
+	.chart-wrap,
+	.table-wrap {
+		overflow: visible;
+	}
+	body {
+		color: #111;
+		background: #fff;
+	}
+	button {
+		display: none !important;
+	}
+}
+
+.results > .kpi-row {
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.legend-income {
+	color: var(--series-income);
+}
+.legend-spending {
+	color: var(--series-expenses);
+}
+.legend-taxes {
+	color: var(--series-taxes);
+}
+.legend-networth {
+	color: var(--series-networth);
+}
+.legend-fan {
+	color: var(--series-fan);
+}
+.legend-median {
+	color: var(--series-fan-median);
+}

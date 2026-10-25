@@ -34,7 +34,7 @@ export function MonteCarloFan({
 
   const allValues =
     yearlyPercentiles.length > 0
-      ? yearlyPercentiles.flatMap((p) => [p.p10, p.p25, p.p50, p.p75, p.p90])
+      ? [...yearlyPercentiles.flatMap((p) => [p.p10, p.p25, p.p50, p.p75, p.p90]), ...cashFlow.map((r) => r.netWorth)]
       : cashFlow.map((r) => r.netWorth);
   const minY = Math.min(...allValues, 0);
   const maxY = Math.max(...allValues, 1);
@@ -154,7 +154,7 @@ export function MonteCarloFan({
               x2={xAt(cashFlow.length - 1)}
               y1={yAt(percentiles[0]?.value ?? 0)}
               y2={yAt(percentiles[4]?.value ?? 0)}
-              class="series series--fan-outer"
+              class="series series--fan-edge"
             />
             <circle
               cx={xAt(cashFlow.length - 1)}

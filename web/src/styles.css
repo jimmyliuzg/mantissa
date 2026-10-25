@@ -362,3 +362,31 @@ button:focus-visible, a:focus-visible, [role="button"]:focus-visible { outline-o
 .series--fan-outer { fill: var(--series-fan); fill-opacity: 0.18; stroke: none; }
 .series--fan-inner { fill: var(--series-fan); fill-opacity: 0.35; stroke: none; }
 .series--fan-median { fill: none; stroke: var(--series-fan-median); stroke-width: 1.5; stroke-dasharray: 4 3; }
+
+/* Keep these responsive overrides after the base component rules. */
+.wizard-draft { display: flex; justify-content: space-between; flex-wrap: wrap; gap: var(--sp-8); color: var(--fg-muted); font-size: 12px; }
+.wizard-progress { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-12); color: var(--fg-muted); font-size: 13px; }
+.coverage-notice { padding: var(--sp-12); border: 1px solid var(--warn-line); border-radius: var(--radius-md); background: var(--warn-bg); color: var(--warn-ink); }
+.tile--wizard { border-color: var(--accent); }
+.tile--upload:focus-within { outline: 2px solid var(--accent); outline-offset: 3px; }
+.viewer-tabs { display: none; }
+@media (max-width: 800px) {
+  .viewer-tabs { display: flex; gap: var(--sp-8); margin-top: var(--sp-16); }
+  .viewer-tabs button { flex: 1; min-height: 44px; }
+  .viewer-tabs button[aria-selected="true"], .viewer-tabs button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+  .layout[data-mobile-panel="results"] > .drawer { display: none; }
+  .layout[data-mobile-panel="edit"] > .results { display: none; }
+  .drawer { position: static; max-height: none; }
+}
+@media (max-width: 600px) {
+  .wizard-step .row { grid-template-columns: minmax(0, 1fr); }
+  .wizard-step .row small { grid-column: 1; }
+  .wizard-step input, .wizard-step select, .wizard-step textarea { min-height: 44px; width: 100%; min-width: 0; box-sizing: border-box; padding: var(--sp-10) var(--sp-12); font-size: 16px; }
+  .wizard-footer, .wizard-footer__final { flex-wrap: wrap; gap: var(--sp-8); }
+  .wizard-footer__final { justify-content: flex-end; }
+  .review-table th { width: auto; max-width: 40%; }
+  .review-table th, .review-table td { font-size: 13px; padding-right: var(--sp-8); }
+  .kpi-row { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-6); }
+  .kpi { padding: var(--sp-8); min-width: 0; overflow-wrap: anywhere; }
+  .kpi-value { font-size: 15px; }
+}

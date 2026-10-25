@@ -4,8 +4,8 @@
  * future server backend, change this file only.
  */
 
-import { pyodideEngine } from "./pyodide";
+import { createWorkerEngine } from "./worker-client";
 import type { Engine } from "./types";
 
-export const engine: Engine = pyodideEngine;
+export const engine: Engine = createWorkerEngine(() => new Worker(new URL("./worker.ts", import.meta.url)));
 export type { Engine, GoalOutcomes, Kpis, CashFlowRow, McResult, McPercentilePoint, RunOptions, RunResult, Warning } from "./types";

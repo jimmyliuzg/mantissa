@@ -1,4 +1,4 @@
-import { useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { fmtMoney } from "../lib/format";
 import { buildSlimConfig, DEFAULT_ANSWERS, savingsTotal, type WizardAnswers } from "../slim/types";
 
@@ -18,20 +18,60 @@ const STEPS: ReadonlyArray<{
   { key: "review", title: "Review and download" },
 ];
 
-/**
- * Nine-step wizard. The user answers 8 questions, sees a review step,
- * then either downloads the JSON or hands it to the viewer.
- */
+export const WIZARD_DRAFT_KEY = "mantissa:wizard-draft";
+
+function loadDraft(): { step: number; answers: WizardAnswers } {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(WIZARD_DRAFT_KEY) ?? "null");
+    if (saved && typeof saved.answers === "object" && saved.answers !== null) {
+      const answers = { ...DEFAULT_ANSWERS };
+      // Persist only known answer fields with the expected primitive type.
+      for (const key of Object.keys(answers) as Array<keyof WizardAnswers>) {
+        const value = saved.answers[key];
+        const expected = DEFAULT_ANSWERS[key];
+        if (expected !== null && typeof value === typeof expected && (typeof value !== "number" || Number.isFinite(value)) || expected === null && (value === null || typeof value === "number" && Number.isFinite(value))) {
+          (answers as unknown as Record<string, unknown>)[key] = value;
+        }
+      }
+      if (!["low", "medium", "high"].includes(answers.risk)) answers.risk = "medium";
+      if (!["fixed", "dynamic", "guardrails"].includes(answers.spendingStrategy)) answers.spendingStrategy = "fixed";
+      if (!["none", "stock_index", "balanced", "income"].includes(answers.incomeProfile)) answers.incomeProfile = "stock_index";
+      if (!STATES.some((state) => state.code === answers.state)) answers.state = "CA";
+      return { step: Number.isInteger(saved.step) ? Math.max(0, Math.min(STEPS.length - 1, saved.step)) : 0, answers };
+    }
+  } catch { /* Storage may be disabled or a previous draft malformed. */ }
+  return { step: 0, answers: { ...DEFAULT_ANSWERS } };
+}
+
+/** Optional details stay local to this browser session. */
 export function Wizard() {
-  const [step, setStep] = useState(0);
-  const [answers, setAnswers] = useState<WizardAnswers>(DEFAULT_ANSWERS);
+  const [draft] = useState(loadDraft);
+  const [step, setStep] = useState(draft.step);
+  const [answers, setAnswers] = useState<WizardAnswers>(draft.answers);
+  const [saved, setSaved] = useState(false);
+  const [handoffError, setHandoffError] = useState<string | null>(null);
+  const stepRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(WIZARD_DRAFT_KEY, JSON.stringify({ step, answers }));
+      setSaved(true);
+    } catch { setSaved(false); }
+  }, [step, answers]);
+  useLayoutEffect(() => {
+    stepRef.current?.querySelector<HTMLElement>("h2")?.focus();
+  }, [step]);
+  function resetDraft() {
+    try { sessionStorage.removeItem(WIZARD_DRAFT_KEY); } catch { /* Already unavailable. */ }
+    setAnswers({ ...DEFAULT_ANSWERS });
+    setStep(0);
+  }
 
   function update<K extends keyof WizardAnswers>(key: K, value: WizardAnswers[K]) {
     setAnswers((a) => ({ ...a, [key]: value }));
   }
 
   function validStep() {
-    const inputs = document.querySelectorAll<HTMLInputElement>(".wizard-step input");
+    const inputs = stepRef.current?.querySelectorAll<HTMLInputElement>("input") ?? [];
     for (const input of inputs) {
       if (!input.checkValidity()) { input.reportValidity(); return false; }
     }
@@ -48,8 +88,14 @@ export function Wizard() {
 
   function openInViewer() {
     const cfg = buildSlimConfig(answers);
-    sessionStorage.setItem("mantissa:config", JSON.stringify(cfg));
-    window.location.hash = "#/review";
+    try {
+      sessionStorage.setItem("mantissa:config", JSON.stringify(cfg));
+      sessionStorage.removeItem("mantissa:run-options");
+      sessionStorage.setItem("mantissa:reviewed-config", JSON.stringify(cfg));
+      window.location.hash = "#/review";
+    } catch {
+      setHandoffError("Browser session storage is unavailable. Download your plan to keep it, or enable session storage before opening results.");
+    }
   }
 
   function download() {
@@ -66,13 +112,14 @@ export function Wizard() {
   return (
     <section class="wizard">
       <header class="wizard-header">
-        <h1>Start from scratch</h1>
+        <h1>Start a retirement plan</h1>
+        <div class="wizard-draft"><span role="status">{saved ? "Draft saved for this browser session" : "Session storage unavailable; download to keep your plan"}</span><button type="button" class="linkish" onClick={resetDraft}>Reset answers</button></div>
         <Progress current={step} total={STEPS.length} />
       </header>
 
-      <div class="wizard-step">
+      <div class="wizard-step" ref={stepRef}>
         {STEPS[step]?.key === "review" ? (
-          <Review answers={answers} />
+          <Review answers={answers} onEdit={setStep} />
         ) : (
           <Step
             stepKey={STEPS[step]?.key as keyof WizardAnswers}
@@ -82,6 +129,7 @@ export function Wizard() {
         )}
       </div>
 
+      {handoffError && <p class="error" role="alert">{handoffError}</p>}
       <footer class="wizard-footer">
         <button type="button" class="btn" onClick={prev} disabled={step === 0}>
           ← Back
@@ -93,10 +141,10 @@ export function Wizard() {
         ) : (
           <div class="wizard-footer__final">
             <button type="button" class="btn" onClick={download}>
-              Download plan.json
+              Download plan
             </button>
             <button type="button" class="btn btn--primary" onClick={openInViewer}>
-              Open in viewer →
+              See results →
             </button>
           </div>
         )}
@@ -107,11 +155,11 @@ export function Wizard() {
 
 function Progress({ current, total }: { current: number; total: number }) {
   return (
-    <div class="progress" aria-label={`Step ${current + 1} of ${total}`}>
+    <div class="wizard-progress"><span>Step {current + 1} of {total}</span><div class="progress" aria-hidden="true">
       {Array.from({ length: total }).map((_, i) => (
         <span key={i} class={`progress-dot ${i <= current ? "done" : ""}`} />
       ))}
-    </div>
+    </div></div>
   );
 }
 
@@ -126,30 +174,31 @@ function Step({ stepKey, answers, onChange }: StepProps) {
     case "primaryAge":
       return (
         <StepGroup title="Your age and retirement timing">
+          <ChoiceField value={answers.alreadyRetired} options={[{ value: false, label: "Planning to retire" }, { value: true, label: "Already retired" }]} onChange={(v) => onChange("alreadyRetired", v)} />
           <NumberField
             label="Current age"
             value={answers.primaryAge}
             onChange={(v) => {
               onChange("primaryAge", v);
-              if (answers.primaryRetirementAge < v + 1) {
-                onChange("primaryRetirementAge", v + 30);
+              if (!answers.alreadyRetired && answers.primaryRetirementAge < v + 1) {
+                onChange("primaryRetirementAge", Math.min(110, v + 1));
               }
             }}
             min={18}
             max={90}
           />
-          <NumberField
+          {!answers.alreadyRetired && <NumberField
             label="Age you want to retire"
             value={answers.primaryRetirementAge}
             onChange={(v) => onChange("primaryRetirementAge", v)}
             min={answers.primaryAge + 1}
-            max={Math.max(80, answers.primaryAge + 1)}
-          />
+            max={109}
+          />}
           <NumberField
             label="Plan through age (longevity)"
             value={answers.primaryLongevity}
             onChange={(v) => onChange("primaryLongevity", v)}
-            min={Math.max(answers.primaryRetirementAge + 1, 70)}
+            min={Math.max((answers.alreadyRetired ? answers.primaryAge : answers.primaryRetirementAge) + 1, 70)}
             max={110}
             hint="How long to model the plan. 92 is a common default."
           />
@@ -166,6 +215,7 @@ function Step({ stepKey, answers, onChange }: StepProps) {
             ]}
             onChange={(v) => onChange("hasSpouse", v)}
           />
+          <p class="muted small">A two-person plan uses the engine’s married-household tax assumptions. Other filing arrangements need a separate plan.</p>
           {answers.hasSpouse && (
             <>
               <NumberField
@@ -175,18 +225,19 @@ function Step({ stepKey, answers, onChange }: StepProps) {
                 min={18}
                 max={90}
               />
-              <NumberField
+              <ChoiceField value={answers.spouseAlreadyRetired} options={[{ value: false, label: "Spouse is planning to retire" }, { value: true, label: "Spouse is already retired" }]} onChange={(v) => onChange("spouseAlreadyRetired", v)} />
+              {!answers.spouseAlreadyRetired && <NumberField
                 label="Spouse's retirement age"
                 value={answers.spouseRetirementAge ?? answers.primaryRetirementAge}
                 onChange={(v) => onChange("spouseRetirementAge", v)}
                 min={(answers.spouseAge ?? answers.primaryAge) + 1}
-                max={Math.max(80, (answers.spouseAge ?? answers.primaryAge) + 1)}
-              />
+                max={109}
+              />}
               <NumberField
                 label="Spouse's longevity"
                 value={answers.spouseLongevity ?? answers.primaryLongevity}
                 onChange={(v) => onChange("spouseLongevity", v)}
-                min={70}
+                min={Math.max(70, (answers.spouseAlreadyRetired ? answers.spouseAge ?? answers.primaryAge : answers.spouseRetirementAge ?? answers.primaryRetirementAge) + 1)}
                 max={110}
               />
             </>
@@ -235,25 +286,26 @@ function Step({ stepKey, answers, onChange }: StepProps) {
     case "annualIncome":
       return (
         <StepGroup title="Your current income">
-          <p class="muted small">Gross pay, before tax. Salary + bonus + any side income.</p>
-          <MoneyField
+          <p class="muted small">Primary person’s gross employment pay, before tax. Modeled as wages until retirement; other income can be added in the editor.</p>
+          {answers.alreadyRetired ? <p>No employment income is added for an already-retired primary person. Add ongoing work or other income after your first estimate.</p> : <MoneyField
             label="Annual income (today's dollars)"
             value={answers.annualIncome}
             onChange={(v) => onChange("annualIncome", v)}
             step={5_000}
-          />
+          />}
         </StepGroup>
       );
     case "annualSpending":
       return (
         <StepGroup title="Retirement spending">
-          <p class="muted small">In today's dollars. Used before and after retirement; refine time periods in the editor.</p>
+          <p class="muted small">In today's dollars. This is also your current budget unless you add a different amount below.</p>
           <MoneyField
             label="Annual spending in retirement"
             value={answers.annualSpending}
             onChange={(v) => onChange("annualSpending", v)}
             step={2_500}
           />
+          {!answers.alreadyRetired && <details><summary>Different current spending (optional)</summary><OptionalNumber label="Annual spending before primary retirement ($)" value={answers.currentAnnualSpending} onChange={(v) => onChange("currentAnnualSpending", v)} /><p class="muted small">Blank uses the retirement budget throughout. A separate current budget is essential spending until the primary person retires, then the retirement budget and flexibility apply.</p></details>}
           <details><summary>Allow flexible spending (optional)</summary>
             <NumberField label="Flexible share of annual spending (%)" value={answers.flexibleSpendingPercent} onChange={(v) => onChange("flexibleSpendingPercent", v)} min={0} max={100} />
             <NumberField label="Maximum cut to flexible spending (%)" value={answers.maximumFlexibleCutPercent} onChange={(v) => onChange("maximumFlexibleCutPercent", v)} min={0} max={100} />
@@ -265,7 +317,7 @@ function Step({ stepKey, answers, onChange }: StepProps) {
     case "state":
       return (
         <StepGroup title="State of residence">
-          <p class="muted small">Affects state income tax. Pick the state you'll retire in.</p>
+          <p class="muted small">Pick the state you’ll retire in. California is currently the only state with a modeled state income tax.</p>
           <label class="row">
             <span>State</span>
             <select
@@ -279,6 +331,7 @@ function Step({ stepKey, answers, onChange }: StepProps) {
               ))}
             </select>
           </label>
+          {answers.state !== "CA" && <p class="coverage-notice" role="status">State income tax is not modeled for {answers.state}; it will be zero in this estimate. Federal taxes are still modeled. Results may overstate available spending.</p>}
         </StepGroup>
       );
     case "hasSocialSecurity":
@@ -298,9 +351,10 @@ function Step({ stepKey, answers, onChange }: StepProps) {
               value={answers.monthlySocialSecurity}
               onChange={(v) => onChange("monthlySocialSecurity", v)}
               step={100}
-              hint="Illustrative estimate for the primary person. Use your personalized ssa.gov estimate; add spousal benefits in the editor."
+              hint="Illustrative estimate for the primary person. Use your personalized ssa.gov estimate."
             />
           )}
+          {answers.hasSocialSecurity && answers.hasSpouse && <MoneyField label="Spouse’s estimated monthly benefit at age 67" value={answers.spouseMonthlySocialSecurity} onChange={(v) => onChange("spouseMonthlySocialSecurity", v)} hint="Enter the spouse’s own estimate; zero leaves this benefit out. Claiming ages can be changed in the editor." />}
         </StepGroup>
       );
     case "risk":
@@ -325,16 +379,17 @@ function Step({ stepKey, answers, onChange }: StepProps) {
   }
 }
 
-function Review({ answers }: { answers: WizardAnswers }) {
+function Review({ answers, onEdit }: { answers: WizardAnswers; onEdit: (step: number) => void }) {
+  const projection = buildSlimConfig(answers);
   const rows: Array<[string, string]> = [
     [
       "Primary age / retire / longevity",
-      `${answers.primaryAge} / ${answers.primaryRetirementAge} / ${answers.primaryLongevity}`,
+      `${answers.primaryAge} / ${answers.alreadyRetired ? "already retired" : answers.primaryRetirementAge} / ${answers.primaryLongevity}`,
     ],
     [
       "Spouse",
       answers.hasSpouse
-        ? `yes — age ${answers.spouseAge}, retire ${answers.spouseRetirementAge}, longevity ${answers.spouseLongevity}`
+        ? `yes — age ${answers.spouseAge ?? answers.primaryAge}, ${answers.spouseAlreadyRetired ? "already retired" : `retire ${answers.spouseRetirementAge ?? answers.primaryRetirementAge}`}, longevity ${answers.spouseLongevity ?? answers.primaryLongevity}`
         : "no (single household)",
     ],
     ["Investable assets", fmtMoney(savingsTotal(answers))],
@@ -342,28 +397,31 @@ function Review({ answers }: { answers: WizardAnswers }) {
     ["Statement date", answers.balanceDate || "Current estimate; date unconfirmed"],
     ["Legacy goal", "$0 initially; edit to add a legacy target"],
     ["Spending flexibility", `${answers.flexibleSpendingPercent}% flexible; ${answers.maximumFlexibleCutPercent}% maximum cut; ${answers.spendingStrategy}`],
-    ["Annual income", fmtMoney(answers.annualIncome)],
-    ["Annual spending", fmtMoney(answers.annualSpending)],
+    ["Annual employment income", fmtMoney(answers.alreadyRetired ? 0 : answers.annualIncome)],
+    ["Annual retirement spending", fmtMoney(answers.annualSpending)],
+    ["Annual current spending", fmtMoney(answers.alreadyRetired ? answers.annualSpending : answers.currentAnnualSpending ?? answers.annualSpending)],
     ["State", answers.state],
     [
       "Social Security",
-      answers.hasSocialSecurity ? `${fmtMoney(answers.monthlySocialSecurity)}/mo at 67` : "skipped",
+      answers.hasSocialSecurity ? `${fmtMoney(answers.monthlySocialSecurity)}/mo at 67${answers.hasSpouse ? `; spouse ${fmtMoney(answers.spouseMonthlySocialSecurity)}/mo at 67` : ""}` : "skipped",
     ],
     ["Risk", answers.risk],
   ];
   return (
     <div>
-      <h2>Review</h2>
+      <h2 tabIndex={-1}>Review your plan</h2>
       <p class="muted small">
-        These answers produce a Mantissa config. You can edit anything in the viewer, or download
-        the JSON to use with the CLI.
+        Check these estimates, then see your results. You can refine accounts, income and assumptions after the first run. Balances carry unchanged to next January when the annual projection starts.
       </p>
+      {projection.primary.retirement_date === `${projection.start_year}-01-01` && <p class="muted small">The primary person is retired when this projection opens in {projection.start_year}; no employment wages are modeled before that date.</p>}
+      {answers.state !== "CA" && <p class="coverage-notice">State income tax is not modeled for {answers.state} and will be zero. Results may overstate available spending.</p>}
       <table class="review-table">
         <tbody>
           {rows.map(([k, v]) => (
             <tr key={k}>
               <th>{k}</th>
               <td>{v}</td>
+              <td>{k !== "Legacy goal" && <button type="button" class="linkish" onClick={() => onEdit(k.startsWith("Primary") ? 0 : k === "Spouse" ? 1 : ["Investable assets", "Account detail", "Statement date"].includes(k) ? 2 : k.includes("income") ? 3 : k.includes("spending") || k === "Spending flexibility" ? 4 : k === "State" ? 5 : k === "Social Security" ? 6 : 7)} aria-label={`Edit ${k}`}>Edit</button>}</td>
             </tr>
           ))}
         </tbody>
@@ -375,7 +433,7 @@ function Review({ answers }: { answers: WizardAnswers }) {
 function StepGroup({ title, children }: { title: string; children: preact.ComponentChildren }) {
   return (
     <div>
-      <h2>{title}</h2>
+      <h2 tabIndex={-1}>{title}</h2>
       <div class="step-group">{children}</div>
     </div>
   );
@@ -395,7 +453,7 @@ function NumberField({
   onChange: (v: number) => void;
   min?: number;
   max?: number;
-  step?: number;
+  step?: number | "any";
   hint?: string;
 }) {
   return (
@@ -403,6 +461,7 @@ function NumberField({
       <span>{label}</span>
       <input
         type="number"
+        required
         value={value}
         min={min}
         max={max}
@@ -417,10 +476,6 @@ function NumberField({
           if (!Number.isFinite(v)) return;
           onChange(v);
         }}
-        onBlur={(e) => {
-          const el = e.currentTarget as HTMLInputElement;
-          if (el.value.trim() === "") el.value = String(value);
-        }}
       />
       {hint && <small class="muted">{hint}</small>}
     </label>
@@ -428,7 +483,7 @@ function NumberField({
 }
 
 function OptionalNumber({ label, value, onChange, max }: { label: string; value: number | null; onChange: (v: number | null) => void; max?: number }) {
-  return <label class="row"><span>{label}</span><input type="number" min={0} max={max} value={value ?? ""} placeholder="Unknown / skip" onInput={(e) => {
+  return <label class="row"><span>{label}</span><input type="number" step={label.includes("year") ? 1 : "any"} min={0} max={max} value={value ?? ""} placeholder="Unknown / skip" onInput={(e) => {
     const raw = e.currentTarget.value;
     if (raw === "") onChange(null);
     else if (Number.isFinite(Number(raw))) onChange(Number(raw));
@@ -442,7 +497,7 @@ function MoneyField(props: {
   step?: number;
   hint?: string;
 }) {
-  return <NumberField {...props} min={0} step={props.step ?? 1} />;
+  return <NumberField {...props} min={0} step="any" />;
 }
 
 function ChoiceField<T extends string | boolean>({
@@ -461,6 +516,7 @@ function ChoiceField<T extends string | boolean>({
           key={String(o.value)}
           type="button"
           class={`choice ${value === o.value ? "choice--selected" : ""}`}
+          aria-pressed={value === o.value}
           onClick={() => onChange(o.value)}
         >
           {o.label}

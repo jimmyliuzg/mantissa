@@ -716,6 +716,10 @@ class RetirementPlanner:
             expected = ACCOUNT_TAX_DEFAULTS.get(a.account_type)
             if expected and a.tax_treatment != expected and not (a.account_type == "401k" and a.tax_treatment == "roth"):
                 raise ValueError(f"Account {a.id}: tax_treatment conflicts with retirement account type")
+        if scenario.surplus_account_id is not None:
+            destination = self.accounts.get(scenario.surplus_account_id)
+            if not destination or not destination.liquid or destination.tax_treatment != "taxable" or destination.account_type in {"real_estate", "vehicle", "hsa", "529"}:
+                raise ValueError("surplus_account_id must reference a liquid unrestricted taxable account")
         self.start_year = scenario.start_year or datetime.now().year
         if scenario.balance_date and scenario.balance_date != date(self.start_year, 1, 1):
             warnings.warn(
@@ -733,7 +737,9 @@ class RetirementPlanner:
             self.model_warnings.append("Missing aggregate cost_basis; market value assumed for: " + ", ".join(missing_basis))
         if any(w.source_account and w.is_taxable and w.taxable_amount is None for w in scenario.windfalls):
             self.model_warnings.append("Sourced windfalls without taxable_amount are treated as transfers with zero modeled income; reconcile K-1 income and basis separately.")
-        self.model_warnings.append("Access policy support is conservative: annual opening-date eligibility, declared Roth IRA contribution/conversion principal with five-year clocks, and explicit qualified HSA funding. SEPP, separation exceptions, inherited-account rules, penalties, IRA nondeductible basis, investment distributions and full tax-return/K-1 rules are not modeled.")
+        if str(scenario.state).upper() != "CA":
+            self.model_warnings.append("State income tax is modeled only for California. This plan omits state income tax for the selected state; results are incomplete for that component.")
+        self.model_warnings.append("Access policy support is conservative: annual opening-date eligibility, declared Roth IRA contribution/conversion principal with five-year clocks, and explicit qualified HSA funding. SEPP, separation exceptions, inherited-account rules, penalties, IRA nondeductible basis and full tax-return/K-1 rules are not modeled. Investment distributions use declared yields or simplified profiles.")
         if scenario.withdrawal_access_policy == "unrestricted":
             self.model_warnings.append("Unrestricted withdrawal policy bypasses retirement access restrictions; bridge feasibility is not validated.")
         if any(a.tax_treatment == "roth" and a.roth_first_contribution_year is None for a in scenario.accounts):
@@ -1170,6 +1176,7 @@ class RetirementPlanner:
             legacy_goal=config.get("legacy_goal", 2_000_000),
             state=config.get("state", "CA"),
             savings_order=savings_order,
+            surplus_account_id=config.get("surplus_account_id"),
             withdrawal_strategy=config.get("withdrawal_strategy", "fixed"),
             withdrawal_rate=config.get("withdrawal_rate", 0.04),
             survivor_expense_ratio=config.get("survivor_expense_ratio", 0.75),
@@ -2638,7 +2645,9 @@ class RetirementPlanner:
         rates["scenario"] = scenario_name
         inflation_rate = rates["general_inflation"]
         run_accounts = dict(self.accounts)
-        surplus_destination = next((aid for aid, a in run_accounts.items() if a.liquid and a.account_type == "checking"), None)
+        surplus_destination = self.scenario.surplus_account_id
+        if surplus_destination is None:
+            surplus_destination = next((aid for aid, a in run_accounts.items() if a.liquid and a.account_type == "checking"), None)
         if surplus_destination is None:
             surplus_destination = next((aid for aid, a in run_accounts.items() if a.liquid and a.tax_treatment == "taxable" and a.account_type not in {"real_estate", "vehicle", "hsa", "529"}), None)
         if surplus_destination is None:

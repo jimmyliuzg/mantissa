@@ -16,6 +16,9 @@ interface PlanReviewProps {
 /** Read-only preflight for every uploaded config. All data remains local. */
 export function PlanReview({ config, sims, onRun }: PlanReviewProps) {
   const review = summarizePlan(config);
+  const root = config as Record<string, unknown>;
+  const basicAssumptions = review.assumptions.filter(([key, value]) => value === null || typeof value !== "object");
+  const advancedAssumptions = review.assumptions.filter(([, value]) => value !== null && typeof value === "object");
 
   return (
     <section class="config-review">
@@ -33,6 +36,7 @@ export function PlanReview({ config, sims, onRun }: PlanReviewProps) {
         </button>
       </header>
 
+      {typeof root.state === "string" && root.state.toUpperCase() !== "CA" && <p class="coverage-notice" role="status">State income tax is not modeled for {root.state} and will be zero. Only California state income tax is currently modeled. Results may overstate available spending.</p>}
       <section class="review-stats" aria-label="Current financial snapshot">
         <Stat label="Current assets" value={fmtMoney(review.totalAssets)} />
         <Stat
@@ -51,16 +55,11 @@ export function PlanReview({ config, sims, onRun }: PlanReviewProps) {
       <section class="panel">
         <SectionTitle title="Household & plan settings" detail={review.household.join(" · ")} />
         <div class="review-columns">
-          <ValueList entries={review.assumptions} />
-          <details class="review-detail">
-            <summary>People in this plan</summary>
-            <Json
-              value={{
-                primary: (config as Record<string, unknown>)?.primary,
-                spouse: (config as Record<string, unknown>)?.spouse,
-              }}
-            />
-          </details>
+          <ValueList entries={basicAssumptions} />
+          <div>{["primary", "spouse"].map((key) => {
+            const person = root[key] as Record<string, unknown> | null;
+            return person && <div key={key}><h3>{text(person.name) || label(key)}</h3><ValueList entries={Object.entries(person).filter(([field]) => field !== "name")} /></div>;
+          })}</div>
         </div>
       </section>
 
@@ -133,12 +132,13 @@ export function PlanReview({ config, sims, onRun }: PlanReviewProps) {
       <section class="review-grid">
         <ConfigSection title="Income streams" items={review.incomeStreams} />
         <ConfigSection title="Expenses" items={review.expenses} />
-        <ConfigSection title="Mortgages & debts" items={review.mortgages} />
-        {review.events.map(([name, items]) => (
+        {review.mortgages.length > 0 && <ConfigSection title="Mortgages & debts" items={review.mortgages} />}
+        {review.events.filter(([, items]) => items.length > 0).map(([name, items]) => (
           <ConfigSection key={name} title={label(name)} items={items} />
         ))}
       </section>
 
+      {advancedAssumptions.length > 0 && <details class="panel review-detail"><summary>Detailed model assumptions</summary><ValueList entries={advancedAssumptions} /></details>}
       {review.unknownEntries.length > 0 && (
         <section class="panel">
           <SectionTitle title="Additional configured data" detail="Preserved for the engine" />
@@ -204,7 +204,7 @@ function ValueList({ entries }: { entries: Array<[string, unknown]> }) {
         <div key={key}>
           <dt>{label(key)}</dt>
           <dd>
-            <Value value={value} />
+            <Value field={key} value={value} />
           </dd>
         </div>
       ))}
@@ -212,12 +212,21 @@ function ValueList({ entries }: { entries: Array<[string, unknown]> }) {
   );
 }
 
-function Value({ value }: { value: unknown }) {
-  if (typeof value === "number") return <>{value >= 1_000 ? fmtMoney(value) : String(value)}</>;
+function Value({ field, value }: { field: string; value: unknown }) {
+  if (typeof value === "number") {
+    if (/year|age/i.test(field)) return <>{String(value)}</>;
+    if (/rate|fraction|share|pct|inflation|return|reduction|appreciation/i.test(field)) return <>{fmtPct(value)}</>;
+    if (/amount|balance|basis|contribution|legacy goal|legacy_goal|payment|principal/i.test(field)) return <>{fmtMoney(value)}</>;
+    return <>{String(value)}</>;
+  }
   if (typeof value === "boolean") return <>{value ? "Yes" : "No"}</>;
-  if (typeof value === "string") return <>{value}</>;
+  if (typeof value === "string") {
+    const labels: Record<string, string> = { fixed: "Fixed spending", dynamic: "Adjust to portfolio health", guardrails: "Portfolio guardrails", penalty_free: "Penalty-free withdrawals", allow_penalties: "Allow early-withdrawal penalties", real: "Today’s purchasing power", nominal: "Future dollars" };
+    return <>{labels[value] ?? value}</>;
+  }
   if (value === null) return <>None</>;
-  return <code>{JSON.stringify(value)}</code>;
+  if (Array.isArray(value)) return <>{value.map((item, index) => <span key={index}>{index > 0 ? ", " : ""}<Value field={field} value={item} /></span>)}</>;
+  return <ValueList entries={Object.entries(value as Record<string, unknown>)} />;
 }
 
 function Empty({ label }: { label: string }) {

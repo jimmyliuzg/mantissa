@@ -4,6 +4,10 @@ export type IncomeProfile = "none" | "stock_index" | "balanced" | "income";
 
 export interface WizardAnswers {
   primaryAge: number;
+  alreadyRetired: boolean;
+  spouseAlreadyRetired: boolean;
+  currentAnnualSpending: number | null;
+  spouseMonthlySocialSecurity: number;
   primaryRetirementAge: number;
   primaryLongevity: number;
   hasSpouse: boolean;
@@ -34,6 +38,7 @@ export interface WizardAnswers {
 }
 
 export const DEFAULT_ANSWERS: WizardAnswers = {
+  alreadyRetired: false, spouseAlreadyRetired: false, currentAnnualSpending: null, spouseMonthlySocialSecurity: 0,
   primaryAge: 35, primaryRetirementAge: 65, primaryLongevity: 92,
   hasSpouse: false, spouseAge: null, spouseRetirementAge: null, spouseLongevity: null,
   investableAssets: 250_000, accountBreakdown: false,
@@ -61,6 +66,8 @@ export function buildSlimConfig(a: WizardAnswers, now = new Date()) {
   const spouseLongevity = a.spouseLongevity ?? a.primaryLongevity;
   const endYear = Math.max(year + a.primaryLongevity - a.primaryAge,
     a.hasSpouse ? year + spouseLongevity - spouseAge : 0) + 2;
+  const primaryRetirement = a.alreadyRetired ? start : retirement(a.primaryRetirementAge, a.primaryAge);
+  const spouseRetirement = a.spouseAlreadyRetired ? start : retirement(a.spouseRetirementAge ?? a.primaryRetirementAge, spouseAge);
   const profile = a.incomeProfile;
   const accounts: Array<Record<string, unknown>> = [];
   const add = (id: string, name: string, type: string, tax: string, balance: number, extra = {}) => {
@@ -96,18 +103,25 @@ export function buildSlimConfig(a: WizardAnswers, now = new Date()) {
     category: required ? "essential" : "discretionary", is_must_spend: required,
     min_reduction: required ? 0 : a.maximumFlexibleCutPercent / 100,
   });
+  const expenses = [expense("living", "Essential living", a.annualSpending - flexible, true), expense("flexible", "Flexible spending", flexible, false)].filter((e) => e.monthly_amount > 0);
+  if (a.currentAnnualSpending !== null && primaryRetirement > start) {
+    // January 1 end dates are exclusive in the annual engine. The two
+    // periods meet without overlapping or dropping a retirement year.
+    for (const item of expenses) item.start_date = primaryRetirement;
+    if (a.currentAnnualSpending > 0) expenses.unshift({ ...expense("current-living", "Current living", a.currentAnnualSpending, true), end_date: primaryRetirement });
+  }
   return {
     name: "Wizard plan", description: "Created with the Mantissa web wizard; optional inputs may be provisional.",
     start_year: startYear,
     ...(a.balanceDate ? { balance_date: a.balanceDate } : {}),
     input_metadata: { account_breakdown: a.accountBreakdown ? "provided" : "missing", estimated_fields: estimated },
-    primary: { name: "Primary", birth_date: birth(a.primaryAge), retirement_date: retirement(a.primaryRetirementAge, a.primaryAge), longevity_age: a.primaryLongevity },
-    spouse: a.hasSpouse ? { name: "Spouse", birth_date: birth(spouseAge), retirement_date: retirement(a.spouseRetirementAge ?? a.primaryRetirementAge, spouseAge), longevity_age: spouseLongevity } : null,
+    primary: { name: "Primary", birth_date: birth(a.primaryAge), retirement_date: primaryRetirement, longevity_age: a.primaryLongevity },
+    spouse: a.hasSpouse ? { name: "Spouse", birth_date: birth(spouseAge), retirement_date: spouseRetirement, longevity_age: spouseLongevity } : null,
     economic: { inflation: 0.025, medical_inflation: 0.04, housing_appreciation: 0.035, equity_real_return: 0.06, bond_real_return: 0.02 },
     accounts,
-    income_streams: a.annualIncome > 0 ? [{ id: "salary", name: "Salary", owner: "primary", monthly_amount: a.annualIncome / 12, start_date: start, end_date: retirement(a.primaryRetirementAge, a.primaryAge), growth_rate: 0.02, is_w2: true }] : [],
-    expenses: [expense("living", "Essential living", a.annualSpending - flexible, true), expense("flexible", "Flexible spending", flexible, false)].filter((e) => e.monthly_amount > 0),
-    social_security: { primary_benefit_at_67: a.hasSocialSecurity ? a.monthlySocialSecurity : 0, primary_claiming_age: 67, spouse_benefit_at_67: 0, spouse_claiming_age: 67 },
+    income_streams: a.annualIncome > 0 && !a.alreadyRetired ? [{ id: "salary", name: "Salary", owner: "primary", monthly_amount: a.annualIncome / 12, start_date: start, end_date: primaryRetirement, growth_rate: 0.02, is_w2: true }] : [],
+    expenses,
+    social_security: { primary_benefit_at_67: a.hasSocialSecurity ? a.monthlySocialSecurity : 0, primary_claiming_age: 67, spouse_benefit_at_67: a.hasSpouse && a.hasSocialSecurity ? a.spouseMonthlySocialSecurity : 0, spouse_claiming_age: 67 },
     withdrawal_strategy: a.spendingStrategy, withdrawal_access_policy: "penalty_free", withdrawal_rate: 0.04,
     legacy_goal: 0, state: a.state, monetary_convention: "real", savings_order: [savingsId],
     glidepath: { equity_by_age: { 30: Math.min(1, equity + 0.2), 50: equity, 70: Math.max(0.2, equity - 0.15), 90: Math.max(0.2, equity - 0.15) }, pre_retirement_years: 5, post_retirement_years: 5, tent_equity_pct: Math.max(0.2, equity - 0.2), tent_ramp_years: 5 },

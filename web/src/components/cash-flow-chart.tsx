@@ -6,6 +6,7 @@ import type { CashFlowRow } from "@engine";
 
 interface CashFlowChartProps {
   rows: CashFlowRow[];
+  retirementYear?: number;
 }
 
 const H = 376;
@@ -30,7 +31,7 @@ const GAP = 20; // gap between the two charts
  * attrs equal the viewBox), so axis labels never shrink below their
  * nominal size; below CHART_MIN_WIDTH the wrapper scrolls instead.
  */
-export function CashFlowChart({ rows }: CashFlowChartProps) {
+export function CashFlowChart({ rows, retirementYear }: CashFlowChartProps) {
   const [wrapRef, width] = useElementWidth<HTMLDivElement>(880);
   const [cursor, setCursor] = useState<number | null>(null);
 
@@ -112,6 +113,10 @@ export function CashFlowChart({ rows }: CashFlowChartProps) {
         onKeyDown={onKeyDown}
         onBlur={() => setCursor(null)}
       >
+        {[{ year: retirementYear, label: "Retirement" }, { year: rows.find(row => row.adjustedSpendingMet === false)?.year, label: "First gap" }].filter(marker => marker.year !== undefined).map(marker => {
+          const index = rows.findIndex(row => row.year === marker.year);
+          return index < 0 ? null : <g key={marker.label}><line x1={xAt(index)} x2={xAt(index)} y1={M.top} y2={H - M.bottom} stroke="currentColor" stroke-dasharray="4 4" opacity="0.5" /><text x={xAt(index)} y={M.top + (marker.label === "Retirement" ? 12 : 26)} text-anchor="middle" font-size="11">{marker.label}</text></g>;
+        })}
         {/* Top panel: diverging cash flow */}
         <g>
           {cfTicks.map((v) => (

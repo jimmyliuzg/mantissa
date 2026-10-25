@@ -43,7 +43,13 @@ let bootstrapPromise: Promise<void> | null = null;
 let pyodide: PyodideLike | null = null;
 
 async function loadPyodideScript(): Promise<void> {
-  if (window.loadPyodide) return;
+  const scope = globalThis as typeof globalThis & { loadPyodide?: Window["loadPyodide"]; importScripts?: (...urls: string[]) => void };
+  if (scope.loadPyodide) return;
+  if (typeof document === "undefined") {
+    if (!scope.importScripts) throw new Error("Python worker could not load its runtime");
+    scope.importScripts(`${PYODIDE_CDN}pyodide.js`);
+    return;
+  }
   await new Promise<void>((resolve, reject) => {
     const s = document.createElement("script");
     s.src = `${PYODIDE_CDN}pyodide.js`;
@@ -70,8 +76,9 @@ export const pyodideEngine: Engine = {
     if (bootstrapPromise) return bootstrapPromise;
     bootstrapPromise = (async () => {
       await loadPyodideScript();
-      if (!window.loadPyodide) throw new Error("loadPyodide not on window after script load");
-      const runtime = await window.loadPyodide({ indexURL: PYODIDE_CDN });
+      const load = (globalThis as typeof globalThis & { loadPyodide?: Window["loadPyodide"] }).loadPyodide;
+      if (!load) throw new Error("Python runtime did not load");
+      const runtime = await load({ indexURL: PYODIDE_CDN });
 
       // numpy ships with Pyodide; the rest comes from micropip.
       await runtime.loadPackage(["numpy", "micropip"]);
