@@ -81,8 +81,8 @@ export function createPlanStore(initial: unknown, initialSims = 1000, initialSee
       await rerun();
       return;
     }
-    if (state.value.kind === "ready" || state.value.kind === "error") {
-      // Re-run with current config; engine is already booted.
+    if ((state.value.kind === "ready" || state.value.kind === "error") && engine.isReady()) {
+      // Re-run only if the earlier attempt actually finished booting.
       await rerun();
       return;
     }

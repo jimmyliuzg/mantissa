@@ -8,6 +8,16 @@ permissions:
   contents: read
 
 jobs:
+  privacy:
+    name: Private data guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python scripts/check_privacy.py
+
   core:
     name: Core tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest

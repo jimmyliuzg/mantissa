@@ -39,7 +39,7 @@ class TestCLIBasicContracts:
         from retirement_planner import __version__
 
         with open("CHANGELOG.md", encoding="utf-8") as changelog:
-            first_release = re.search(r"^## \[([^\]]+)\]", changelog.read(), re.MULTILINE)
+            first_release = re.search(r"^## \[(\d+\.\d+\.\d+)\]", changelog.read(), re.MULTILINE)
         assert first_release is not None
         assert first_release.group(1) == __version__
 

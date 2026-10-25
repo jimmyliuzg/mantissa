@@ -50,15 +50,15 @@ class TestNoNegativeBalances:
 # 2. Money conservation: income - expenses - taxes ≈ net cash flow
 # ---------------------------------------------------------------------------
 class TestMoneyConservation:
-    """Cash flow identity: income - expenses - taxes - aca_subsidy = net_cash_flow."""
+    """Cash flow identity: income - cash expenses - taxes + applied aca_subsidy = net_cash_flow."""
 
     def test_cash_flow_identity(self, projections):
         for row in projections:
             expected = (
                 row["income"]
-                - row["expenses"]
+                - row.get("cash_expenses", row["expenses"])
                 - row["taxes"]
-                - row.get("aca_subsidy", 0)
+                + row.get("aca_subsidy", 0)
             )
             actual = row["net_cash_flow"]
             assert actual == pytest.approx(expected, abs=1.0), (

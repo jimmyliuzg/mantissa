@@ -35,6 +35,11 @@ def _print_mc_results(mc_results: dict, label: str = "MONTE CARLO RESULTS"):
     click.echo(f"  P90 Final NW:        {_fmt_money(mc_results['p90_final_nw'])}")
     click.echo(f"  Median Lifetime Tax: {_fmt_money(mc_results['median_taxes'])}")
     click.echo(f"  Out of Savings Rate: {mc_results['out_of_savings_rate'] * 100:.1f}%")
+    if mc_results.get("withdrawal_access_policy") == "penalty_free":
+        click.echo(f"  Account Access Fail: {mc_results['access_failure_rate'] * 100:.1f}%")
+        click.echo(f"  Portfolio Depleted:  {mc_results['portfolio_depletion_rate'] * 100:.1f}%")
+    elif mc_results.get("withdrawal_access_policy") == "unrestricted":
+        click.echo("  Account Access:      not validated (unrestricted policy)")
     click.echo(f"  Simulations:         {mc_results['num_simulations']:,}")
     click.echo("=" * 52)
     dist = mc_results.get("mortality_distribution")
@@ -325,8 +330,7 @@ def stress(config, simulations, levels, method, scenario, seed):
 
     discretionary = [
         e for e in planner.scenario.expenses
-        if not e.is_must_spend and not e.is_one_time
-        and e.min_reduction > 0
+        if not e.is_must_spend and e.min_reduction > 0
     ]
     if discretionary:
         click.echo("Discretionary expenses (cut under stress):")

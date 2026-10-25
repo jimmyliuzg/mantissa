@@ -20,16 +20,17 @@ from datetime import datetime, date
 import math
 import warnings
 import numpy as np
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 
 from .models import (
-    Scenario, Person, Account, IncomeStream, Expense,
+    Scenario, Person, Account, IncomeStream, Expense, ACCOUNT_TAX_DEFAULTS,
     Mortgage, Windfall, HousingEvent, RothConversion, RolloverEvent,
     Dependent, EconomicAssumptions, SocialSecurity, AgeEvent, TaxableIncome,
     AssetAllocation, GlidepathConfig, MonetaryConvention,
 )
 
+from .access import AccessLedger, reaches_age
 from .monetary import MonetaryPolicy
 from .fixes import process_housing_event, process_roth_conversions, apply_medical_inflation
 from .tax_lots import calculate_121_exclusion
@@ -136,7 +137,9 @@ class CostBasisTracker:
     """Tracks aggregate taxable-account basis.
 
     Core projections intentionally use aggregate basis, not synthetic shares.
-    Default policy assumes initial taxable balance is entirely basis.
+    Values use the active convention. REAL-mode values are rebased annually
+    so their nominal amount stays fixed; contributions establish new basis.
+    Missing opening basis retains the market-value fallback with a warning.
     """
     basis_by_account: Dict[str, float] = field(default_factory=dict)
 
@@ -179,10 +182,21 @@ class WithdrawalEngine:
     """
 
     def __init__(self, accounts: Dict[str, Account],
-                 cost_basis: CostBasisTracker):
+                 cost_basis: CostBasisTracker, access_policy="unrestricted",
+                 birth_dates=None, start_year=None):
         self.accounts = accounts
         self.cost_basis = cost_basis
+        self.access_policy = access_policy
+        self.access_start_year = start_year or datetime.now().year
+        self.birth_dates = birth_dates or {}
+        self.access = AccessLedger(accounts, start_year or datetime.now().year)
+        self.nominal_factor = 1.0
+        self.owner_map = {}
+        self.owner_ages = {}
+        self.sale_date = None
         self._withdrawals: List[WithdrawalResult] = []
+        self.rmd_reference_balances = None
+        self.rmd_year = None
 
     @property
     def withdrawals(self) -> List[WithdrawalResult]:
@@ -234,6 +248,7 @@ class WithdrawalEngine:
         spouse_age: int,
         sale_date: Optional[date] = None,
         owner_map: Optional[Dict[str, str]] = None,
+        access_date: Optional[date] = None,
     ) -> List[WithdrawalResult]:
         """Withdraw from accounts in tax-efficient order until *needed* is met.
 
@@ -241,7 +256,11 @@ class WithdrawalEngine:
         update *balances* and ``cost_basis`` in place.
         """
         self.clear()
+        self.rmd_year = year
         remaining = needed
+        self.owner_map = owner_map or {}
+        self.owner_ages = {"primary": primary_age, "spouse": spouse_age}
+        self.sale_date = access_date or sale_date or date(year, 1, 1)
         # --- Step 1: Force RMDs from pre-tax accounts (age 73+) ---
         remaining = self._withdraw_rmds(
             balances, primary_age, spouse_age, remaining, owner_map)
@@ -249,7 +268,7 @@ class WithdrawalEngine:
         # --- Step 2: Taxable brokerage ---
         remaining = self._withdraw_from_category(
             balances, remaining,
-            category_filter=lambda a: a.tax_treatment == "taxable",
+            category_filter=lambda a: a.tax_treatment == "taxable" and a.account_type != "hsa",
             tax_treatment="capital_gains",
             sale_date=sale_date,
         )
@@ -260,6 +279,10 @@ class WithdrawalEngine:
             category_filter=lambda a: a.tax_treatment == "pre_tax",
             tax_treatment="ordinary",
         )
+
+        remaining = self._withdraw_from_category(
+            balances, remaining, category_filter=lambda a: a.account_type == "hsa",
+            tax_treatment="ordinary")
 
         # --- Step 4: Roth (last resort) ---
         remaining = self._withdraw_from_category(
@@ -299,16 +322,19 @@ class WithdrawalEngine:
                      if owner_map is not None
                      else None) or (account.owner or "primary").lower()
             owner_age = spouse_age if owner == "spouse" else primary_age
-            if owner_age < RMD_START_AGE:
+            birth_year = self.rmd_year - owner_age if self.rmd_year is not None else 1955
+            rmd_age = 75 if birth_year >= 1960 else 73 if birth_year >= 1951 else 72 if birth_year >= 1949 else 70.5
+            if owner_age < rmd_age:
                 continue
             group = "ira" if account.account_type in {"trad_ira", "traditional_ira"} else account_id
-            groups.setdefault((owner, group), []).append((account_id, balance))
+            reference = self.rmd_reference_balances.get(account_id, balance) if self.rmd_reference_balances is not None else balance
+            groups.setdefault((owner, group), []).append((account_id, reference))
 
         rmds: Dict[str, float] = {}
         for (owner, _group), members in groups.items():
             age = spouse_age if owner == "spouse" else primary_age
             total_balance = sum(balance for _, balance in members)
-            total_rmd = self.calculate_rmd(total_balance, age)
+            total_rmd = total_balance / _rmd_divisor(age)
             for aid, balance in members:
                 if total_balance > 0 and total_rmd > 0:
                     rmds[aid] = total_rmd * balance / total_balance
@@ -353,6 +379,7 @@ class WithdrawalEngine:
                                     if account.account_type == "checking" and account.liquid), None)
             if destination is not None:
                 balances[destination] = balances.get(destination, 0.0) + surplus
+                self.cost_basis.set_basis(destination, self.cost_basis.get_basis(destination, 0.0) + surplus)
                 self._withdrawals.append(WithdrawalResult(
                     account_id=destination,
                     account_type=self.accounts[destination].account_type,
@@ -363,6 +390,36 @@ class WithdrawalEngine:
                 ))
 
         return remaining
+
+    def _owner(self, account):
+        return self.owner_map.get(account.id, (account.owner or "primary").lower())
+
+    def _old_enough(self, account, age):
+        owner = self._owner(account)
+        birth = self.birth_dates.get(owner)
+        return (reaches_age(birth, age, self.sale_date) if birth
+                else self.owner_ages.get(owner, 0) >= age)
+
+    def available(self, account, balance):
+        if not account.liquid or account.account_type in {"real_estate", "vehicle", "529"}:
+            return 0.0
+        if account.account_type == "hsa":
+            return balance if self.access_policy == "penalty_free" and self._old_enough(account, 65) else 0.0
+        if self.access_policy == "unrestricted" or account.tax_treatment == "taxable":
+            return balance
+        if account.tax_treatment == "pre_tax":
+            return balance if self._old_enough(account, 59.5) else 0.0
+        if account.tax_treatment == "roth":
+            owner = self._owner(account)
+            old = self._old_enough(account, 59.5)
+            if account.account_type != "roth_ira":
+                first = account.roth_first_contribution_year or self.access_start_year
+                return balance if old and self.rmd_year >= first + 5 else 0.0
+            if self.access.qualified(owner, self.rmd_year, old):
+                return balance
+            if account.account_type == "roth_ira":
+                return min(balance, self.access.available_principal(owner, self.rmd_year, old) / self.nominal_factor)
+        return 0.0
 
     def _withdraw_from_category(
         self,
@@ -381,25 +438,31 @@ class WithdrawalEngine:
             # Never liquidate illiquid assets (e.g. real estate) to fund
             # ordinary spending — those require a housing event.
             if (account.account_type == "real_estate"
+                    or account.account_type in {"vehicle", "529"}
                     or not account.liquid):
                 continue
             balance = balances.get(account_id, 0.0)
             if balance <= 0:
                 continue
 
-            withdraw = min(remaining, balance)
+            withdraw = min(remaining, self.available(account, balance))
+            if withdraw <= 0:
+                continue
 
             # For taxable accounts, compute capital gain portion
             capital_gain = 0.0
             taxable_amount = 0.0
             if tax_treatment == "capital_gains":
-                basis_used = self.cost_basis.debit_basis(account_id, withdraw)
-                capital_gain = withdraw - basis_used
+                basis_used = self.cost_basis.debit_basis(account_id, self.cost_basis.get_basis(account_id) * withdraw / balance)
+                capital_gain = (0.0 if account.account_type in {"checking", "cash", "savings", "money_market"}
+                                else withdraw - basis_used)
                 taxable_amount = capital_gain
             elif tax_treatment == "ordinary":
                 taxable_amount = withdraw
             # tax_free: taxable_amount stays 0
 
+            if account.tax_treatment == "roth" and account.account_type == "roth_ira":
+                self.access.consume(self._owner(account), withdraw * self.nominal_factor)
             balances[account_id] = balance - withdraw
             remaining = max(0.0, remaining - withdraw)
 
@@ -417,6 +480,11 @@ class WithdrawalEngine:
         self,
         balances: Dict[str, float],
         available_savings: float,
+        year: Optional[int] = None,
+        active_owners: Optional[set] = None,
+        ages: Optional[dict] = None,
+        wages_by_owner: Optional[dict] = None,
+        monetary_factor: float = 1.0,
     ) -> Dict[str, float]:
         """Distribute surplus savings into accounts by contribution priority.
 
@@ -439,14 +507,28 @@ class WithdrawalEngine:
         )
 
         remaining = available_savings
+        owner_deferrals = {}
         for account in eligible:
             if remaining <= 0:
                 break
 
-            if account.annual_contribution_cap > 0:
-                employee = min(remaining, account.annual_contribution_cap)
-            else:
-                employee = remaining  # Unlimited — receives the remainder
+            if year is not None and account.contribution_end_date and date(year, 1, 1) >= account.contribution_end_date:
+                continue
+            workplace = account.account_type in {"401k", "trad_401k", "roth_401k"}
+            if workplace and active_owners is not None and account.owner not in active_owners:
+                continue
+            cap = account.contribution_caps_by_year.get(year, account.annual_contribution_cap)
+            # An explicit scheduled zero means no contribution, unlike legacy cap=0 (unlimited).
+            if year in account.contribution_caps_by_year and cap == 0:
+                continue
+            employee = min(remaining, cap / monetary_factor) if cap > 0 else remaining
+            if workplace and year is not None:
+                legal = calculate_401k_limit((ages or {}).get(account.owner, 0), year)
+                owner_limit = legal / monetary_factor
+                if wages_by_owner is not None:
+                    owner_limit = min(owner_limit, wages_by_owner.get(account.owner, 0.0))
+                employee = min(employee, max(0.0, owner_limit - owner_deferrals.get(account.owner, 0.0)))
+                owner_deferrals[account.owner] = owner_deferrals.get(account.owner, 0.0) + employee
             if employee <= 0:
                 continue
             remaining -= employee
@@ -463,6 +545,8 @@ class WithdrawalEngine:
             account_id = account.id
             balances[account_id] = balances.get(account_id, 0.0) + total
             contributions[account_id] = total
+            if account.tax_treatment == "roth" and account.account_type == "roth_ira":
+                self.access.add_contribution((account.owner or "primary").lower(), employee * self.nominal_factor, year)
             # Increase cost basis for taxable accounts (contributions are basis)
             if account.tax_treatment == "taxable":
                 current_basis = self.cost_basis.get_basis(account_id, 0.0)
@@ -601,7 +685,7 @@ class EngineTaxEvaluator:
 
         # Combined score: tax + IRMAA + NIIT - ACA subsidy preserved
         # (negative ACA subsidy means lost subsidy = cost)
-        total_cost = marginal_tax + irmaa_cost + niit - aca_subsidy
+        total_cost = marginal_tax + irmaa_cost - aca_subsidy  # marginal_tax already includes NIIT
 
         return TaxEvaluation(
             total_tax=marginal_tax,
@@ -625,11 +709,35 @@ class RetirementPlanner:
 
     def __init__(self, scenario: Scenario):
         self.scenario = scenario
+        if scenario.withdrawal_access_policy not in {"penalty_free", "unrestricted"}:
+            raise ValueError("Unknown withdrawal_access_policy")
         self.accounts = {a.id: a for a in scenario.accounts}
-        self.start_year = datetime.now().year
+        for a in scenario.accounts:
+            expected = ACCOUNT_TAX_DEFAULTS.get(a.account_type)
+            if expected and a.tax_treatment != expected and not (a.account_type == "401k" and a.tax_treatment == "roth"):
+                raise ValueError(f"Account {a.id}: tax_treatment conflicts with retirement account type")
+        self.start_year = scenario.start_year or datetime.now().year
+        if scenario.balance_date and scenario.balance_date != date(self.start_year, 1, 1):
+            warnings.warn(
+                "Balances are dated inside a year but this engine projects whole years. "
+                "Use consistent January opening balances or a later start_year; "
+                "do not treat full-year cash flow as a remaining-year forecast.", UserWarning)
         # When set by MonteCarloEngine for historical simulations, the planner
         # uses this list of sequential returns instead of random gaussian draws.
         self._historical_return_override: Optional[List[float]] = None
+        self.model_warnings = []
+        if scenario.balance_date and scenario.balance_date != date(self.start_year, 1, 1):
+            self.model_warnings.append("Whole-year model: starting balance dates differ from January opening balances; completed flows are not netted out.")
+        missing_basis = [a.id for a in scenario.accounts if a.tax_treatment == "taxable" and a.balance > 0 and a.cost_basis is None and a.account_type not in {"checking", "cash", "savings", "money_market", "vehicle"}]
+        if missing_basis:
+            self.model_warnings.append("Missing aggregate cost_basis; market value assumed for: " + ", ".join(missing_basis))
+        if any(w.source_account and w.is_taxable and w.taxable_amount is None for w in scenario.windfalls):
+            self.model_warnings.append("Sourced windfalls without taxable_amount are treated as transfers with zero modeled income; reconcile K-1 income and basis separately.")
+        self.model_warnings.append("Access policy support is conservative: annual opening-date eligibility, declared Roth IRA contribution/conversion principal with five-year clocks, and explicit qualified HSA funding. SEPP, separation exceptions, inherited-account rules, penalties, IRA nondeductible basis, investment distributions and full tax-return/K-1 rules are not modeled.")
+        if scenario.withdrawal_access_policy == "unrestricted":
+            self.model_warnings.append("Unrestricted withdrawal policy bypasses retirement access restrictions; bridge feasibility is not validated.")
+        if any(a.tax_treatment == "roth" and a.roth_first_contribution_year is None for a in scenario.accounts):
+            self.model_warnings.append("Missing Roth first-contribution year: opening year is used as a conservative five-year clock; undeclared contribution basis is zero.")
         # Stress level (0..1): discretionary expenses are cut by
         # min_reduction × stress_level (behavioral response to market
         # stress).  CLI --stress and the `stress` command set it.
@@ -686,7 +794,7 @@ class RetirementPlanner:
         accounts = []
         for acc_config in config.get("accounts", []):
             for dead in ("growth_rate_optimistic", "growth_rate_pessimistic",
-                         "asset_class"):
+                         ):
                 if dead in acc_config:
                     warnings.warn(
                         f"account '{acc_config.get('id')}': '{dead}' is not "
@@ -697,7 +805,7 @@ class RetirementPlanner:
                 id=acc_config["id"],
                 name=acc_config["name"],
                 account_type=acc_config["type"],
-                tax_treatment=acc_config.get("tax_treatment", "taxable"),
+                tax_treatment=acc_config.get("tax_treatment", ACCOUNT_TAX_DEFAULTS.get(acc_config["type"], "taxable")),
                 balance=acc_config["balance"],
                 growth_rate=acc_config.get("growth_rate"),
                 monthly_contribution=acc_config.get("monthly_contribution", 0.0),
@@ -708,6 +816,14 @@ class RetirementPlanner:
                 expense_ratio=acc_config.get("expense_ratio", 0.0),
                 equity_pct=acc_config.get("equity_pct"),
                 owner=acc_config.get("owner", "primary"),
+                asset_class=acc_config.get("asset_class"),
+                cost_basis=acc_config.get("cost_basis"),
+                roth_contribution_basis=acc_config.get("roth_contribution_basis", 0.0),
+                roth_conversion_basis=acc_config.get("roth_conversion_basis", []),
+                roth_first_contribution_year=acc_config.get("roth_first_contribution_year"),
+                contribution_caps_by_year={int(k): v for k, v in acc_config.get("contribution_caps_by_year", {}).items()},
+                contribution_end_date=date.fromisoformat(acc_config["contribution_end_date"]) if acc_config.get("contribution_end_date") else None,
+                return_volatility=acc_config.get("return_volatility"),
                 # Vehicles depreciate by default; everything else stays
                 # liquid/stable unless the config says otherwise.
                 is_depreciating=acc_config.get(
@@ -755,6 +871,8 @@ class RetirementPlanner:
             equity_real_return_optimistic=econ_config.get("equity_real_return_optimistic", 0.08),
             equity_real_return_pessimistic=econ_config.get("equity_real_return_pessimistic", 0.04),
             bond_real_return=econ_config.get("bond_real_return", 0.025),
+            bond_return_volatility=econ_config.get("bond_return_volatility", 0.06),
+            equity_bond_correlation=econ_config.get("equity_bond_correlation", 0.0),
             bond_real_return_optimistic=econ_config.get("bond_real_return_optimistic", 0.035),
             bond_real_return_pessimistic=econ_config.get("bond_real_return_pessimistic", 0.015),
         )
@@ -794,6 +912,7 @@ class RetirementPlanner:
                         cliff_date=date.fromisoformat(g["cliff_date"]) if g.get("cliff_date") else None,
                         cliff_replaces_first_vest=g.get("cliff_replaces_first_vest", False),
                         status=g.get("status", "active"),
+                        first_vest_date=date.fromisoformat(g["first_vest_date"]) if g.get("first_vest_date") else None,
                     ))
                 refresher = None
                 if "refreshers" in ec and ec["refreshers"]:
@@ -878,6 +997,10 @@ class RetirementPlanner:
                 category=ec.get("category", "general"),
                 is_must_spend=ec.get("is_must_spend", True),
                 min_reduction=ec.get("min_reduction", 0.0),
+                tax_deductible=ec.get("tax_deductible", False),
+                funding_account=ec.get("funding_account", ""),
+                payment_kind=ec.get("payment_kind", "cash"),
+                hsa_qualified=ec.get("hsa_qualified", False),
             ))
 
         # Parse mortgages
@@ -893,6 +1016,10 @@ class RetirementPlanner:
                 start_date=date.fromisoformat(mc["start_date"]),
                 end_date=date.fromisoformat(mc["end_date"]),
                 is_tax_deductible=mc.get("is_tax_deductible", True),
+                deduction_kind=mc.get("deduction_kind", "none"),
+                deductible_debt_limit=mc.get("deductible_debt_limit", 750_000),
+                ca_deductible_debt_limit=mc.get("ca_deductible_debt_limit", 1_000_000),
+                rate_changes=mc.get("rate_changes", []),
             ))
 
         # Parse windfalls
@@ -906,6 +1033,9 @@ class RetirementPlanner:
                 goes_to_account=wf.get("goes_to_account", ""),
                 is_taxable=wf.get("is_taxable", True),
                 source_account=wf.get("source_account", ""),
+                taxable_amount=wf.get("taxable_amount"),
+                taxable_kind=wf.get("taxable_kind", "ordinary"),
+                wage_owner=wf.get("wage_owner"),
             ))
 
         # Parse housing events
@@ -925,6 +1055,12 @@ class RetirementPlanner:
                 goes_to_account=he.get("goes_to_account", "joint_brokerage"),
                 funding_account=he.get("funding_account", "joint_brokerage"),
                 new_mortgage_id=he.get("new_mortgage_id", ""),
+                selling_costs=he.get("selling_costs", 0.0),
+                purchase_costs=he.get("purchase_costs", 0.0),
+                exclusion_eligible=he.get("exclusion_eligible", True),
+                mortgage_deduction_kind=he.get("mortgage_deduction_kind", "none"),
+                deductible_debt_limit=he.get("deductible_debt_limit", 750_000),
+                ca_deductible_debt_limit=he.get("ca_deductible_debt_limit", 1_000_000),
             ))
 
         # Parse Roth conversions
@@ -1024,6 +1160,11 @@ class RetirementPlanner:
             withdrawal_strategy=config.get("withdrawal_strategy", "fixed"),
             withdrawal_rate=config.get("withdrawal_rate", 0.04),
             survivor_expense_ratio=config.get("survivor_expense_ratio", 0.75),
+            monetary_convention=MonetaryConvention(config.get("monetary_convention", "real")),
+            start_year=config.get("start_year"),
+            balance_date=date.fromisoformat(config["balance_date"]) if config.get("balance_date") else None,
+            tax_inputs={int(k): v for k, v in config.get("tax_inputs", {}).items()},
+            withdrawal_access_policy=config.get("withdrawal_access_policy", "penalty_free"),
         )
 
         planner = cls(scenario)
@@ -1109,6 +1250,7 @@ class RetirementPlanner:
         self,
         account: Account,
         allocation: AssetAllocation,
+        scenario: str = "mean",
     ) -> float:
         """Compute net growth rate for an account given an allocation.
 
@@ -1119,7 +1261,7 @@ class RetirementPlanner:
         If account.growth_rate is set, it overrides the equity rate
         for backward compatibility with legacy configs.
         """
-        rates = self.scenario.economic.get_rate("mean")
+        rates = self.scenario.economic.get_rate(scenario)
         inflation = rates["general_inflation"]
 
         # Scenario-level capital market assumptions
@@ -1137,7 +1279,7 @@ class RetirementPlanner:
 
         gross_rate = (equity_rate * allocation.equity_pct
                       + bond_rate * allocation.bond_pct)
-        net_rate = gross_rate - account.expense_ratio
+        net_rate = gross_rate - account.expense_ratio * (1 + inflation if self.scenario.monetary_convention == MonetaryConvention.NOMINAL else 1)
         return net_rate
 
     def _account_growth_rate(self, account: Account, year: int,
@@ -1149,26 +1291,53 @@ class RetirementPlanner:
         non-allocation rates (real estate, depreciating assets, cash) are
         real and get converted exactly once.
         """
-        policy = MonetaryPolicy(
-            convention=self.scenario.monetary_convention,
-            base_year=self.start_year,
-            inflation=rates["general_inflation"],
-        )
-        if account.account_type == "real_estate":
-            rate = rates["housing_appreciation"]
-        elif account.is_depreciating:
-            rate = -0.04
-        elif account.growth_rate == 0:
-            rate = 0
-        else:
-            owner_age = self._account_owner_age(account, year)
-            allocation = self.get_equity_allocation(owner_age)
-            if account.equity_pct is not None:
-                allocation = AssetAllocation(
-                    account.equity_pct, 1.0 - account.equity_pct)
-            return self.get_growth_rate_for_allocation(account, allocation)
-        return policy.portfolio_return_to_convention(
-            rate, rates["general_inflation"])
+        return self._annual_account_return(account, year, rates.get("scenario", "mean"), rates, 0.0)
+
+    def _liquid_portfolio(self, balances):
+        return sum(max(0.0, value) for aid, value in balances.items()
+                   if aid in self.accounts and self.accounts[aid].liquid
+                   and self.accounts[aid].account_type not in {"real_estate", "vehicle", "529", "hsa"}) + max(0.0, balances.get("_unallocated_cash", 0.0))
+
+    def _account_allocation(self, account: Account, year: int) -> AssetAllocation:
+        if account.asset_class == "equity":
+            return AssetAllocation(1.0, 0.0)
+        if account.asset_class == "bond":
+            return AssetAllocation(0.0, 1.0)
+        if account.equity_pct is not None:
+            return AssetAllocation(account.equity_pct, 1 - account.equity_pct)
+        return self.get_equity_allocation(self._account_owner_age(account, year))
+
+    def _annual_account_return(self, account, year, scenario_name, rates,
+                               equity_volatility, equity_z=0.0, bond_z=0.0,
+                               historical=None):
+        inflation = rates["general_inflation"]
+        policy = MonetaryPolicy(self.scenario.monetary_convention, self.start_year, inflation)
+        # Cash, property and vehicles do not acquire stock-market shocks.
+        if account.asset_class == "cash" or account.account_type in {"checking", "cash", "savings", "money_market"}:
+            rate = account.growth_rate or 0.0
+            return policy.portfolio_return_to_convention(rate - account.expense_ratio, inflation)
+        if account.account_type == "real_estate" or account.is_depreciating or account.growth_rate == 0:
+            rate = (-0.04 if account.is_depreciating else
+                    account.growth_rate if account.growth_rate is not None else
+                    rates["housing_appreciation"] if account.account_type == "real_estate" else 0.0)
+            return policy.portfolio_return_to_convention(rate, inflation)
+        allocation = self._account_allocation(account, year)
+        mean = self.get_growth_rate_for_allocation(account, allocation, scenario_name)
+        if historical is not None:
+            # Historical series supplies EQUITY only; bonds use the configured CMA.
+            equity_rate = historical
+            if self.scenario.monetary_convention == MonetaryConvention.REAL:
+                equity_rate = (1 + historical) / (1 + inflation) - 1
+            bond_rate = policy.portfolio_return_to_convention(rates["bond_real_return"], inflation)
+            return allocation.equity_pct * equity_rate + allocation.bond_pct * bond_rate - account.expense_ratio * (1 + inflation if self.scenario.monetary_convention == MonetaryConvention.NOMINAL else 1)
+        if equity_volatility <= 0:
+            return mean
+        equity_vol = account.return_volatility if account.return_volatility is not None else equity_volatility
+        bond_vol = self.scenario.economic.bond_return_volatility
+        shock = allocation.equity_pct * equity_vol * equity_z + allocation.bond_pct * bond_vol * bond_z
+        if self.scenario.monetary_convention == MonetaryConvention.NOMINAL:
+            shock *= 1 + inflation
+        return mean + shock
 
     def get_account_balance(self, account_id: str, year: int,
                             scenario: str = "mean") -> float:
@@ -1179,6 +1348,7 @@ class RetirementPlanner:
 
         years = year - self.start_year
         rates = self.scenario.economic.get_rate(scenario)
+        rates["scenario"] = scenario
         rate = self._account_growth_rate(account, year, rates)
         return account.project_balance(years, rate)
 
@@ -1231,7 +1401,7 @@ class RetirementPlanner:
 
         if mortgage_balances:
             total_liabilities += sum(
-                b for b in mortgage_balances.values() if b > 0)
+                b / nominal_factor for b in mortgage_balances.values() if b > 0)
 
         return {
             "total_assets": total_assets,
@@ -1306,12 +1476,14 @@ class RetirementPlanner:
         """
         total_income = 0
         income_by_source = {}
+        wages_by_owner = {}
 
         for stream in self.scenario.income_streams:
             fraction = _year_active_fraction(
                 stream.start_date, stream.end_date, year)
             if fraction <= 0:
                 continue
+            total_before_stream = total_income
             years_active = year - stream.start_date.year
 
             if stream.base_salary or stream.equity:
@@ -1328,13 +1500,11 @@ class RetirementPlanner:
                     # Bonus (annual lump sum) — skip if the stream ends
                     # before the payment month in the final year
                     if stream.bonus and stream.bonus.annual > 0:
-                        end_month = stream.end_date.month
-                        if (year < stream.end_date.year
-                                or stream.bonus.payment_month <= end_month):
+                        payment_date = date(year, stream.bonus.payment_month, 1)
+                        if stream.start_date <= payment_date < stream.end_date:
                             bonus_growth = stream.bonus.growth_rate
                             stream_income += (stream.bonus.annual
-                                              * (1 + bonus_growth) ** years_active
-                                              * fraction)
+                                              * (1 + bonus_growth) ** years_active)
 
                     # RSU equity — day-exact via equity.end_date
                     # (defaulted to the stream end date at parse time)
@@ -1363,8 +1533,10 @@ class RetirementPlanner:
                           * fraction)
                 total_income += amount
                 income_by_source[stream.name] = amount
+            if stream.is_w2 and not stream.is_passive and not stream.is_ss:
+                wages_by_owner[stream.owner] = wages_by_owner.get(stream.owner, 0.0) + total_income - total_before_stream
 
-        return {"total": total_income, "by_source": income_by_source}
+        return {"total": total_income, "by_source": income_by_source, "wages_by_owner": wages_by_owner}
 
     # ------------------------------------------------------------------
     # Equity Compensation — RSU vesting math (stateless)
@@ -1413,17 +1585,60 @@ class RetirementPlanner:
                     total_shares=total,
                     vesting_pattern=policy.vesting_pattern,
                     periodic_shares=periodic,
-                    status="forecasted" if year > grant_year + 1 else "active"
+                    status="forecasted" if year > grant_year + 1 else "active",
+                    first_vest_date=self._add_months(grant_date, policy.vesting_delay_months),
                 )
                 total_shares += self._vested_shares_in_year(synthetic_grant, year, equity.end_date)
 
         return total_shares * equity.current_price
 
+    @staticmethod
+    def _add_months(value: date, months: int) -> date:
+        import calendar
+        n = value.year * 12 + value.month - 1 + months
+        year, month0 = divmod(n, 12)
+        month = month0 + 1
+        return date(year, month, min(value.day, calendar.monthrange(year, month)[1]))
+
     def _vested_shares_in_year(self, grant, year: int, end_date=None) -> float:
         """How many shares from this grant vest in a given year. Stateless."""
-        if end_date and date(year, 12, 31) > end_date:
-            return 0  # job ended — no more vests
+        if grant.status == "cancelled":
+            return 0.0
+        if grant.cliff_date and end_date and grant.cliff_date >= end_date:
+            return 0.0
+        if grant.first_vest_date and grant.vesting_pattern in {"quarterly", "monthly"}:
+            interval = 3 if grant.vesting_pattern == "quarterly" else 1
+            first = grant.first_vest_date
+            total = 0.0
+            for i in range(16 if interval == 3 else 48):
+                vest = self._add_months(first, i * interval)
+                if vest.year == year and (end_date is None or vest < end_date):
+                    total += max(0.0, min(grant.periodic_shares, grant.total_shares - i * grant.periodic_shares))
+            return total
+        if end_date and date(year, 1, 1) >= end_date:
+            return 0  # employment end is exclusive
 
+        if end_date and end_date.year == year:
+            # Dated legacy fallback for an employment-ending year. Explicit schedules win above.
+            if grant.vesting_pattern == "cliff_quarterly":
+                if grant.cliff_date is None:
+                    return 0.0
+                first = self._add_months(grant.cliff_date, 3) if grant.cliff_replaces_first_vest else date(grant.cliff_date.year + 1, 1, 1)
+                interval = 3
+                schedule = [(grant.cliff_date, grant.cliff_shares)]
+            else:
+                interval = 3 if grant.vesting_pattern == "quarterly" else 1
+                first = self._add_months(grant.grant_date, 2 if interval == 3 else 0)
+                schedule = []
+            schedule += [(self._add_months(first, i * interval), grant.periodic_shares) for i in range(48)]
+            vested = 0.0
+            in_year = 0.0
+            for vest, shares in sorted(schedule):
+                actual = min(shares, max(0.0, grant.total_shares - vested))
+                vested += actual
+                if vest.year == year and vest < end_date:
+                    in_year += actual
+            return in_year
         if grant.vesting_pattern == "cliff_quarterly":
             return self._cliff_quarterly_vests(grant, year)
         elif grant.vesting_pattern == "quarterly":
@@ -1531,7 +1746,8 @@ class RetirementPlanner:
             scenario: Economic scenario (for age-event overrides only).
             stress_level: 0.0 = normal, 1.0 = max stress (clamped) —
                 discretionary expenses (is_must_spend=False) are cut by
-                min_reduction x stress_level.
+                min_reduction x stress_level. Remaining reduction allowances
+                are returned by expense ID for flexible spending strategies.
             mortgage_balances: Optional dict of mortgage.id -> remaining
                 balance.  When provided, each year's payment is amortized:
                 interest = balance * rate, principal = payment - interest,
@@ -1541,14 +1757,23 @@ class RetirementPlanner:
         """
         stress_level = max(0.0, min(1.0, stress_level))
         total_expenses = 0
+        debt_factor = (1 + self.scenario.economic.get_rate(scenario)["general_inflation"]) ** (year - self.start_year)
         expenses_by_category = {}
+        reducible_by_expense = {}
         expense_mods = self.calculate_age_events(year)
+        mortgage_interest = 0.0
+        ca_mortgage_interest = 0.0
+        rental_interest = 0.0
 
         for expense in self.scenario.expenses:
+            amount = 0.0
             if expense.is_one_time:
                 if expense.one_time_date and expense.one_time_date.year == year:
-                    total_expenses += expense.one_time_amount
-                    expenses_by_category[expense.name] = expense.one_time_amount
+                    amount = expense.one_time_amount
+                    if not expense.is_must_spend:
+                        amount *= (1.0 - expense.min_reduction * stress_level)
+                    total_expenses += amount
+                    expenses_by_category[expense.name] = amount
             else:
                 if expense.start_date.year <= year <= expense.end_date.year:
                     monthly = expense.monthly_amount
@@ -1583,6 +1808,15 @@ class RetirementPlanner:
                     total_expenses += amount
                     expenses_by_category[expense.name] = amount
 
+            if amount > 0 and not expense.is_must_spend:
+                limit = max(0.0, min(1.0, expense.min_reduction))
+                remaining_fraction = 1.0 - limit * stress_level
+                # Stress cuts have already spent part of this category's
+                # reduction allowance. Do not cut the same dollars twice.
+                reducible_by_expense[expense.id] = (
+                    amount * limit * (1.0 - stress_level) / remaining_fraction
+                    if remaining_fraction > 0 else 0.0)
+
         # Add mortgage payments (amortized when balances are tracked).
         # Mortgages amortize monthly (US convention: nominal APR / 12);
         # annual-compounding on the year-start balance diverges from real
@@ -1593,23 +1827,38 @@ class RetirementPlanner:
                     balance = mortgage_balances.get(mortgage.id, 0.0)
                     if balance <= 0:
                         continue  # Paid off — no more payments
-                    fraction = _year_active_fraction(
-                        mortgage.start_date, mortgage.end_date, year)
+                    end = mortgage.end_date
+                    for event in self.scenario.housing_events:
+                        if event.sale_price > 0 and event.property_id == mortgage.property_id:
+                            end = min(end, event.event_date)
+                    fraction = _year_active_fraction(mortgage.start_date, end, year)
                     amount = 0.0
-                    monthly_rate = mortgage.interest_rate / 12
                     months = round(12 * fraction)
-                    for _ in range(months):
+                    first_month = max(1, mortgage.start_date.month if mortgage.start_date.year == year else 1)
+                    for month in range(first_month, first_month + months):
+                        rate, monthly_payment = mortgage.interest_rate, mortgage.monthly_payment
+                        for change in sorted(mortgage.rate_changes, key=lambda c: c["date"]):
+                            if date.fromisoformat(change["date"]) <= date(year, min(month, 12), 1):
+                                rate = change.get("interest_rate", rate)
+                                monthly_payment = change.get("monthly_payment", monthly_payment)
+                        monthly_rate = rate / 12
                         if balance <= 0:
                             break
                         interest = balance * monthly_rate
                         payment = min(
-                            mortgage.monthly_payment, balance + interest)
+                            monthly_payment, balance + interest)
+                        if mortgage.deduction_kind == "itemized":
+                            mortgage_interest += interest * min(1.0, mortgage.deductible_debt_limit / balance)
+                            ca_mortgage_interest += interest * min(1.0, mortgage.ca_deductible_debt_limit / balance)
+                        elif mortgage.deduction_kind == "rental":
+                            rental_interest += interest
                         balance -= payment - interest
                         amount += payment
                     mortgage_balances[mortgage.id] = max(0.0, balance)
                 else:
                     amount = mortgage.monthly_payment * 12 * _year_active_fraction(
                         mortgage.start_date, mortgage.end_date, year)
+                amount /= debt_factor
                 total_expenses += amount
                 expenses_by_category[f"Mortgage - {mortgage.name}"] = amount
 
@@ -1633,19 +1882,26 @@ class RetirementPlanner:
                     months = 12 - start_date.month
                 amount = 0.0
                 monthly_rate = rate / 12
+                origin = next((he for he in self.scenario.housing_events if (he.new_mortgage_id or f"{he.id}_mortgage") == mort_id), None)
                 for _ in range(months):
                     if balance <= 0:
                         break
                     interest = balance * monthly_rate
+                    if origin and origin.mortgage_deduction_kind == "itemized":
+                        mortgage_interest += interest * min(1.0, origin.deductible_debt_limit / balance)
+                        ca_mortgage_interest += interest * min(1.0, origin.ca_deductible_debt_limit / balance)
+                    elif origin and origin.mortgage_deduction_kind == "rental":
+                        rental_interest += interest
                     pmt = min(payment, balance + interest)
                     balance -= pmt - interest
                     amount += pmt
                 mortgage_balances[mort_id] = max(0.0, balance)
                 if amount > 0:
+                    amount /= debt_factor
                     total_expenses += amount
                     expenses_by_category[f"Mortgage - {mort_id}"] = amount
 
-        return {"total": total_expenses, "by_category": expenses_by_category}
+        return {"total": total_expenses, "by_category": expenses_by_category, "reducible_by_expense": reducible_by_expense, "mortgage_interest": mortgage_interest / debt_factor, "ca_mortgage_interest": ca_mortgage_interest / debt_factor, "rental_interest": rental_interest / debt_factor}
 
     def calculate_stress_expenses(
         self,
@@ -1707,6 +1963,12 @@ class RetirementPlanner:
         charitably_inclined: bool = False,
         # Phase 1d: filing status override
         filing_status=None,
+        mortgage_interest: float = 0.0,
+        ca_mortgage_interest: Optional[float] = None,
+        ca_property_tax: float = 0.0,
+        ca_income_adjustment: float = 0.0,
+        charitable_limit_pct: float = 0.6,
+        wages_by_owner: Optional[dict] = None,
     ) -> float:
         """Calculate federal + CA state taxes using versioned tax law.
 
@@ -1729,78 +1991,59 @@ class RetirementPlanner:
         else:
             status = FilingStatus.MFJ
 
-        # ---- QCD reduces AGI before deductions ----
-        from .tax_law import calculate_qcd
-        actual_qcd = calculate_qcd(ira_balance, age, charitably_inclined, law)
-        # QCD is excluded from AGI (not a deduction, just not counted as income)
-        # For simplicity, we reduce ordinary income by QCD amount
-        ordinary_for_tax = max(0.0, income.ordinary - actual_qcd)
-
-        # ---- Standard vs itemized deduction ----
-        standard_deduction = law.standard_deduction.get(status, 29_200)
-        # SALT cap
+        # Only an actual QCD is excluded. Charitable intent alone cannot create one.
+        ordinary_for_tax = max(0.0, income.ordinary - qcd_amount)
+        capital_gains = max(0.0, income.capital_gains)
+        if income.capital_gains < 0:
+            ordinary_for_tax = max(0.0, ordinary_for_tax + max(income.capital_gains, -1500 if status == FilingStatus.MFS else -3000))
+        magi = ordinary_for_tax + capital_gains
         salt_cap = law.salt_cap if law.salt_cap is not None else float('inf')
-        salt_deduction = min(salt_paid, salt_cap)
-        itemized = salt_deduction + charitable_deductions
-        deduction = max(standard_deduction, itemized)
-
-        # ---- Federal ordinary income tax ----
+        salt_start = law.salt_phaseout_start
+        floor = law.salt_floor
+        if status == FilingStatus.MFS:
+            salt_cap /= 2
+            floor /= 2
+            if salt_start is not None:
+                salt_start /= 2
+        if salt_start is not None:
+            salt_cap = max(floor, salt_cap - .30 * max(0.0, magi - salt_start))
+        salt_deduction = min(max(0.0, salt_paid), salt_cap)
+        charitable = min(max(0.0, charitable_deductions), max(0.0, magi * charitable_limit_pct))
+        charitable = max(0.0, charitable - law.charitable_deduction_floor_pct * magi)
+        itemized = salt_deduction + charitable + mortgage_interest
+        top_threshold = law.federal_brackets[status][-2].upper
+        itemized -= law.itemized_reduction_rate * min(itemized, max(0.0, magi - top_threshold))
+        deduction = max(law.standard_deduction.get(status, 29_200), itemized)
+        # A deduction remaining after ordinary income also shelters preferential gains.
         ordinary_after_deduction = max(0.0, ordinary_for_tax - deduction)
-        fed_brackets = law.federal_brackets.get(status, [])
-        federal_ordinary = bracket_tax(ordinary_after_deduction, fed_brackets)
-
-        # ---- Federal long-term capital gains tax ----
-        ltcg_taxable = income.capital_gains
-        ltcg_brackets = law.ltcg_brackets.get(status, [])
-        if ltcg_taxable > 0:
-            remaining_ordinary = ordinary_after_deduction
-            ltcg_tax = 0.0
-            prev_threshold = 0.0
-            for b in ltcg_brackets:
-                if ltcg_taxable <= 0:
-                    break
-                bracket_width = b.upper - prev_threshold
-                prev_threshold = b.upper
-                ordinary_in_bracket = min(remaining_ordinary, bracket_width)
-                remaining_ordinary -= ordinary_in_bracket
-                available = bracket_width - ordinary_in_bracket
-                if available <= 0:
-                    continue
-                taxed_here = min(ltcg_taxable, available)
-                ltcg_tax += taxed_here * b.rate
-                ltcg_taxable -= taxed_here
-        else:
-            ltcg_tax = 0.0
-
-        federal_tax = federal_ordinary + ltcg_tax
-
-        # ---- NIIT (Net Investment Income Tax) ----
-        from .tax_law import calculate_niit
-        magi = ordinary_for_tax + income.capital_gains
-        niit = calculate_niit(income.capital_gains, magi, law, status)
-        federal_tax += niit
-
-        # ---- AMT (Alternative Minimum Tax) ----
-        from .tax_law import calculate_amt
-        amt = calculate_amt(federal_tax, ordinary_for_tax, income.capital_gains, law, status)
-        federal_tax += amt
-
-        # ---- Child Tax Credit ----
-        from .tax_law import calculate_child_tax_credit
-        ctc = calculate_child_tax_credit(num_children, magi, law, status)
-        federal_tax = max(0.0, federal_tax - ctc)
-
-        # ---- California state tax (all ordinary — CA taxes LTCG as ordinary) ----
-        # Only CA has modeled brackets; other states pay no state income
-        # tax in this engine (better than charging CA tax in TX).
+        gain_after_deduction = max(0.0, capital_gains - max(0.0, deduction - ordinary_for_tax))
+        federal_ordinary = bracket_tax(ordinary_after_deduction, law.federal_brackets.get(status, []))
+        cg_brackets = law.ltcg_brackets.get(status, [])
+        ltcg_tax = bracket_tax(ordinary_after_deduction + gain_after_deduction, cg_brackets) - bracket_tax(ordinary_after_deduction, cg_brackets)
+        regular_tax = federal_ordinary + ltcg_tax
+        from .tax_law import calculate_niit, calculate_amt, calculate_child_tax_credit
+        # SALT and the standard deduction are AMT addbacks; qualified mortgage/gifts remain deductible.
+        amt = calculate_amt(regular_tax, max(0.0, ordinary_for_tax - charitable - mortgage_interest), max(0.0, capital_gains - max(0.0, charitable + mortgage_interest - ordinary_for_tax)), law, status)
+        federal_tax = max(0.0, regular_tax + amt - calculate_child_tax_credit(num_children, magi, law, status))
+        federal_tax += calculate_niit(capital_gains, magi, law, status)
         ca_tax = 0.0
         if str(getattr(self.scenario, "state", "CA")).upper() == "CA":
-            ca_total = ordinary_for_tax + income.capital_gains
-            ca_taxable = max(0.0, ca_total - deduction)  # CA uses same standard deduction
-            ca_brackets = law.ca_brackets
-            ca_tax = bracket_tax(ca_taxable, ca_brackets)
-
-        return federal_tax + ca_tax
+            ca_total = max(0.0, ordinary_for_tax + capital_gains + ca_income_adjustment)
+            ca_gifts = min(max(0.0, charitable_deductions), .5 * ca_total)
+            ca_itemized = ca_property_tax + ca_gifts + (mortgage_interest if ca_mortgage_interest is None else ca_mortgage_interest)
+            ca_start = law.ca_itemized_phaseout_start.get(status, float('inf'))
+            ca_itemized -= min(.8 * ca_itemized, .06 * max(0.0, magi - ca_start))
+            ca_deduction = max(law.ca_standard_deduction.get(status, 0.0), ca_itemized)
+            ca_taxable = max(0.0, ca_total - ca_deduction)
+            ca_tax = bracket_tax(ca_taxable, law.ca_brackets_by_status.get(status, law.ca_brackets))
+            ca_tax += .01 * max(0.0, ca_taxable - 1_000_000)
+        payroll_tax = 0.0
+        if wages_by_owner:
+            wages = [max(0.0, amount) for amount in wages_by_owner.values()]
+            payroll_tax = sum(.062 * min(amount, law.social_security_wage_base) + .0145 * amount for amount in wages)
+            threshold = 250_000 if status == FilingStatus.MFJ else 125_000 if status == FilingStatus.MFS else 200_000
+            payroll_tax += .009 * max(0.0, sum(wages) - threshold)
+        return federal_tax + ca_tax + payroll_tax
 
     # ------------------------------------------------------------------
     # IRMAA — Income-Related Monthly Adjustment Amount (Medicare surcharges)
@@ -2034,11 +2277,28 @@ class RetirementPlanner:
 
     def _is_retired(self, year: int, person: Person) -> bool:
         """Check if *person* has reached retirement date by *year*."""
-        return year >= person.retirement_date.year
+        return date(year, 1, 1) >= person.retirement_date
 
     # ------------------------------------------------------------------
     # Withdrawal strategy methods
     # ------------------------------------------------------------------
+    def _minimum_spending(self, year: int, base_spending: float, expenses: Dict) -> float:
+        """Protect obligations and the uncut portion of discretionary costs.
+
+        The simulation supplies a cash floor after funding-account debits,
+        survivor scaling, medical inflation and IRMAA. Direct strategy calls
+        derive the reduction budget from current-year expense amounts.
+        """
+        if "spending_floor" in expenses:
+            return max(0.0, min(base_spending, expenses["spending_floor"]))
+        budget = expenses.get("reducible_by_expense")
+        if budget is None:
+            budget = self.calculate_annual_expenses(year)["reducible_by_expense"]
+        policy = MonetaryPolicy(self.scenario.monetary_convention, self.start_year,
+                                self.scenario.economic.general_inflation)
+        reducible = policy.adjust_for_inflation(sum(budget.values()), year)
+        return max(0.0, base_spending - reducible)
+
     def apply_guardrails(
         self,
         year: int,
@@ -2122,15 +2382,7 @@ class RetirementPlanner:
         else:
             adjusted = base_spending
 
-        # Never go below floor (must-spend expenses)
-        must_spend_total = 0.0
-        for exp in self.scenario.expenses:
-            if exp.is_must_spend and not exp.is_one_time:
-                fraction = _year_active_fraction(
-                    exp.start_date, exp.end_date, year)
-                if fraction > 0:
-                    must_spend_total += exp.monthly_amount * 12 * fraction
-        adjusted = max(must_spend_total, adjusted)
+        adjusted = max(self._minimum_spending(year, base_spending, expenses), adjusted)
 
         return adjusted
 
@@ -2239,16 +2491,20 @@ class RetirementPlanner:
         # Compute planned portfolio: starting value adjusted for inflation
         # This is the Guyton-Klinger reference path, not a high-water mark
         years_from_start = year - self.start_year
-        inflation = getattr(self.scenario, 'inflation_rate', 0.025)
+        inflation = self.scenario.economic.general_inflation
         starting_portfolio = getattr(self, '_starting_portfolio', portfolio_value)
-        planned_portfolio = starting_portfolio * ((1 + inflation) ** years_from_start)
+        planned_portfolio = starting_portfolio
+        if self.scenario.monetary_convention == MonetaryConvention.NOMINAL:
+            planned_portfolio *= (1 + inflation) ** years_from_start
 
         if strategy == 'fixed':
             return base_spending
 
         elif strategy == 'guardrails':
-            return self.apply_guardrails(
-                year, base_spending, portfolio_value, planned_portfolio,
+            return max(
+                self._minimum_spending(year, base_spending, expenses),
+                self.apply_guardrails(
+                    year, base_spending, portfolio_value, planned_portfolio),
             )
 
         elif strategy == 'dynamic':
@@ -2257,28 +2513,14 @@ class RetirementPlanner:
             )
 
         elif strategy == 'percent_of_portfolio':
-            # Compute floor expenses (must-spend items)
-            floor = 0.0
-            for exp in self.scenario.expenses:
-                if exp.is_must_spend and not exp.is_one_time:
-                    fraction = _year_active_fraction(
-                        exp.start_date, exp.end_date, year)
-                    if fraction > 0:
-                        floor += exp.monthly_amount * 12 * fraction
+            floor = self._minimum_spending(year, base_spending, expenses)
             withdrawal_rate = getattr(self.scenario, 'withdrawal_rate', 0.04)
             return self.apply_percent_of_portfolio(
                 year, portfolio_value, withdrawal_rate, floor,
             )
 
         elif strategy == 'floor_ceiling':
-            # Compute floor (must-spend) and ceiling (base + 20%)
-            floor = 0.0
-            for exp in self.scenario.expenses:
-                if exp.is_must_spend and not exp.is_one_time:
-                    fraction = _year_active_fraction(
-                        exp.start_date, exp.end_date, year)
-                    if fraction > 0:
-                        floor += exp.monthly_amount * 12 * fraction
+            floor = self._minimum_spending(year, base_spending, expenses)
             ceiling = base_spending * 1.20
             return self.apply_floor_ceiling(
                 year, base_spending, portfolio_value, floor, ceiling,
@@ -2320,9 +2562,12 @@ class RetirementPlanner:
         total_ss = 0.0
         total_contributions = 0.0
         total_aca_subsidy = 0.0
+        total_aca_subsidy_estimate = 0.0
         total_estate_tax = 0.0
         peak_nw = 0.0
         out_of_savings_year = None
+        access_shortfall_year = None
+        portfolio_depletion_year = None
         net_worth_by_year: Dict[int, float] = {}
         projections = [] if collect_projections else None
         # Stress level: 0 = normal, 1 = max discretionary cuts
@@ -2348,18 +2593,31 @@ class RetirementPlanner:
             m.id: m.property_id for m in self.scenario.mortgages
         }
 
-        # Initialize cost basis — for simplicity, assume initial basis
-        # equals current balance (all contributions up to now).
-        # A real implementation would track actual contributions.
+        # Use supplied aggregate basis; missing basis retains the legacy balance assumption.
         cost_basis = CostBasisTracker()
         for account_id, account in self.accounts.items():
             if account.tax_treatment == "taxable":
-                cost_basis.set_basis(account_id, account.balance)
-                # Aggregate-basis policy: initial basis equals balance.
+                cost_basis.set_basis(account_id, account.cost_basis if account.cost_basis is not None else account.balance)
+
 
         rates = self.scenario.economic.get_rate(scenario_name)
+        rates["scenario"] = scenario_name
         inflation_rate = rates["general_inflation"]
-        withdrawal_engine = WithdrawalEngine(self.accounts, cost_basis)
+        run_accounts = dict(self.accounts)
+        surplus_destination = next((aid for aid, a in run_accounts.items() if a.liquid and a.account_type == "checking"), None)
+        if surplus_destination is None:
+            surplus_destination = next((aid for aid, a in run_accounts.items() if a.liquid and a.tax_treatment == "taxable" and a.account_type not in {"real_estate", "vehicle", "hsa", "529"}), None)
+        if surplus_destination is None:
+            surplus_destination = "_unallocated_cash"
+            run_accounts[surplus_destination] = Account(surplus_destination, "Unallocated cash", "checking", "taxable", 0, growth_rate=0, asset_class="cash")
+            balances[surplus_destination] = 0.0
+            cost_basis.set_basis(surplus_destination, 0.0)
+        birth_dates = {"primary": self.scenario.primary.birth_date}
+        if self.scenario.spouse:
+            birth_dates["spouse"] = self.scenario.spouse.birth_date
+        withdrawal_engine = WithdrawalEngine(
+            run_accounts, cost_basis, self.scenario.withdrawal_access_policy,
+            birth_dates, self.start_year)
         tax_law_registry = TaxLawRegistry()
 
         # Monetary policy for convention-aware conversion
@@ -2376,9 +2634,7 @@ class RetirementPlanner:
         portfolio_peak = 0.0
 
         # Starting portfolio for guardrails planned path
-        self._starting_portfolio = sum(
-            b for b in balances.values() if b > 0
-        )
+        self._starting_portfolio = self._liquid_portfolio(balances)
 
         # Historical return sequence index (for sequential replay)
         _hist_idx = 0
@@ -2494,70 +2750,36 @@ class RetirementPlanner:
             ):
                 break
 
-            # --- Step 1: Investment returns (with optional volatility) ---
-            for account_id in list(balances.keys()):
-                balance = balances[account_id]
-                if balance <= 0:
+            nominal_factor = monetary_policy.to_nominal_for_tax(1.0, year)
+            withdrawal_engine.nominal_factor = nominal_factor
+            if self.scenario.monetary_convention == MonetaryConvention.REAL and year > self.start_year:
+                for aid in cost_basis.basis_by_account:
+                    cost_basis.basis_by_account[aid] /= (1 + inflation_rate)
+            rmd_factor = (1 + inflation_rate) if self.scenario.monetary_convention == MonetaryConvention.REAL and year > self.start_year else 1.0
+            withdrawal_engine.rmd_reference_balances = {aid: value / rmd_factor for aid, value in balances.items()}
+            withdrawal_engine.rmd_year = year
+            taxable_cash_opening = sum(max(0.0, balances.get(aid, 0.0)) for aid, a in run_accounts.items()
+                if a.liquid and a.tax_treatment == "taxable" and a.account_type not in {"real_estate", "vehicle", "hsa", "529"})
+            # Shared equity/bond shocks preserve common market risk across accounts.
+            generator = rng if rng is not None else np.random.default_rng()
+            equity_z, independent_bond_z = generator.normal(size=2) if return_volatility > 0 else (0.0, 0.0)
+            rho = self.scenario.economic.equity_bond_correlation
+            bond_z = rho * equity_z + math.sqrt(max(0.0, 1 - rho * rho)) * independent_bond_z
+            historical = (self._historical_return_override[_hist_idx]
+                          if self._historical_return_override is not None
+                          and _hist_idx < len(self._historical_return_override) else None)
+            for account_id in list(balances):
+                account = run_accounts.get(account_id)
+                if account is None or balances[account_id] <= 0:
                     continue
-                account = self.accounts[account_id]
-                convention_adjusted = False
-
-                if account.account_type == "real_estate":
-                    base_rate = rates["housing_appreciation"]
-                elif account.is_depreciating:
-                    base_rate = -0.04
-                elif account.growth_rate == 0:
-                    base_rate = 0
-                else:
-                    # Use equity glidepath if configured.  Allocation
-                    # rates are already converted to the active
-                    # convention inside get_growth_rate_for_allocation.
-                    convention_adjusted = True
-                    allocation = self.get_equity_allocation(
-                        self._account_owner_age(account, year)
-                    )
-                    # Account-level override
-                    if account.equity_pct is not None:
-                        bond_pct = 1.0 - account.equity_pct
-                        allocation = AssetAllocation(
-                            equity_pct=account.equity_pct,
-                            bond_pct=bond_pct,
-                        )
-                    base_rate = self.get_growth_rate_for_allocation(
-                        account, allocation
-                    )
-
-                # Determine the actual return rate for this year
-                if (self._historical_return_override is not None
-                        and _hist_idx < len(self._historical_return_override)
-                        and account.account_type not in ("real_estate",)):
-                    # Historical sequences are NOMINAL S&P 500 total
-                    # returns (despite the historical_data docstring
-                    # claiming "real" — 2021 = +28.7% is the nominal
-                    # value): deflate to constant dollars in REAL mode.
-                    actual_rate = self._historical_return_override[_hist_idx]
-                    if (self.scenario.monetary_convention
-                            == MonetaryConvention.REAL):
-                        actual_rate = ((1.0 + actual_rate)
-                                       / (1.0 + inflation_rate) - 1.0)
-                elif return_volatility > 0:
-                    generator = rng if rng is not None else np.random.default_rng()
-                    actual_rate = generator.normal(base_rate, return_volatility)
-                else:
-                    actual_rate = base_rate
-
-                # Non-allocation rates (real estate, depreciating assets,
-                # cash) come in the real convention — convert once here.
-                # Allocation rates were already converted above.
-                if not convention_adjusted and not (
-                        self._historical_return_override is not None
-                        and account.account_type not in ("real_estate",)):
-                    actual_rate = monetary_policy.portfolio_return_to_convention(
-                        actual_rate, inflation_rate,
-                    )
-
-                growth = balance * actual_rate
-                balances[account_id] = balance + growth
+                actual_rate = self._annual_account_return(
+                    account, year, scenario_name, rates, return_volatility,
+                    equity_z, bond_z, historical)
+                # The base row uses price index 1, just like its income,
+                # expenses and tax conversions. Later rows advance the index.
+                if self.scenario.monetary_convention == MonetaryConvention.NOMINAL and year == self.start_year:
+                    actual_rate = (1.0 + actual_rate) / (1.0 + inflation_rate) - 1.0
+                balances[account_id] *= max(0.0, 1.0 + actual_rate)
 
             # Advance historical return index (one position per simulated year)
             if self._historical_return_override is not None:
@@ -2632,14 +2854,40 @@ class RetirementPlanner:
                 year, inflation_rate,
             )
 
+            survivor_expense_ratio = self.scenario.survivor_expense_ratio if snap.survivor is not None else 1.0
+            annual_expenses *= survivor_expense_ratio
+            funded_expenses = 0.0
+            funded_capital_gains = 0.0
+            for expense in self.scenario.expenses:
+                if not expense.funding_account or expense.name not in expense_data["by_category"]:
+                    continue
+                aid = expense.funding_account
+                source_account = run_accounts[aid]
+                if source_account.account_type == "hsa" and not expense.hsa_qualified:
+                    continue
+                if source_account.tax_treatment in {"pre_tax", "roth"}:
+                    continue
+                requested = monetary_policy.adjust_for_inflation(expense_data["by_category"][expense.name], year) * survivor_expense_ratio
+                available = max(0.0, balances.get(aid, 0.0))
+                funded = min(available, requested)
+                if available > 0:
+                    used_basis = cost_basis.debit_basis(aid, cost_basis.get_basis(aid, 0.0) * funded / available)
+                    if (source_account.tax_treatment == "taxable" and expense.payment_kind != "in_kind"
+                            and source_account.account_type not in {"checking", "cash", "savings", "money_market"}):
+                        funded_capital_gains += funded - used_basis
+                balances[aid] -= funded
+                funded_expenses += funded
+                if requested > 0:
+                    # Only unfunded cash spending can be reduced here.
+                    budget = expense_data["reducible_by_expense"]
+                    budget[expense.id] = budget.get(expense.id, 0.0) * (1.0 - funded / requested)
+            annual_expenses -= funded_expenses
             # Survivor expense scaling (R6): after the first death, active
             # expenses scale to survivor_expense_ratio of the both-alive
             # total. Applied once, before IRMAA/withdrawal logic.
             survivor_expense_ratio = (
                 self.scenario.survivor_expense_ratio
                 if snap.survivor is not None else 1.0)
-            annual_expenses *= survivor_expense_ratio
-
             # --- Step 4b: IRMAA Medicare surcharges (per-person) ---
             # 2-year lookback: use MAGI from 2 years prior
             lookback_year = year - 2
@@ -2651,7 +2899,8 @@ class RetirementPlanner:
             irmaa_amount = 0.0
             if num_medicare > 0:
                 # IRS uses combined household MAGI for IRMAA tiers
-                irmaa_amount = tax_law_irmaa(magi_2yr_ago, law, num_people=num_medicare)
+                irmaa_amount = monetary_policy.from_nominal_after_tax(
+                    tax_law_irmaa(magi_2yr_ago, law, num_people=num_medicare), year)
                 annual_expenses += irmaa_amount
 
             # --- Step 4c: ACA subsidy (per-person, pre-Medicare) ---
@@ -2661,8 +2910,13 @@ class RetirementPlanner:
             # definition: living adults plus active dependents (R5/KTD5).
             aca_family_size = snap.aca_family_size
 
+            reduction_budget = monetary_policy.adjust_for_inflation(
+                sum(expense_data["reducible_by_expense"].values()), year, inflation_rate,
+            ) * survivor_expense_ratio
+            expense_data["spending_floor"] = max(0.0, annual_expenses - reduction_budget)
+
             # --- Step 4d: Apply withdrawal strategy (if retired) ---
-            total_portfolio_value = sum(b for b in balances.values() if b > 0)
+            total_portfolio_value = self._liquid_portfolio(balances)
 
             if primary_retired and spouse_retired:
                 # Anchor the strategy on THIS year's planned expenses
@@ -2674,29 +2928,131 @@ class RetirementPlanner:
                     portfolio_peak, expense_data,
                 )
 
-            # --- Step 4e: Roth conversions ---
-            rc_result = process_roth_conversions(
-                self.scenario.roth_conversions, year, balances)
-            if rc_result.total_converted > 0:
-                # Track for later use when building ordinary income
-                _roth_conversion_income = rc_result.ordinary_income_added
-            else:
-                _roth_conversion_income = 0.0
-
             # --- Step 4f: Pre-tax rollovers (e.g. 401k -> trad IRA) ---
-            # Run AFTER conversions of the same year (rollover feeds next
-            # year's ladder) and BEFORE withdrawals so the source account
-            # balance is fully moved.
+            # Complete rollovers before same-year conversions.
             for ro in self.scenario.rollover_events:
                 if ro.event_date.year != year:
                     continue
                 source = balances.get(ro.source_account, 0.0)
                 if source <= 0:
                     continue
+                withdrawal_engine.rmd_reference_balances[ro.target_account] = withdrawal_engine.rmd_reference_balances.get(ro.target_account, 0.0) + withdrawal_engine.rmd_reference_balances.get(ro.source_account, 0.0)
+                withdrawal_engine.rmd_reference_balances[ro.source_account] = 0.0
                 balances[ro.source_account] = 0.0
                 balances[ro.target_account] = (
                     balances.get(ro.target_account, 0.0) + source)
                 # Pre-tax -> pre-tax: no basis change
+
+            # --- Step 4e: Roth conversions ---
+            # Reserve each account's RMD before converting; an RMD cannot be converted.
+            reserves = {}
+            for aid, account in self.accounts.items():
+                age = spouse_age if owner_map[aid] == "spouse" else primary_age
+                birth_year = year - age
+                start_age = 75 if birth_year >= 1960 else 73 if birth_year >= 1951 else 72 if birth_year >= 1949 else 70.5
+                if account.tax_treatment == "pre_tax" and age >= start_age:
+                    reserves[aid] = withdrawal_engine.rmd_reference_balances.get(aid, 0.0) / _rmd_divisor(age)
+            rc_result = process_roth_conversions(
+                [replace(rc, annual_amount=monetary_policy.adjust_for_inflation(rc.annual_amount, year))
+                 for rc in self.scenario.roth_conversions], year, balances, rmd_reserves=reserves)
+            for conversion in rc_result.conversions:
+                target = run_accounts[conversion["target"]]
+                owner = owner_map.get(target.id, (target.owner or "primary").lower())
+                if target.account_type == "roth_ira":
+                    withdrawal_engine.access.add_conversion(owner, conversion["amount"] * nominal_factor, year)
+            if rc_result.total_converted > 0:
+                # Track for later use when building ordinary income
+                _roth_conversion_income = rc_result.ordinary_income_added
+            else:
+                _roth_conversion_income = 0.0
+
+            wage_events = {}
+            event_ordinary = 0.0
+            event_capital_gains = funded_capital_gains
+            for windfall in self.scenario.windfalls:
+                if windfall.date.year != year:
+                    continue
+                target = windfall.goes_to_account
+                if not target or target not in balances:
+                    continue
+                amount = monetary_policy.adjust_for_inflation(windfall.amount, year)
+                if windfall.source_account:
+                    source = windfall.source_account
+                    available = max(0.0, balances.get(source, 0.0))
+                    amount = min(amount, available)
+                    basis_moved = cost_basis.debit_basis(source, cost_basis.get_basis(source, 0.0) * amount / available) if available else 0.0
+                    balances[source] -= amount
+                else:
+                    basis_moved = amount
+                balances[target] += amount
+                if self.accounts[target].tax_treatment == "taxable":
+                    cost_basis.set_basis(target, cost_basis.get_basis(target, 0.0) + basis_moved)
+                # Transfers do not create income merely because cash changes account.
+                taxable = windfall.taxable_amount
+                if taxable is None:
+                    taxable = windfall.amount if windfall.is_taxable and not windfall.source_account else 0.0
+                taxable = monetary_policy.adjust_for_inflation(taxable, year)
+                if windfall.wage_owner:
+                    wage_events[windfall.wage_owner] = wage_events.get(windfall.wage_owner, 0.0) + taxable
+                if windfall.taxable_kind == "capital_gains":
+                    event_capital_gains += taxable
+                else:
+                    event_ordinary += taxable
+            housing_shortfall = 0.0
+            created_mortgages = set()
+            for he in self.scenario.housing_events:
+                mortgages_before_event = set(mortgage_balances)
+                # Housing inputs are base-year purchasing-power amounts;
+                # loan contracts and statutory gain exclusions are nominal.
+                event_factor = monetary_policy.inflation_factor(year)
+                nominal_event = replace(he, **{key: getattr(he, key) * event_factor for key in (
+                    "sale_price", "purchase_price", "down_payment", "mortgage_amount",
+                    "selling_costs", "purchase_costs")})
+                nominal_balances = {aid: amount * nominal_factor for aid, amount in balances.items()}
+                before_event = dict(nominal_balances)
+                he_result = process_housing_event(
+                    nominal_event, year, nominal_balances, mortgage_balances,
+                    cost_basis=cost_basis.get_basis(he.property_id or "real_estate", 0.0) * nominal_factor,
+                    filing_status=filing_status.value, state=self.scenario.state,
+                    mortgage_property_map=mortgage_property_map,
+                    event_mortgage_terms=event_mortgage_terms, defer_tax=True)
+                balances.clear()
+                balances.update({aid: amount / nominal_factor for aid, amount in nominal_balances.items()})
+                created_mortgages.update(set(mortgage_balances) - mortgages_before_event)
+                event_capital_gains += he_result.taxable_gain / nominal_factor
+                housing_shortfall += he_result.funding_shortfall / nominal_factor
+                if he_result.event_type != "none":
+                    destination = he.goes_to_account or "joint_brokerage"
+                    if he_result.sale_proceeds > 0 and destination in run_accounts and run_accounts[destination].tax_treatment == "taxable":
+                        cost_basis.set_basis(destination, cost_basis.get_basis(destination) + he_result.sale_proceeds / nominal_factor)
+                    funding = he.funding_account or "joint_brokerage"
+                    available = max(0.0, before_event.get(funding, 0.0) + (he_result.sale_proceeds if funding == destination else 0.0)) / nominal_factor
+                    paid = min(available, he_result.purchase_funding / nominal_factor)
+                    if paid > 0:
+                        used_basis = cost_basis.debit_basis(funding, cost_basis.get_basis(funding) * paid / available)
+                        if run_accounts[funding].account_type not in {"checking", "cash", "savings", "money_market"}:
+                            event_capital_gains += paid - used_basis
+                    property_id = he.property_id or f"property_{he.id}"
+                    if he.purchase_price > 0 and property_id not in run_accounts:
+                        run_accounts[property_id] = Account(property_id, "Purchased property", "real_estate", "taxable", 0.0, liquid=False)
+                    cost_basis.set_basis(property_id,
+                        (nominal_event.purchase_price + nominal_event.purchase_costs) / nominal_factor if he.purchase_price > 0 else 0.0)
+            # Newly originated loans make their first payments in the purchase year,
+            # without amortizing existing loans or charging living expenses twice.
+            if created_mortgages:
+                new_balances = {aid: mortgage_balances[aid] for aid in created_mortgages}
+                new_terms = {aid: event_mortgage_terms[aid] for aid in created_mortgages if aid in event_mortgage_terms}
+                new_expenses = self.calculate_annual_expenses(year, scenario_name, mortgage_balances=new_balances, event_mortgage_terms=new_terms)
+                for aid in created_mortgages:
+                    key = f"Mortgage - {aid}"
+                    payment = new_expenses["by_category"].get(key, 0.0)
+                    annual_expenses += monetary_policy.adjust_for_inflation(payment, year)
+                    expense_data["by_category"][key] = payment
+                mortgage_balances.update(new_balances)
+                for field in ("mortgage_interest", "ca_mortgage_interest", "rental_interest"):
+                    expense_data[field] += new_expenses.get(field, 0.0)
+            if housing_shortfall > 1 and out_of_savings_year is None:
+                out_of_savings_year = year
 
             # --- Step 5: Withdrawals with tax gross-up (fixed point) ---
             # Withdrawals must fund expenses AND taxes.  Taxes depend on
@@ -2721,9 +3077,41 @@ class RetirementPlanner:
             new_needed = 0.0
             tax_ordinary_nominal = 0.0
             tax_cg_nominal = 0.0
-            for _ in range(20):
+            active_owners = {owner for owner, retired in (("primary", primary_retired), ("spouse", spouse_retired)) if not retired}
+            ages = {"primary": primary_age, "spouse": spouse_age}
+            wages_for_tax = {owner: monetary_policy.to_nominal_for_tax(monetary_policy.adjust_for_inflation(value, year), year) for owner, value in income_data.get("wages_by_owner", {}).items()}
+            for owner, value in wage_events.items():
+                wages_for_tax[owner] = wages_for_tax.get(owner, 0.0) + monetary_policy.to_nominal_for_tax(value, year)
+            wages_active = {owner: monetary_policy.adjust_for_inflation(value, year) for owner, value in income_data.get("wages_by_owner", {}).items()}
+            cap_factor = monetary_policy.inflation_factor(year) if self.scenario.monetary_convention == MonetaryConvention.REAL else 1.0
+            tax_options = dict(self.scenario.tax_inputs.get(year, {}))
+            for key in ("salt_paid", "charitable_deductions", "mortgage_interest", "ca_mortgage_interest", "ca_property_tax", "ca_income_adjustment"):
+                if key in tax_options:
+                    tax_options[key] = monetary_policy.to_nominal_for_tax(tax_options[key], year)
+            qualified_giving = monetary_policy.adjust_for_inflation(sum(expense_data["by_category"].get(e.name, 0.0) for e in self.scenario.expenses if e.tax_deductible and e.category == "charity"), year) * survivor_expense_ratio
+            tax_options.setdefault("charitable_deductions", monetary_policy.to_nominal_for_tax(qualified_giving, year))
+            tax_options.setdefault("mortgage_interest", monetary_policy.to_nominal_for_tax(monetary_policy.adjust_for_inflation(expense_data.get("mortgage_interest", 0.0), year), year))
+            tax_options.setdefault("ca_mortgage_interest", monetary_policy.to_nominal_for_tax(monetary_policy.adjust_for_inflation(expense_data.get("ca_mortgage_interest", 0.0), year), year))
+            subsidy_used = 0.0
+            for _ in range(40):
+                old_tax = taxes
+                contribution_basis = dict(cost_basis.basis_by_account)
+                contribution_access = withdrawal_engine.access.snapshot()
+                preview = withdrawal_engine.contribute(dict(balances), max(0.0, annual_income - annual_expenses + subsidy_used - taxes), year, active_owners, ages, wages_active, cap_factor) if active_owners else {}
+                cost_basis.basis_by_account.clear()
+                cost_basis.basis_by_account.update(contribution_basis)
+                withdrawal_engine.access.restore(contribution_access)
+                def employee_amount(aid, total):
+                    a = self.accounts[aid]
+                    if a.employer_match <= 0:
+                        return total
+                    uncapped = total / (1 + a.employer_match)
+                    return max(uncapped, total - a.employer_match * a.employer_match_limit) if a.employer_match_limit > 0 else uncapped
+                pretax_deduction = sum(employee_amount(aid, total) for aid, total in preview.items() if self.accounts[aid].tax_treatment == "pre_tax" and self.accounts[aid].account_type in {"401k", "trad_401k"})
+                hsa_deduction = sum(employee_amount(aid, total) for aid, total in preview.items() if self.accounts[aid].account_type == "hsa")
                 trial_balances = dict(balances)
                 basis_snapshot = dict(cost_basis.basis_by_account)
+                access_snapshot = withdrawal_engine.access.snapshot()
                 # Always execute (even at needed=0) so the forced RMD
                 # floor is part of the fixed point: RMDs are mandatory
                 # regardless of spending need, and their tax consequences
@@ -2731,11 +3119,12 @@ class RetirementPlanner:
                 trial_wd = withdrawal_engine.execute_withdrawals(
                     trial_needed, trial_balances, year, primary_age,
                     spouse_age, sale_date=date(year, 12, 31),
-                    owner_map=owner_map,
+                    owner_map=owner_map, access_date=date(year, 1, 1),
                 )
                 # Undo trial basis mutation
                 cost_basis.basis_by_account.clear()
                 cost_basis.basis_by_account.update(basis_snapshot)
+                withdrawal_engine.access.restore(access_snapshot)
 
                 # ACA subsidy on trial withdrawal-inclusive MAGI.  The
                 # subsidy can only offset the healthcare premium (the
@@ -2743,8 +3132,9 @@ class RetirementPlanner:
                 # household's out-of-pocket is never reduced below
                 # expenses minus the premium it actually replaces.
                 if aca_family_size > 0:
-                    aca_subsidy = tax_law_aca(
-                        trial_magi, aca_family_size, law, self.scenario.state)
+                    aca_subsidy = monetary_policy.from_nominal_after_tax(tax_law_aca(
+                        monetary_policy.to_nominal_for_tax(trial_magi, year),
+                        aca_family_size, law, self.scenario.state), year)
                 premium_base = monetary_policy.adjust_for_inflation(
                     self._medical_expenses_base(year), year, inflation_rate)
                 subsidy_used = min(aca_subsidy, premium_base)
@@ -2774,13 +3164,15 @@ class RetirementPlanner:
                         == MonetaryConvention.NOMINAL):
                     inflate = ((1.0 + inflation_rate)
                                ** (year - self.start_year))
-                    other_income = ((non_ss_income + _roth_conversion_income)
-                                    * inflate + withdrawal_ordinary
+                    other_income = (non_ss_income * inflate + _roth_conversion_income + withdrawal_ordinary
                                     + withdrawal_cg)
                 else:
                     other_income = (non_ss_income + _roth_conversion_income
                                     + withdrawal_ordinary + withdrawal_cg)
-                taxable_ss = self.calculate_ss_taxable(ss_income, other_income)
+                other_income += event_ordinary + event_capital_gains - pretax_deduction - hsa_deduction
+                taxable_ss = monetary_policy.from_nominal_after_tax(self.calculate_ss_taxable(
+                    monetary_policy.to_nominal_for_tax(ss_income, year),
+                    monetary_policy.to_nominal_for_tax(other_income, year)), year)
 
                 # Ordinary income = non-SS wages/withdrawals/conversions +
                 # taxable SS portion (capital gains stay separate).
@@ -2792,8 +3184,8 @@ class RetirementPlanner:
                         == MonetaryConvention.NOMINAL):
                     inflate = ((1.0 + inflation_rate)
                                ** (year - self.start_year))
-                    ordinary = ((non_ss_income + _roth_conversion_income)
-                                * inflate + withdrawal_ordinary + taxable_ss)
+                    ordinary = (non_ss_income * inflate + _roth_conversion_income
+                                + withdrawal_ordinary + taxable_ss)
                     capital_gains = withdrawal_cg
                 else:
                     ordinary = (non_ss_income + _roth_conversion_income
@@ -2802,6 +3194,9 @@ class RetirementPlanner:
 
                 # Convert to nominal for tax calculation (tax brackets are
                 # always nominal; REAL-mode values convert, then back).
+                ordinary += event_ordinary
+                capital_gains += event_capital_gains
+                ordinary -= pretax_deduction + hsa_deduction + expense_data.get("rental_interest", 0.0)
                 tax_ordinary_nominal = monetary_policy.to_nominal_for_tax(
                     ordinary, year, inflation_rate,
                 )
@@ -2827,7 +3222,9 @@ class RetirementPlanner:
                     filing_status=filing_status,
                     inflation_rate=inflation_rate,
                     years_from_base=years_from_base,
-                    num_children=num_children)
+                    num_children=num_children,
+                    wages_by_owner=wages_for_tax,
+                    **{**tax_options, "ca_income_adjustment": tax_options.get("ca_income_adjustment", 0.0) + monetary_policy.to_nominal_for_tax(hsa_deduction - taxable_ss, year)})
                 # Convert tax back to the active convention (NIIT is already
                 # included in calculate_taxes() via tax_law)
                 taxes = monetary_policy.from_nominal_after_tax(
@@ -2835,13 +3232,12 @@ class RetirementPlanner:
                 )
 
                 # Withdrawal-inclusive MAGI for the next ACA pass
-                trial_magi = (annual_income + withdrawal_ordinary
-                              + withdrawal_cg)
+                trial_magi = (annual_income - ss_income + taxable_ss + withdrawal_ordinary
+                              + withdrawal_cg + _roth_conversion_income + event_ordinary + event_capital_gains - pretax_deduction - hsa_deduction)
 
                 new_needed = max(0.0, expenses_after_subsidy + taxes
                                  - annual_income)
-                if abs(new_needed - trial_needed) <= max(
-                        0.05, abs(trial_needed) * 1e-6):
+                if abs(new_needed - trial_needed) <= max(0.05, abs(trial_needed) * 1e-6) and abs(taxes - old_tax) <= 0.05:
                     converged = True
                     break
                 trial_needed = new_needed
@@ -2851,13 +3247,28 @@ class RetirementPlanner:
                 # damped average of the last two iterates.
                 trial_needed = (trial_needed + new_needed) / 2.0
 
+            # Diagnose restrictions against remaining economic capital, before
+            # executing the final draw. Shared Roth principal is consumed once.
+            capacity_basis = dict(cost_basis.basis_by_account)
+            capacity_access = withdrawal_engine.access.snapshot()
+            economic_capacity = sum(max(0.0, balances.get(aid, 0.0)) for aid, a in run_accounts.items()
+                if a.liquid and a.account_type not in {"real_estate", "vehicle", "529"})
+            capacity_draws = withdrawal_engine.execute_withdrawals(
+                economic_capacity, dict(balances), year, primary_age, spouse_age,
+                sale_date=date(year, 12, 31), owner_map=owner_map, access_date=date(year, 1, 1))
+            accessible_capacity = sum(w.amount for w in capacity_draws if w.tax_treatment != "rmd_reinvested")
+            cost_basis.basis_by_account.clear()
+            cost_basis.basis_by_account.update(capacity_basis)
+            withdrawal_engine.access.restore(capacity_access)
+            restricted_capacity = max(0.0, economic_capacity - accessible_capacity)
+
             # Execute exactly once on real balances at the converged amount
             needed = trial_needed
-            if needed > 0:
+            if needed >= 0:
                 withdrawals = withdrawal_engine.execute_withdrawals(
                     needed, balances, year, primary_age, spouse_age,
                     sale_date=date(year, 12, 31),
-                    owner_map=owner_map,
+                    owner_map=owner_map, access_date=date(year, 1, 1),
                 )
             else:
                 withdrawals = []
@@ -2865,13 +3276,22 @@ class RetirementPlanner:
             # If withdrawals could not fully cover the required amount
             # (illiquid assets remain, e.g. real estate), the household is
             # out of savings even though net worth may still be positive.
-            covered = sum(w.amount for w in withdrawals)
+            covered = sum(w.amount if w.tax_treatment != "rmd_reinvested" else -w.amount for w in withdrawals)
             if (covered < needed - 1.0
                     and out_of_savings_year is None):
                 out_of_savings_year = year
 
+            unfunded = max(0.0, needed - covered)
+            access_shortfall = min(unfunded, restricted_capacity)
+            depletion_shortfall = max(0.0, unfunded - restricted_capacity)
+            if access_shortfall > 1 and access_shortfall_year is None:
+                access_shortfall_year = year
+            if (depletion_shortfall > 1 or housing_shortfall > 1) and portfolio_depletion_year is None:
+                portfolio_depletion_year = year
+
             total_taxes += taxes
-            total_aca_subsidy += aca_subsidy
+            total_aca_subsidy += subsidy_used
+            total_aca_subsidy_estimate += aca_subsidy
 
             # Record this year's MAGI for future IRMAA lookback
             # (MAGI is always nominal for IRS purposes)
@@ -2882,60 +3302,23 @@ class RetirementPlanner:
             # Savings = income - expenses - taxes.  Distribute by account
             # contribution priority (401k → HSA → Roth → brokerage …).
             # Only while at least one person is still working.
-            if not primary_retired or not spouse_retired:
-                available_savings = annual_income - annual_expenses - taxes
-                if available_savings > 0:
-                    contribs = withdrawal_engine.contribute(
-                        balances, available_savings)
+            contribs = {}
+            available_savings = max(0.0, annual_income - expenses_after_subsidy - taxes)
+            if available_savings > 0:
+                if active_owners:
+                    contribs = withdrawal_engine.contribute(balances, available_savings, year, active_owners, ages, wages_active, cap_factor)
                     total_contributions += sum(contribs.values())
-
-            # --- Step 8: Windfalls ---
-            for windfall in self.scenario.windfalls:
-                if windfall.date.year == year:
-                    target = windfall.goes_to_account
-                    if not target or target not in balances:
-                        continue
-                    # Transfers debit the source account (e.g. 529
-                    # superfund moves brokerage cash into the 529)
-                    if windfall.source_account:
-                        source_balance = balances.get(
-                            windfall.source_account, 0.0)
-                        if source_balance <= 0:
-                            continue
-                        amount = min(windfall.amount, source_balance)
-                        balances[windfall.source_account] -= amount
-                    else:
-                        amount = windfall.amount
-                    balances[target] += amount
-                    # Increase basis for taxable windfalls
-                    acct = self.accounts.get(target)
-                    if acct and acct.tax_treatment == "taxable":
-                        current_basis = cost_basis.get_basis(target, 0.0)
-                        cost_basis.set_basis(target, current_basis + amount)
-
-            # --- Step 8b: Housing events ---
-            for he in self.scenario.housing_events:
-                he_result = process_housing_event(
-                    he, year, balances, mortgage_balances,
-                    cost_basis=cost_basis.get_basis(
-                        he.property_id, 0.0) if he.property_id
-                        else cost_basis.get_basis("real_estate", 0.0),
-                    filing_status=filing_status,
-                    mortgage_property_map=mortgage_property_map,
-                    event_mortgage_terms=event_mortgage_terms,
-                )
-                if he_result.event_type != "none":
-                    taxes += he_result.tax_due
-                    # New property basis = purchase price (aggregate policy)
-                    if he.property_id and he.purchase_price > 0:
-                        cost_basis.set_basis(
-                            he.property_id, he.purchase_price)
+                employee_spent = sum(employee_amount(aid, total) for aid, total in contribs.items())
+                leftover = max(0.0, available_savings - employee_spent)
+                if leftover:
+                    balances[surplus_destination] += leftover
+                    cost_basis.set_basis(surplus_destination, cost_basis.get_basis(surplus_destination, 0.0) + leftover)
 
             # --- Step 9: Track net worth ---
             total_assets = sum(b for b in balances.values() if b > 0)
             total_liabs = sum(abs(b) for b in balances.values() if b < 0)
             total_liabs += sum(
-                b for b in mortgage_balances.values() if b > 0)
+                b / nominal_factor for b in mortgage_balances.values() if b > 0)
             net_worth = total_assets - total_liabs
             # Track per-age net worth for every run, not just stochastic.
             # The Monte Carlo simulator aggregates this into per-year
@@ -2976,10 +3359,36 @@ class RetirementPlanner:
             if projections is not None:
                 projections.append({
                     "year": year,
+                    "primary_age": primary_age,
+                    "spouse_age": spouse_age,
                     "income": annual_income,
-                    "expenses": annual_expenses,
+                    "income_by_source": {**{k: monetary_policy.adjust_for_inflation(v, year) for k, v in income_data["by_source"].items()}, **({"Social Security": ss_income} if ss_income > 0 else {})},
+                    "expenses_by_category": expense_data["by_category"],
+                    "net_cash_flow": annual_income - annual_expenses - taxes + subsidy_used,
+                    "account_balances": dict(balances),
+                    "taxable_cash_opening": taxable_cash_opening,
+                    "accessible_spending_balance": accessible_capacity,
+                    "restricted_spending_balance": restricted_capacity,
+                    "access_shortfall": access_shortfall,
+                    "portfolio_depletion_shortfall": depletion_shortfall,
+                    "withdrawals_by_account": {aid: sum(w.amount for w in withdrawals if w.account_id == aid and w.tax_treatment != "rmd_reinvested") for aid in balances},
+                    "roth_conversion_schedule": withdrawal_engine.access.schedule(),
+                    "taxable_basis_nominal": {aid: value * nominal_factor for aid, value in cost_basis.basis_by_account.items()},
+                    "mortgage_balances_nominal": dict(mortgage_balances),
+                    "contributions": dict(contribs) if not primary_retired or not spouse_retired else {},
+                    "withdrawals": sum(w.amount for w in withdrawals if w.tax_treatment != "rmd_reinvested"),
+                    "estate_value_before_tax": net_worth if snap.estate_event else None,
+                    "net_worth_after_estate": net_worth - year_estate_tax if snap.estate_event else None,
+                    "approximations": [],
+                    "model_warnings": list(self.model_warnings),
+                    "expenses": annual_expenses + funded_expenses,
+                    "cash_expenses": annual_expenses,
+                    "funded_expenses": funded_expenses,
                     "taxes": taxes,
-                    "aca_subsidy": aca_subsidy,
+                    "ordinary_income_nominal": tax_ordinary_nominal,
+                    "capital_gains_nominal": tax_cg_nominal,
+                    "aca_subsidy": subsidy_used,
+                    "aca_subsidy_estimate": aca_subsidy,
                     "net_worth": net_worth,
                     "total_assets": total_assets,
                     "total_liabilities": total_liabs,
@@ -2998,7 +3407,7 @@ class RetirementPlanner:
                 peak_nw = net_worth
 
             # Update portfolio peak for guardrails/withdrawal strategies
-            total_portfolio = sum(b for b in balances.values() if b > 0)
+            total_portfolio = self._liquid_portfolio(balances)
             if total_portfolio > portfolio_peak:
                 portfolio_peak = total_portfolio
 
@@ -3006,25 +3415,30 @@ class RetirementPlanner:
                 out_of_savings_year = year
 
         final_nw = (sum(balances.values())
-                    - sum(b for b in mortgage_balances.values() if b > 0))
+                    - sum(b / nominal_factor for b in mortgage_balances.values() if b > 0))
         # Net of estate tax for success calculation
         final_nw_after_estate = final_nw - total_estate_tax
-        success = (final_nw_after_estate > self.scenario.legacy_goal
+        success = (final_nw_after_estate > monetary_policy.adjust_for_inflation(self.scenario.legacy_goal, year)
                    and out_of_savings_year is None)
 
         return {
             "success": success,
+            "model_warnings": list(self.model_warnings),
             "final_net_worth": final_nw,
             "estate_value_before_tax": final_nw,
             "net_worth_after_estate": final_nw_after_estate,
             "final_net_worth_after_estate_tax": final_nw_after_estate,
             "estate_tax": total_estate_tax,
             "aca_subsidy": total_aca_subsidy,
+            "aca_subsidy_estimate": total_aca_subsidy_estimate,
             "peak_net_worth": peak_nw,
             "lifetime_taxes": total_taxes,
             "lifetime_ss": total_ss,
             "lifetime_contributions": total_contributions,
             "out_of_savings_year": out_of_savings_year,
+            "access_shortfall_year": access_shortfall_year,
+            "portfolio_depletion_year": portfolio_depletion_year,
+            "withdrawal_access_policy": self.scenario.withdrawal_access_policy,
             "death_age": stochastic_death_age,
             "net_worth_by_year": net_worth_by_year,
             **({"projections": projections} if projections is not None else {}),
@@ -3093,311 +3507,12 @@ class RetirementPlanner:
         *stress_level* (0..1) cuts discretionary expenses by
         min_reduction × stress_level — same semantics as the MC path.
         """
-        if stress_level is None:
-            stress_level = getattr(self, "stress_level", 0.0)
-        stress_level = max(0.0, min(1.0, stress_level))
-        from .approximations import (
-            ApproximationTracker, AGGREGATE_BASIS_WARNING,
-            DETERMINISTIC_TAXES_WARNING, DETERMINISTIC_RETURNS_WARNING,
-        )
-
-        projections = []
-        cost_basis = CostBasisTracker()
-        has_taxable = False
-        for account_id, account in self.accounts.items():
-            if account.tax_treatment == "taxable":
-                cost_basis.set_basis(account_id, account.balance)
-                has_taxable = True
-
-        # Track approximations for this projection run
+        from .approximations import ApproximationTracker, AGGREGATE_BASIS_WARNING, DETERMINISTIC_RETURNS_WARNING
         tracker = ApproximationTracker()
         tracker.add(DETERMINISTIC_RETURNS_WARNING)
-        tracker.add(DETERMINISTIC_TAXES_WARNING)
-        if has_taxable:
+        if any(a.tax_treatment == "taxable" for a in self.accounts.values()):
             tracker.add(AGGREGATE_BASIS_WARNING)
-
-        rates = self.scenario.economic.get_rate(scenario_name)
-        inflation_rate = rates["general_inflation"]
-        monetary_policy = MonetaryPolicy(
-            convention=self.scenario.monetary_convention,
-            base_year=self.start_year,
-            inflation=inflation_rate,
-        )
-        total_estate_tax = 0.0
-
-        # Track mortgage balances so deterministic net worth matches the
-        # Monte Carlo convention (liabilities reduce net worth, payments
-        # amortize the balance).
-        mortgage_balances: Dict[str, float] = {}
-        for mortgage in self.scenario.mortgages:
-            mortgage_balances[mortgage.id] = mortgage.balance
-
-        # Running account balances (mirrors the MC loop so housing events
-        # mutate the same state: property sold/added, mortgages paid off
-        # or created, event mortgages amortized).
-        balances: Dict[str, float] = {}
-        for account_id, account in self.accounts.items():
-            balances[account_id] = account.balance
-        income_history: Dict[int, float] = {}  # IRMAA 2-year lookback
-        event_mortgage_terms: Dict[str, tuple] = {}
-        mortgage_property_map = {
-            m.id: m.property_id for m in self.scenario.mortgages
-        }
-
-        # Run until the LAST death: the younger/longer-lived person sets
-        # the horizon (estate tax is assessed when both are gone).
-        primary_death_year = (
-            self.scenario.primary.birth_date.year
-            + self.scenario.primary.longevity_age
-        )
-        spouse_death_year = (
-            self.scenario.spouse.birth_date.year
-            + self.scenario.spouse.longevity_age
-            if self.scenario.spouse is not None
-            else primary_death_year
-        )
-        max_year = max(primary_death_year, spouse_death_year) + 1
-
-        for year in range(self.start_year, max_year):
-            spouse_birth_year = (
-                self.scenario.spouse.birth_date.year
-                if self.scenario.spouse is not None
-                else self.scenario.primary.birth_date.year
-            )
-            context = make_year_context(
-                year, self.start_year,
-                self.scenario.primary.birth_date.year,
-                spouse_birth_year,
-            )
-            primary_age = context.primary_age
-            spouse_age = context.spouse_age
-            younger_age = context.younger_age
-            years_from_base = context.years_from_base
-            yearly_state = make_state(context)
-
-            # Survivor transition state (KTD1): one longevity-derived
-            # snapshot per year, shared with the Monte Carlo path (R9).
-            snap = survivor_snapshot(
-                year, self.scenario.primary, self.scenario.spouse,
-                self.scenario.dependents,
-            )
-            filing_status = normalize_filing_status(snap.filing_status)
-
-            if (
-                primary_age > self.scenario.primary.longevity_age
-                and (
-                    self.scenario.spouse is None
-                    or spouse_age > self.scenario.spouse.longevity_age
-                )
-            ):
-                break
-
-            # Grow balances at deterministic (volatility-free) rates
-            for account_id in list(balances.keys()):
-                account = self.accounts.get(account_id)
-                if account is None or balances[account_id] <= 0:
-                    continue
-                rate = self._account_growth_rate(account, year, rates)
-                balances[account_id] *= (1 + rate)
-
-            income = self.calculate_annual_income(year, scenario_name)
-
-            # Social Security (mirrors the Monte Carlo path: per-person
-            # claiming age with COLA).
-            # Social Security (R4): claimed-benefit-only survivor benefit.
-            ss = self.scenario.social_security
-            ss_primary_annual = (
-                self.calculate_social_security(year, self.scenario.primary)
-                if ss and primary_age >= ss.primary_claiming_age else 0.0)
-            # Issue #3: spouse is optional. Single-household: no spousal SS.
-            if self.scenario.spouse is None:
-                ss_spouse_annual = 0.0
-            else:
-                ss_spouse_annual = (
-                    self.calculate_social_security(year, self.scenario.spouse)
-                    if ss and spouse_age >= ss.spouse_claiming_age else 0.0)
-            ss_income = compute_survivor_ss_benefit(
-                ss_primary_annual, ss_spouse_annual,
-                snap.primary_alive, snap.spouse_alive)
-            # In NOMINAL mode, inflate income and SS to year-of dollars
-            # (MC parity; REAL mode is identity).
-            income["total"] = monetary_policy.adjust_for_inflation(
-                income["total"], year, inflation_rate)
-            ss_income = monetary_policy.adjust_for_inflation(
-                ss_income, year, inflation_rate)
-            if ss_income > 0:
-                income["total"] += ss_income
-                income["by_source"]["Social Security"] = ss_income
-
-            income_history[year] = income["total"]
-
-            expenses = self.calculate_annual_expenses(
-                year, scenario_name, stress_level=stress_level,
-                mortgage_balances=mortgage_balances,
-                event_mortgage_terms=event_mortgage_terms)
-
-            # In NOMINAL mode, inflate expenses to year-of dollars
-            # (MC parity; REAL mode is identity).
-            expenses["total"] = monetary_policy.adjust_for_inflation(
-                expenses["total"], year, inflation_rate)
-
-            # Medical inflation excess — parity with the Monte Carlo path.
-            expenses["total"] += monetary_policy.adjust_for_inflation(
-                self._medical_inflation_extra(
-                    year, rates["medical_inflation"] - inflation_rate),
-                year, inflation_rate)
-
-            # Survivor expense scaling (R6): after the first death, active
-            # expenses scale to survivor_expense_ratio of the both-alive
-            # total. Applied once, before ACA/IRMAA logic.
-            survivor_expense_ratio = (
-                self.scenario.survivor_expense_ratio
-                if snap.survivor is not None else 1.0)
-            expenses["total"] *= survivor_expense_ratio
-
-            # ACA subsidy (pre-Medicare, per-person). ACA family size uses
-            # the survivor definition: living adults plus active dependents
-            # (R5/KTD5).
-            aca_family_size = snap.aca_family_size
-
-            # IRMAA Medicare surcharges (2-year lookback on MAGI — the
-            # deterministic path uses income-only MAGI; MC includes
-            # withdrawals).  Mirrors the Monte Carlo step 4b.
-            num_medicare = snap.medicare_adult_count
-            if num_medicare > 0:
-                irmaa_amount = tax_law_irmaa(
-                    income_history.get(year - 2, 0.0),
-                    TaxLawRegistry().law_for_year(year),
-                    num_people=num_medicare,
-                )
-                expenses["total"] += monetary_policy.adjust_for_inflation(
-                    irmaa_amount, year, inflation_rate)
-
-            aca_subsidy = 0.0
-            if aca_family_size > 0:
-                # Use the versioned law pack so deterministic and MC
-                # subsidy amounts agree.  Module-level imports provide
-                # TaxLawRegistry and tax_law_aca already.
-                law = TaxLawRegistry().law_for_year(year)
-                aca_subsidy = tax_law_aca(
-                    income["total"], aca_family_size, law, self.scenario.state)
-
-            # Build TaxableIncome (simplified — all income as ordinary
-            # for deterministic projection; real sim handles this
-            # properly).  Social Security is partially taxable: only the
-            # provisional-income share counts as ordinary (MC parity).
-            ss_in_total = income.get("by_source", {}).get(
-                "Social Security", 0.0)
-            non_ss = income["total"] - ss_in_total
-            taxable_ss = self.calculate_ss_taxable(ss_in_total, non_ss)
-            ordinary_for_tax = non_ss + taxable_ss
-            # Tax brackets are nominal: in REAL mode convert income to
-            # nominal; in NOMINAL mode income is already year-of dollars
-            # (inflated above).
-            if (self.scenario.monetary_convention
-                    == MonetaryConvention.NOMINAL):
-                income_for_tax = ordinary_for_tax
-            else:
-                income_for_tax = monetary_policy.to_nominal_for_tax(
-                    ordinary_for_tax, year, inflation_rate)
-            ti = TaxableIncome(
-                ordinary=income_for_tax,
-                capital_gains=0.0,
-                tax_free=0.0,
-                total=income_for_tax,
-            )
-            # Child Tax Credit: dependents under 17
-            num_children = sum(
-                1 for dep in self.scenario.dependents
-                if 0 <= year - dep.birth_date.year < 17)
-            taxes = self.calculate_taxes(
-                year, ti, scenario_name,
-                filing_status=filing_status,
-                inflation_rate=inflation_rate,
-                years_from_base=years_from_base,
-                num_children=num_children)
-            # Taxes are computed on nominal income: convert back to the
-            # active convention (REAL mode deflates — MC parity).
-            taxes = monetary_policy.from_nominal_after_tax(
-                taxes, year, inflation_rate)
-
-            # Housing events (sale/purchase/trade-up) — same in-place
-            # semantics as the Monte Carlo path.
-            for he in self.scenario.housing_events:
-                he_result = process_housing_event(
-                    he, year, balances, mortgage_balances,
-                    cost_basis=cost_basis.get_basis(
-                        he.property_id, 0.0) if he.property_id
-                        else cost_basis.get_basis("real_estate", 0.0),
-                    filing_status=snap.filing_status.name,
-                    mortgage_property_map=mortgage_property_map,
-                    event_mortgage_terms=event_mortgage_terms,
-                )
-                if he_result.event_type != "none":
-                    taxes += he_result.tax_due
-                    if he.property_id and he.purchase_price > 0:
-                        cost_basis.set_basis(
-                            he.property_id, he.purchase_price)
-
-            # Net worth from the running balances (assets + liabilities)
-            total_assets = sum(
-                b for b in balances.values() if b > 0)
-            total_liabs = sum(
-                abs(b) for b in balances.values() if b < 0)
-            total_liabs += sum(
-                b for b in mortgage_balances.values() if b > 0)
-            net_worth = {
-                "total_assets": total_assets,
-                "total_liabilities": total_liabs,
-                "net_worth": total_assets - total_liabs,
-            }
-            yearly_state.income = income
-            yearly_state.expenses = expenses
-            yearly_state.taxes = taxes
-            yearly_state.healthcare = {"aca_subsidy": aca_subsidy}
-            yearly_state.approximations = list(tracker.for_year(year))
-            yearly_state.events.append({"type": "year_complete"})
-
-            # Estate tax (second death only, R8)
-            year_estate_tax = 0.0
-            if snap.estate_event and total_estate_tax == 0.0:
-                filing_str = "MFJ" if snap.first_death_year is None else "single"
-                year_estate_tax = self.calculate_estate_tax(
-                    net_worth["net_worth"], filing_str,
-                    inflation_rate, years_from_base)
-                total_estate_tax = year_estate_tax
-
-            projections.append({
-                "year": year,
-                "primary_age": primary_age,
-                "spouse_age": spouse_age,
-                "income": income["total"],
-                "income_by_source": income["by_source"],
-                "expenses": expenses["total"],
-                "aca_subsidy": aca_subsidy,
-                "expenses_by_category": expenses["by_category"],
-                "taxes": taxes,
-                "estate_tax": year_estate_tax,
-                "estate_value_before_tax": (
-                    net_worth["net_worth"] if snap.estate_event else None),
-                "net_worth_after_estate": (
-                    net_worth["net_worth"] - year_estate_tax
-                    if snap.estate_event else None),
-                "net_cash_flow": income["total"] - expenses["total"] - taxes - aca_subsidy,
-                "net_worth": net_worth["net_worth"],
-                "total_assets": net_worth["total_assets"],
-                "total_liabilities": net_worth["total_liabilities"],
-                # Survivor transition state (additive, KTD9)
-                "primary_alive": snap.primary_alive,
-                "spouse_alive": snap.spouse_alive,
-                "filing_status": snap.filing_status.value,
-                "survivor": snap.survivor,
-                "aca_family_size": snap.aca_family_size,
-                "medicare_adult_count": snap.medicare_adult_count,
-                "expense_ratio": survivor_expense_ratio,
-                "approximations": [
-                    a.as_dict() for a in tracker.for_year(year)
-                ],
-            })
-
-        return projections
+        rows = self.run_single_simulation(scenario_name, return_volatility=0.0, collect_projections=True, stress_level=stress_level)["projections"]
+        for row in rows:
+            row["approximations"] = [a.as_dict() for a in tracker.for_year(row["year"])]
+        return rows

@@ -65,18 +65,12 @@ _SINGLE_STD_DEDUCTION = 14_600
 # Federal tax — MFJ (known answers, 2024 brackets, no inflation indexing)
 # ---------------------------------------------------------------------------
 def test_federal_mfj_100k_ordinary(planner):
-    """$100K ordinary income, MFJ: std deduction $29,200 → $70,800 taxable.
-
-    Federal: 23,200@10% + 47,600@12% = 2,320 + 5,712 = 8,032
-    CA:      20,824@1% + 28,544@2% + 21,432@4% = 208.24 + 570.88 + 857.28
-             = 1,636.40
-    Total:   9,668.40
-    """
+    """Federal $8,032 plus CA $2,490.32 (CA standard deduction $11,080)."""
     income = TaxableIncome(ordinary=100_000, capital_gains=0, tax_free=0,
                            total=100_000)
     tax = planner.calculate_taxes(2024, income, inflation_rate=0.0,
                                   years_from_base=0)
-    assert tax == pytest.approx(9_668.40, abs=0.01)
+    assert tax == pytest.approx(10_522.32, abs=0.01)
 
 
 def test_federal_mfj_zero_income(planner):
@@ -87,12 +81,14 @@ def test_federal_mfj_zero_income(planner):
 
 
 def test_federal_mfj_below_standard_deduction(planner):
-    """Income below the $29,200 standard deduction owes nothing."""
+    """Federal tax is zero below the federal deduction; California has its own deduction."""
     income = TaxableIncome(ordinary=25_000, capital_gains=0, tax_free=0,
                            total=25_000)
     tax = planner.calculate_taxes(2024, income, inflation_rate=0.0,
                                   years_from_base=0)
-    assert tax == 0.0
+    assert tax == pytest.approx(139.20, abs=.01)
+    planner.scenario.state = "TX"
+    assert planner.calculate_taxes(2024, income) == 0.0
 
 
 def test_federal_mfj_bracket_math_only():
@@ -126,13 +122,9 @@ def test_federal_single_low_income():
 # California state tax (known answer)
 # ---------------------------------------------------------------------------
 def test_ca_tax_100k():
-    """CA tax on $70,800 taxable (100K - 29,200 std deduction):
-
-    20,824@1% + 28,544@2% + 21,432@4%
-    = 208.24 + 570.88 + 857.28 = 1,636.40
-    """
+    """California's actual 2024 MFJ schedule gives $1,596.92 on $70,800 taxable."""
     tax = bracket_tax(70_800, _CA_BRACKETS_TUPLE)
-    assert tax == pytest.approx(1_636.40, abs=0.01)
+    assert tax == pytest.approx(1_596.92, abs=0.01)
 
 
 # ---------------------------------------------------------------------------
@@ -159,19 +151,12 @@ def test_marginal_rate_first_boundary():
 # End-to-end calculate_taxes with mixed income types
 # ---------------------------------------------------------------------------
 def test_calculate_taxes_mixed_income(planner):
-    """$50K ordinary + $100K LTCG, no inflation indexing.
-
-    Federal ordinary: (50,000 - 29,200) = 20,800 @10%        = 2,080.00
-    Federal LTCG: 0% bracket has 94,050 - 20,800 = 73,250 room;
-                  remaining 26,750 @15%                       = 4,012.50
-    CA (all ordinary): 150,000 - 29,200 = 120,800 taxable     = 4,747.00
-    Total:                                                      10,839.50
-    """
+    """$50k ordinary + $100k LTCG: federal $6,092.50 plus CA $6,034.08."""
     income = TaxableIncome(ordinary=50_000, capital_gains=100_000,
                            tax_free=0, total=150_000)
     tax = planner.calculate_taxes(2024, income, inflation_rate=0.0,
                                   years_from_base=0)
-    assert tax == pytest.approx(10_839.50, abs=0.01)
+    assert tax == pytest.approx(12_126.58, abs=0.01)
 
 
 def test_calculate_taxes_inflation_indexing_lowers_tax(planner):

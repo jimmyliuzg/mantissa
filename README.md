@@ -211,6 +211,10 @@ mantissa run -c plan.json -n 1000 --stress 0.5
 ```
 
 The `stress` command also lists which expenses get cut and by how much.
+Cuts include discretionary one-time expenses, such as scheduled charitable
+gifts; use `min_reduction: 1.0` to allow a complete pause. The cut applies
+in every active year of the run, rather than activating automatically on a
+market drawdown. It reduces modeled gifts and their tax deductions together.
 Stress affects both Monte Carlo and the deterministic projection, so
 the two paths stay consistent.
 
@@ -264,7 +268,7 @@ The supported core path is the deterministic projection and JSON, CSV, or Markdo
 
 Charts require `pip install mantissa[charts]`. PDF reports require `pip install mantissa[pdf]`; PDF coverage runs in a separate CI job.
 
-Some model areas remain approximate or experimental and should not be treated as fully integrated planning advice: historical bond inputs are synthetic, survivor transitions are not applied consistently across every projection path, and annual/monthly event execution is not yet unified. Outputs are scenario analysis, not tax, legal, investment, or fiduciary advice.
+Some model areas remain approximate or experimental and should not be treated as fully integrated planning advice: historical bond inputs are synthetic, annual/monthly event execution is not yet unified, and early-retirement access and full tax-return rules remain incomplete. Outputs are scenario analysis, not tax, legal, investment, or fiduciary advice.
 
 ## Reproducibility
 
@@ -316,3 +320,36 @@ Key modules include:
 ## License
 
 MIT
+
+
+### October 2026 calculation corrections
+
+Deterministic projections and Monte Carlo now share the cash-flow implementation,
+including saving, spending withdrawals, Roth conversions, rollovers and housing.
+The core honors cash/equity/bond allocation, correlated market shocks, optional
+aggregate cost basis, contribution schedules, dated vesting and mortgage reset
+scenarios. Itemized deductions and employee pretax contributions flow into taxes;
+2025/2026 federal and California income-tax amounts have been corrected.
+
+See [calculation corrections and supported inputs](docs/calculation-corrections-2026-10.md)
+for configuration examples, source citations, compatibility changes and limitations.
+The model still requires consistent January opening balances; `balance_date` exposes
+an incompatible as-of date but does not create a partial-year forecast.
+
+### Retirement access and monetary accounting
+
+The default `withdrawal_access_policy` is now `"penalty_free"`. It checks the
+annual spending bridge using declared Roth IRA principal and conversion cohorts,
+and conservatively restricts other retirement distributions. Projections and
+Monte Carlo distinguish access failures from economic portfolio depletion.
+`"unrestricted"` preserves the earlier access assumption and emits a warning.
+
+Tax basis keeps its nominal value across inflation; mortgage balances, rates and
+payments follow nominal contracts. Real-dollar reports convert these amounts at
+the reporting boundary. Equivalent real and nominal scenarios are regression
+tested through sales, purchases, ARM changes, conversions, RMDs and healthcare.
+
+See [access and accounting conventions](docs/access-and-accounting.md) for input
+units, clock assumptions, migration examples and remaining exceptions. Run
+`python scripts/check_privacy.py --staged` before committing. CI also checks
+private-file names, contact details, home paths and credential patterns.

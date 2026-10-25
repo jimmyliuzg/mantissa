@@ -2,7 +2,7 @@
 
 **Status:** revised after M0 Pyodide spike
 **Date:** 2026-08-29
-**Owner:** Jimmy Liu
+**Owner:** Mantissa maintainers
 **Repo (proposed):** `jimmyliuzg/mantissa-web` (separate, public, MIT)
 
 ## 1. Goal & non-goals

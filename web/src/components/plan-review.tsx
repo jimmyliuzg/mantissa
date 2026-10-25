@@ -1,5 +1,11 @@
 import { fmtMoney, fmtPct } from "../lib/format";
-import { summarizePlan } from "../lib/plan-review";
+import {
+  type ReviewAccount,
+  summarizePlan,
+  TREATMENT_LABELS,
+  treatmentKey,
+  type TreatmentKey,
+} from "../lib/plan-review";
 
 interface PlanReviewProps {
   config: unknown;
@@ -66,13 +72,21 @@ export function PlanReview({ config, sims, onRun }: PlanReviewProps) {
         {review.accounts.length > 0 ? (
           <>
             <div class="allocation" aria-label="Account allocation by current balance">
-              {review.accounts.map((account, index) => (
+              {sortedForAllocation(review.accounts).map((account, index) => (
                 <span
                   key={`${account.name}-${index}`}
-                  class="allocation__segment"
+                  class={`allocation__segment tint-${treatmentKey(account.taxTreatment)}`}
                   style={{ width: `${account.share * 100}%` }}
-                  title={`${account.name}: ${fmtMoney(account.balance)} (${fmtPct(account.share)})`}
+                  title={`${account.name}: ${fmtMoney(account.balance)} (${fmtPct(account.share)}) · ${account.taxTreatment}`}
                 />
+              ))}
+            </div>
+            <div class="allocation-legend">
+              {treatmentTotals(review.accounts).map((group) => (
+                <span class="allocation-legend__item" key={group.key}>
+                  <span class={`allocation-legend__swatch tint-${group.key}`} aria-hidden="true" />
+                  {TREATMENT_LABELS[group.key]} · {fmtPct(group.share)}
+                </span>
               ))}
             </div>
             <p class="mobile-table-hint muted small">Swipe the table to see every account field.</p>
@@ -214,6 +228,28 @@ function Json({ value }: { value: unknown }) {
 }
 function text(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+/** Segments grouped visually: same treatment adjacent, largest first. */
+function sortedForAllocation(accounts: ReviewAccount[]): ReviewAccount[] {
+  return [...accounts].sort(
+    (a, b) =>
+      treatmentKey(a.taxTreatment).localeCompare(treatmentKey(b.taxTreatment)) ||
+      b.balance - a.balance,
+  );
+}
+
+/** Present treatments with combined balance and share, largest first. */
+function treatmentTotals(accounts: ReviewAccount[]): Array<{ key: TreatmentKey; share: number }> {
+  const total = accounts.reduce((sum, a) => sum + a.balance, 0);
+  const byKey = new Map<TreatmentKey, number>();
+  for (const a of accounts) {
+    const key = treatmentKey(a.taxTreatment);
+    byKey.set(key, (byKey.get(key) ?? 0) + a.balance);
+  }
+  return [...byKey.entries()]
+    .map(([key, balance]) => ({ key, share: total > 0 ? balance / total : 0 }))
+    .sort((a, b) => b.share - a.share);
 }
 function label(key: string): string {
   return key.replaceAll("_", " ").replace(/\b\w/g, (char) => char.toUpperCase());

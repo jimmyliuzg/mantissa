@@ -1,3 +1,4 @@
+import { ModelWarnings } from "../components/model-warnings";
 import type { RunResult } from "@engine";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { CashFlowChart } from "../components/cash-flow-chart";
@@ -190,6 +191,7 @@ function ViewerBody({ initial }: { initial: InitialState }) {
 function Ready({ result }: { result: RunResult }) {
   return (
     <>
+      <ModelWarnings warnings={result.warnings} />
       <KpiRow kpis={result.kpis} />
       <PlanSummary kpis={result.kpis} />
       <section class="panel">

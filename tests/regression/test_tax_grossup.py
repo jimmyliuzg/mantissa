@@ -45,6 +45,8 @@ def make_planner(accounts, expenses, ss_benefits=(0.0, 0.0),
         economic=EconomicAssumptions(),
         accounts=accounts, income_streams=[], expenses=expenses,
         mortgages=[],
+        # These tests isolate tax gross-up arithmetic from account eligibility.
+        withdrawal_access_policy="unrestricted",
         social_security=SocialSecurity(
             primary_benefit_at_67=ss_benefits[0],
             spouse_benefit_at_67=ss_benefits[1],
@@ -125,7 +127,7 @@ class TestAcaMagi:
         # $240K/yr spend → withdrawals far past the 400%-FPL cliff.
         return make_planner(
             accounts=[account],
-            expenses=[expense(20_000)],
+            expenses=[expense(20_000), Expense("premium", "ACA premium", 2000, date(2026,1,1), date(2099,1,1), category="medical")],
             coverage="auto", birth_years=(1966, 1968),
             retirement_year=2026, longevity=90,
         )
@@ -196,5 +198,11 @@ class TestTaxableSsIncludesWithdrawals:
         # partially taxable — correct per tax law (covered by the survivor
         # suite). Assert tax-free only in both-alive years.
         for row in run["projections"]:
-            if row["primary_alive"] and row["spouse_alive"]:
+            factor = (1 + planner.scenario.economic.general_inflation) ** (row["year"] - planner.start_year)
+            # Nominal SS can eventually exceed the fixed provisional-income
+            # threshold; Roth withdrawals must never add to that income.
+            nominal_ss = row["income"] * factor
+            expected = planner.calculate_ss_taxable(nominal_ss, 0)
+            assert row["ordinary_income_nominal"] == pytest.approx(expected)
+            if row["primary_alive"] and row["spouse_alive"] and nominal_ss / 2 <= 32_000:
                 assert row["taxes"] == 0.0

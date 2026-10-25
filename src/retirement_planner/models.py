@@ -123,6 +123,13 @@ class Person:
         return "aca"
 
 
+ACCOUNT_TAX_DEFAULTS = {
+    "401k": "pre_tax", "trad_401k": "pre_tax", "trad_ira": "pre_tax",
+    "traditional_ira": "pre_tax", "roth_ira": "roth", "roth_401k": "roth",
+    "hsa": "tax_exempt", "529": "tax_exempt",
+}
+
+
 @dataclass
 class Account:
     """Individual financial account."""
@@ -146,10 +153,19 @@ class Account:
     annual_contribution_cap: float = 0.0
     is_depreciating: bool = False
     liquid: bool = True
-    asset_class: Optional[str] = None  # "equity", "bond", "mixed", or None (auto)
+    asset_class: Optional[str] = None  # cash/equity/bond/mixed; None uses allocation/glidepath
     expense_ratio: float = 0.0  # Annual fee as decimal (e.g., 0.001 = 0.1%)
     equity_pct: Optional[float] = None  # None = use glidepath default
     owner: str = "primary"  # Legacy configs default to the primary person.
+    cost_basis: Optional[float] = None  # Aggregate taxable basis; None = legacy balance.
+    contribution_caps_by_year: Dict[int, float] = field(default_factory=dict)
+    contribution_end_date: Optional[date] = None
+    roth_contribution_basis: float = 0.0  # Opening nominal regular-contribution principal.
+    roth_conversion_basis: List[dict] = field(default_factory=list)  # nominal {year, amount}
+    roth_first_contribution_year: Optional[int] = None
+    # Explicit cash avoids both the portfolio glidepath and equity shocks.
+    return_volatility: Optional[float] = None
+
 
     def project_balance(self, years: int, rate: float) -> float:
         return self.balance * (1 + rate) ** years
@@ -187,6 +203,8 @@ class RSUGrant:
     cliff_date: Optional[date] = None
     cliff_replaces_first_vest: bool = False  # cliff + first quarterly, or cliff only?
     status: str = "active"     # "active" | "forecasted" | "cancelled"
+    first_vest_date: Optional[date] = None
+
 
 
 @dataclass
@@ -240,7 +258,12 @@ class Expense:
     one_time_date: Optional[date] = None
     category: str = "general"
     is_must_spend: bool = True
-    min_reduction: float = 0.0  # Maximum % reduction in stress scenarios (0-1)
+    min_reduction: float = 0.0  # Maximum combined stress/strategy reduction (0-1)
+    tax_deductible: bool = False  # Qualified charitable gifts only.
+    funding_account: str = ""  # Explicit 529 education / in-kind charity source.
+    hsa_qualified: bool = False  # Explicit eligibility assertion for nominated HSA funding.
+    payment_kind: str = "cash"  # cash or in_kind (charity only).
+
 
 @dataclass
 class AgeEvent:
@@ -264,6 +287,10 @@ class Mortgage:
     start_date: date
     end_date: date
     is_tax_deductible: bool = True
+    deduction_kind: str = "none"  # none, itemized, rental; never infer rental use.
+    deductible_debt_limit: float = 750_000
+    ca_deductible_debt_limit: float = 1_000_000
+    rate_changes: List[dict] = field(default_factory=list)  # explicit scenario dates/rates
 
 
 @dataclass
@@ -280,6 +307,9 @@ class Windfall:
     goes_to_account: str = ""
     is_taxable: bool = True
     source_account: str = ""
+    taxable_amount: Optional[float] = None  # K-1 income can differ from cash.
+    taxable_kind: str = "ordinary"
+    wage_owner: Optional[str] = None  # W-2 event payroll-tax owner, if applicable
 
 
 @dataclass
@@ -305,6 +335,12 @@ class HousingEvent:
     goes_to_account: str = "joint_brokerage"
     funding_account: str = "joint_brokerage"
     new_mortgage_id: str = ""
+    selling_costs: float = 0.0
+    purchase_costs: float = 0.0
+    exclusion_eligible: bool = True  # legacy §121 assumption, explicitly overridable
+    mortgage_deduction_kind: str = "none"
+    deductible_debt_limit: float = 750_000
+    ca_deductible_debt_limit: float = 1_000_000
 
 
 @dataclass
@@ -386,6 +422,8 @@ class EconomicAssumptions:
     equity_real_return: float = 0.06
     equity_real_return_optimistic: float = 0.08
     equity_real_return_pessimistic: float = 0.04
+    bond_return_volatility: float = 0.06
+    equity_bond_correlation: float = 0.0
     bond_real_return: float = 0.025
     bond_real_return_optimistic: float = 0.035
     bond_real_return_pessimistic: float = 0.015
@@ -459,6 +497,10 @@ class Scenario:
     # expenses scale to this fraction of the both-alive total. Explicit and
     # validated; defaults to 75%.
     survivor_expense_ratio: float = 0.75
+    start_year: Optional[int] = None
+    balance_date: Optional[date] = None
+    tax_inputs: Dict[int, dict] = field(default_factory=dict)
+    withdrawal_access_policy: str = "penalty_free"
 
     def to_dict(self) -> dict:
         """Convert to JSON-serializable dict."""
@@ -482,6 +524,7 @@ class Scenario:
                 else None
             ),
             "legacy_goal": self.legacy_goal,
+            "withdrawal_access_policy": self.withdrawal_access_policy,
             "state": self.state,
             "survivor_expense_ratio": self.survivor_expense_ratio,
         }

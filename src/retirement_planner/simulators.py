@@ -209,6 +209,9 @@ class MonteCarloEngine:
 
         return {
             "success_rate": success_rate,
+            "access_failure_rate": sum(r.get("access_shortfall_year") is not None for r in results) / num_simulations,
+            "portfolio_depletion_rate": sum(r.get("portfolio_depletion_year") is not None for r in results) / num_simulations,
+            "withdrawal_access_policy": self.planner.scenario.withdrawal_access_policy,
             "num_simulations": num_simulations,
             "scenario": scenario,
             "method": method,

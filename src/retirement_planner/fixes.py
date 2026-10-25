@@ -28,6 +28,10 @@ class HousingEventResult:
     gain_realized: float   # capital gain from sale (may be excluded)
     tax_due: float         # tax on realized gain
     property_account_change: float  # change in real_estate account
+    taxable_gain: float = 0.0
+    funding_shortfall: float = 0.0
+    sale_proceeds: float = 0.0
+    purchase_funding: float = 0.0
 
 
 def process_housing_event(
@@ -40,6 +44,7 @@ def process_housing_event(
     state: str = "CA",
     mortgage_property_map: Optional[Dict[str, str]] = None,
     event_mortgage_terms: Optional[Dict[str, tuple]] = None,
+    defer_tax: bool = False,
 ) -> HousingEventResult:
     """Process a housing event (buy/sell/refinance) in place.
 
@@ -59,6 +64,10 @@ def process_housing_event(
             tax_due=0, property_account_change=0,
         )
 
+    taxable_gain = 0.0
+    funding_shortfall = 0.0
+    property_delta = 0.0
+    mortgage_delta = 0.0
     account_delta = 0.0
     gain_realized = 0.0
     tax_due = 0.0
@@ -69,19 +78,20 @@ def process_housing_event(
         event_type = "sale"
 
         # Capital gain (IRC §121 exclusion: $250k single / $500k MFJ)
-        gross_gain = event.sale_price - cost_basis
-        if filing_status in ("MFJ", "QSS"):
+        gross_gain = event.sale_price - event.selling_costs - cost_basis
+        if filing_status in ("MFJ", "QSS", "mfj", "qss"):
             exclusion = 500_000
         else:
             exclusion = 250_000
+        exclusion = exclusion if event.exclusion_eligible else 0.0
         taxable_gain = max(0.0, gross_gain - exclusion)
         gain_realized = gross_gain  # total gain (before exclusion)
 
         # Tax on gain (simplified — 15% LTCG + CA ~9.3%)
-        if taxable_gain > 0:
-            tax_due = taxable_gain * 0.15 + taxable_gain * 0.093
+        if taxable_gain > 0 and not defer_tax:
+            tax_due = taxable_gain * (0.15 + (0.093 if state.upper() == "CA" else 0.0))
 
-        proceeds = event.sale_price - tax_due
+        proceeds = event.sale_price - event.selling_costs - tax_due
 
         # Pay off only the mortgage(s) secured by this property
         payoff = 0.0
@@ -95,6 +105,7 @@ def process_housing_event(
             mortgage_balances[mort_id] = 0.0
 
         # Net proceeds (after payoff) go to the target account
+        mortgage_delta -= payoff
         net = proceeds - payoff
         goes_to = event.goes_to_account or "joint_brokerage"
         balances[goes_to] = balances.get(goes_to, 0.0) + net
@@ -103,7 +114,8 @@ def process_housing_event(
         # Remove the sold property from balances
         if event.property_id:
             old_balance = balances.get(event.property_id, 0.0)
-            balances[event.property_id] = max(0.0, old_balance - event.sale_price)
+            balances[event.property_id] = 0.0
+            property_delta -= old_balance
         else:
             balances.pop("real_estate", None)
 
@@ -112,18 +124,23 @@ def process_housing_event(
         event_type = "trade_up" if event_type == "sale" else "purchase"
 
         funding = event.funding_account or "joint_brokerage"
-        down = min(event.down_payment, balances.get(funding, 0.0))
+        # Full purchase funding must equal equity plus mortgage; a shortage cannot create free home equity.
+        required_equity = event.purchase_price - event.mortgage_amount + event.purchase_costs
+        funding_shortfall = max(0.0, required_equity - max(0.0, balances.get(funding, 0.0)))
+        down = required_equity
         balances[funding] = balances.get(funding, 0.0) - down
         account_delta -= down
 
         # Add the new property value
         prop_id = event.property_id or f"property_{event.id}"
         balances[prop_id] = balances.get(prop_id, 0.0) + event.purchase_price
+        property_delta += event.purchase_price
 
         # Register the new mortgage for monthly amortization
         if event.mortgage_amount > 0:
             mort_id = event.new_mortgage_id or f"{event.id}_mortgage"
             mortgage_balances[mort_id] = event.mortgage_amount
+            mortgage_delta += event.mortgage_amount
             if event_mortgage_terms is not None:
                 rate = event.mortgage_rate
                 monthly_rate = rate / 12
@@ -144,10 +161,14 @@ def process_housing_event(
         event_id=event.id,
         event_type=event_type,
         account_delta=account_delta,
-        mortgage_delta=0.0,
+        mortgage_delta=mortgage_delta,
         gain_realized=gain_realized,
         tax_due=tax_due,
-        property_account_change=0.0,
+        property_account_change=property_delta,
+        taxable_gain=taxable_gain,
+        funding_shortfall=funding_shortfall,
+        sale_proceeds=net if event.sale_price > 0 else 0.0,
+        purchase_funding=required_equity if event.purchase_price > 0 else 0.0,
     )
 
 
@@ -191,6 +212,7 @@ def process_roth_conversions(
     year: int,
     balances: Dict[str, float],
     max_conversion: float = float('inf'),
+    rmd_reserves: Optional[Dict[str, float]] = None,
 ) -> RothConversionResult:
     """Process all active Roth conversions for a year.
 
@@ -214,7 +236,7 @@ def process_roth_conversions(
 
         # Check source has enough
         source_balance = balances.get(rc.source_account, 0)
-        actual = min(amount, source_balance)
+        actual = min(amount, max(0.0, source_balance - (rmd_reserves or {}).get(rc.source_account, 0.0)))
         if actual <= 0:
             continue
 

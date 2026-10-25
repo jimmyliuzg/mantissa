@@ -379,11 +379,15 @@ class TestDependentFields:
         def flip(p):
             p.scenario.dependents[0].birth_date = date(2040, 1, 1)
             return p
-        assert_det_changes(flip)
+        p = base_planner()
+        before = p.project_cash_flow()[4]
+        after = flip(p).project_cash_flow()[4]
+        assert before["aca_family_size"] != after["aca_family_size"]
+        assert before["aca_subsidy_estimate"] != after["aca_subsidy_estimate"]
 
 
 # ---------------------------------------------------------------------------
-# MC-only event fields
+# Event fields
 # ---------------------------------------------------------------------------
 class TestEventFields:
     def test_windfall(self):
@@ -523,10 +527,10 @@ class TestDeadFieldsWarn:
         assert any("growth_rate_optimistic" in str(w.message)
                    for w in caught)
 
-    def test_account_asset_class_warns(self):
+    def test_account_asset_class_is_honored(self):
         caught = self._load(lambda c: c["accounts"][0].update(
             asset_class="equity"))
-        assert any("asset_class" in str(w.message) for w in caught)
+        assert not any("asset_class" in str(w.message) for w in caught)
 
     def test_person_legacy_ss_fields_warn(self):
         caught = self._load(lambda c: c["primary"].update(

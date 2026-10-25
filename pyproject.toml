@@ -10,7 +10,7 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.9"
 authors = [
-    { name = "Jimmy Liu", email = "jimmyliuzg@gmail.com" },
+    { name = "Mantissa contributors" },
 ]
 keywords = [
     "retirement",

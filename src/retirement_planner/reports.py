@@ -9,6 +9,9 @@ def generate_summary_report(mc_results: Dict[str, Any], cash_flow: List[Dict[str
     """Generate a high-level summary report from Monte Carlo results and cash flow data."""
     return {
         "success_rate": mc_results.get("success_rate", 0.0),
+        "withdrawal_access_policy": mc_results.get("withdrawal_access_policy"),
+        "access_failure_rate": mc_results.get("access_failure_rate"),
+        "portfolio_depletion_rate": mc_results.get("portfolio_depletion_rate"),
         "final_net_worth_median": mc_results.get("median_final_nw", 0.0),
         "final_net_worth_p10": mc_results.get("p10_final_nw", 0.0),
         "final_net_worth_p90": mc_results.get("p90_final_nw", 0.0),
@@ -43,6 +46,9 @@ def generate_mc_report(mc_results: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "success_rate": mc_results.get("success_rate", 0.0),
+        "withdrawal_access_policy": mc_results.get("withdrawal_access_policy"),
+        "access_failure_rate": mc_results.get("access_failure_rate"),
+        "portfolio_depletion_rate": mc_results.get("portfolio_depletion_rate"),
         "percentiles": percentiles,
         "median_peak_nw": mc_results.get("median_peak_nw", 0.0),
         "median_taxes": mc_results.get("median_taxes", 0.0),

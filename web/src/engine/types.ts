@@ -21,6 +21,8 @@ export interface RunOptions {
 
 export interface Kpis {
   successRate: number;
+  accessFailureRate?: number;
+  portfolioDepletionRate?: number;
   medianFinalNetWorth: number;
   p10FinalNetWorth: number;
   p90FinalNetWorth: number;
@@ -38,6 +40,8 @@ export interface CashFlowRow {
   taxes: number;
   netWorth: number;
   netCashFlow: number;
+  accessibleSpendingBalance?: number;
+  accessShortfall?: number;
 }
 
 export interface McPercentilePoint {

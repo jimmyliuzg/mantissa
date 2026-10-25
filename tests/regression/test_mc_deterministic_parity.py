@@ -5,13 +5,8 @@ tables, NOMINAL double-conversion, medical inflation, tax conventions).
 This harness runs both paths on representative configs and asserts the
 year-by-year rows agree.
 
-Scope of the guarantee:
-- income / expenses / taxes / aca_subsidy rows agree in EVERY config
-  (both paths share calculate_annual_expenses / calculate_annual_income
-  and the versioned tax law).
-- net_worth agrees only in withdrawal-free configs (no expenses): the
-  deterministic path deliberately omits withdrawals, windfalls and
-  contributions (documented limitation).
+Scope of the guarantee: every year uses the same cash-flow implementation,
+including withdrawals, surplus savings, contributions, events, taxes and net worth.
 """
 from datetime import date
 
@@ -119,7 +114,7 @@ class TestRowParity:
 
 
 class TestNetWorthParity:
-    """Net worth agrees when no withdrawals occur (expenses <= income)."""
+    """Net worth agrees in both funded and withdrawal-heavy plans."""
 
     def test_income_only_real(self):
         assert_rows_agree(make(True, False, True), keys=("net_worth",))
@@ -127,15 +122,8 @@ class TestNetWorthParity:
     def test_income_only_nominal(self):
         assert_rows_agree(make(False, False, True), keys=("net_worth",))
 
-    def test_expenses_diverge_only_by_withdrawals(self):
-        """With expenses, NW differs ONLY because MC withdraws (det omits
-        withdrawals by design) — the gap must be roughly the cumulative
-        withdrawal stream, never a drift in returns."""
-        det, mc = both_paths(make(True, True, False))
-        # Early year: gap ≈ first year's spending
-        gap = mc[2026]["net_worth"] - det[2026]["net_worth"]
-        # Withdrawal = expenses (income 0) — gap bounded by full spend
-        assert abs(gap) <= abs(det[2026]["expenses"]) + 0.05
+    def test_expense_withdrawals_have_identical_net_worth(self):
+        assert_rows_agree(make(True, True, False), keys=("net_worth", "taxes", "aca_subsidy"))
 
     def test_medical_excess_compounds_identically(self):
         det, mc = both_paths(make(True, True, False))
@@ -187,5 +175,5 @@ class TestConventionConsistency:
         # well above 400% FPL → no subsidy in MC; det (income-only MAGI)
         # still reports the full subsidy.
         assert mc[2040]["aca_subsidy"] == 0.0
-        assert det[2040]["aca_subsidy"] > 0.0
+        assert det[2040]["aca_subsidy"] == 0.0  # shared path uses withdrawal-inclusive MAGI
         assert mc[2040]["income"] == pytest.approx(det[2040]["income"])

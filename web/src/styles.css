@@ -24,6 +24,12 @@
   --series-fan: #2e5cb844;
   --series-fan-edge: #2e5cb8;
   --series-fan-median: #2e5cb8;
+  /* Allocation tints by tax treatment (>=3:1 on --bg-elev). */
+  --acct-pre-tax: #2e5cb8;
+  --acct-roth: #1f7a3a;
+  --acct-taxable: #7a5cb8;
+  --acct-exempt: #0f8a8a;
+  --acct-other: #8a6a4a;
 
   /* ---- Type tokens ----
      Nothing renders below --text-xs (was 10px in two places). Heading
@@ -79,6 +85,11 @@
     --series-fan: #6e9be044;
     --series-fan-edge: #6e9be0;
     --series-fan-median: #6e9be0;
+    --acct-pre-tax: #6e9be0;
+    --acct-roth: #5cce80;
+    --acct-taxable: #a78bfa;
+    --acct-exempt: #4ec9c9;
+    --acct-other: #c49a7a;
   }
 }
 
@@ -200,10 +211,16 @@ footer { display: flex; justify-content: space-between; align-items: center; pad
 .review-section-title h2 { margin: 0; font-size: var(--text-h3); }
 .review-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--sp-16); }
 .allocation { display: flex; height: 14px; overflow: hidden; border-radius: var(--radius-pill); background: var(--border); margin-bottom: var(--sp-14); }
-.allocation__segment { min-width: 2px; background: var(--accent); }
-.allocation__segment:nth-child(2n) { background: var(--good); }
-.allocation__segment:nth-child(3n) { background: var(--series-expenses); }
-.allocation__segment:nth-child(5n) { background: var(--series-income); }
+.allocation__segment { min-width: 2px; }
+/* Semantic tints: segment color = tax treatment (see plan-review.tsx). */
+.tint-pre-tax { background: var(--acct-pre-tax); }
+.tint-roth { background: var(--acct-roth); }
+.tint-taxable { background: var(--acct-taxable); }
+.tint-exempt { background: var(--acct-exempt); }
+.tint-other { background: var(--acct-other); }
+.allocation-legend { display: flex; flex-wrap: wrap; gap: var(--sp-8) var(--sp-16); margin-bottom: var(--sp-14); font-size: 12px; color: var(--fg-muted); }
+.allocation-legend__item { display: inline-flex; align-items: center; gap: 6px; }
+.allocation-legend__swatch { width: 10px; height: 10px; border-radius: 2px; flex: none; }
 .mobile-table-hint { display: none; }
 .table-wrap { overflow-x: auto; }
 .review-data-table { width: 100%; min-width: 760px; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
@@ -268,7 +285,6 @@ button:focus-visible, a:focus-visible, [role="button"]:focus-visible { outline-o
   .wizard-step .row small { grid-column: 1; }
   .wizard-step input, .wizard-step select, .wizard-step textarea { padding: var(--sp-10) var(--sp-12); font-size: 16px; } /* iOS: 16px prevents auto-zoom */
   .panel { padding: var(--sp-12); }
-  .chart { max-height: 200px; }
   .config-review__header { align-items: flex-start; flex-direction: column; }
   .review-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .review-columns, .review-grid { grid-template-columns: 1fr; }
@@ -321,7 +337,18 @@ button:focus-visible, a:focus-visible, [role="button"]:focus-visible { outline-o
    nested SectionTitle h2s manage their own margin. */
 .panel > h2 { margin: 0 0 var(--sp-12); font-size: var(--text-h3); }
 
-.chart { width: 100%; height: auto; display: block; color: var(--fg-muted); }
+/* Charts render 1:1 pixels (svg width/height attrs = viewBox). The
+   wrapper scrolls horizontally below CHART_MIN_WIDTH rather than
+   shrinking labels below their nominal size. */
+.chart-wrap { position: relative; overflow-x: auto; }
+.chart { display: block; color: var(--fg-muted); }
+.chart-guide { stroke: var(--fg-muted); stroke-opacity: 0.5; stroke-dasharray: 3 3; }
+.chart-tooltip { position: absolute; top: var(--sp-8); z-index: 5; pointer-events: none; background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12); padding: var(--sp-8) var(--sp-10); font-size: 12px; min-width: 170px; }
+.chart-tooltip__title { font-weight: 600; margin-bottom: var(--sp-4); }
+.chart-tooltip__row { display: flex; justify-content: space-between; gap: var(--sp-12); padding: 1px 0; }
+.chart-tooltip__row > span:first-child { display: inline-flex; align-items: center; gap: 6px; color: var(--fg-muted); }
+.chart-tooltip__dot { width: 8px; height: 8px; border-radius: var(--radius-pill); flex: none; }
+.chart-tooltip__value { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .series--income { fill: var(--series-income); fill-opacity: 0.5; stroke: var(--series-income); stroke-width: 1; }
 .series--taxes { fill: var(--series-taxes); fill-opacity: 0.5; stroke: var(--series-taxes); stroke-width: 1; }
 .series--expenses { fill: var(--series-expenses); fill-opacity: 0.5; stroke: var(--series-expenses); stroke-width: 1; }
@@ -335,8 +362,3 @@ button:focus-visible, a:focus-visible, [role="button"]:focus-visible { outline-o
 .series--fan-outer { fill: var(--series-fan); fill-opacity: 0.18; stroke: none; }
 .series--fan-inner { fill: var(--series-fan); fill-opacity: 0.35; stroke: none; }
 .series--fan-median { fill: none; stroke: var(--series-fan-median); stroke-width: 1.5; stroke-dasharray: 4 3; }
-
-.legend-swatch--income { fill: var(--series-income); fill-opacity: 0.5; }
-.legend-swatch--taxes { fill: var(--series-taxes); fill-opacity: 0.5; }
-.legend-swatch--expenses { fill: var(--series-expenses); fill-opacity: 0.5; }
-.legend-swatch--networth { fill: var(--series-networth); }

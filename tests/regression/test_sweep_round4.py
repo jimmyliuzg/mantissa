@@ -7,7 +7,7 @@ import pytest
 from retirement_planner import RetirementPlanner
 from retirement_planner.historical_data import _HISTORICAL_SNP500_VALUES
 from retirement_planner.models import (
-    Account, EconomicAssumptions, MonetaryConvention, Person, Scenario,
+    Account, EconomicAssumptions, MonetaryConvention, Person, Scenario, SocialSecurity,
 )
 from retirement_planner.sensitivity import SensitivityAnalyzer
 
@@ -22,6 +22,7 @@ def _hist_planner(convention):
                           growth_rate=0.07)],
         income_streams=[], expenses=[], mortgages=[],
         monetary_convention=convention,
+        social_security=SocialSecurity(primary_benefit_at_67=0, spouse_benefit_at_67=0),
     )
     return RetirementPlanner(scenario)
 
@@ -50,7 +51,9 @@ class TestHistoricalConvention:
         prod = 1.0
         for r in _HISTORICAL_SNP500_VALUES[:52]:
             prod *= 1.0 + r
-        assert run["final_net_worth"] == pytest.approx(100_000 * prod, rel=1e-9)
+        # The initial row shares the base-year price index with cash flows.
+        inflation = p.scenario.economic.general_inflation
+        assert run["final_net_worth"] == pytest.approx(100_000 * prod / (1 + inflation), rel=1e-9)
 
 
 class TestSensitivityRestore:

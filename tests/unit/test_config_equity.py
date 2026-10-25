@@ -89,8 +89,8 @@ class TestIncomeWithEquity:
         income = planner.calculate_annual_income(2027)
         # Spouse base: 180,000 × 1.03 = 185,400
         # Spouse bonus: 18,000 × 1.03 = 18,540
-        # Spouse RSU: Grant 1 quarterly (1,000) + Grant 2 (300) + refresher (25) = 1,325 shares
-        spouse_total = 180000 * 1.03 + 18000 * 1.03 + 1325 * 50.0
+        # Spouse RSU: Grant 1 quarterly (1,000) + Grant 2 (300) + refresher (0 due to delay) = 1,300 shares
+        spouse_total = 180000 * 1.03 + 18000 * 1.03 + 1300 * 50.0
         primary_total = 200000 * 1.03
         expected_total = spouse_total + primary_total
         assert income["total"] == pytest.approx(expected_total, rel=1e-3)

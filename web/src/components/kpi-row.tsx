@@ -25,6 +25,24 @@ export function KpiRow({ kpis }: KpiRowProps) {
         value: fmtPct(kpis.outOfSavingsRate),
         tone: kpis.outOfSavingsRate > 0.1 ? "bad" : "neutral",
       },
+      ...(kpis.accessFailureRate === undefined
+        ? []
+        : [
+            {
+              label: "Account access failure rate",
+              value: fmtPct(kpis.accessFailureRate),
+              tone: kpis.accessFailureRate > 0 ? ("warn" as const) : ("neutral" as const),
+            },
+          ]),
+      ...(kpis.portfolioDepletionRate === undefined
+        ? []
+        : [
+            {
+              label: "Portfolio depletion rate",
+              value: fmtPct(kpis.portfolioDepletionRate),
+              tone: kpis.portfolioDepletionRate > 0.1 ? ("bad" as const) : ("neutral" as const),
+            },
+          ]),
       { label: "Simulations", value: kpis.numSimulations.toLocaleString(), tone: "neutral" },
     ];
 

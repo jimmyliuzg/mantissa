@@ -3,7 +3,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
+import math
 from typing import Any, Dict, Iterable, List, Optional
+
+from ..models import ACCOUNT_TAX_DEFAULTS
 
 CURRENT_SCHEMA_VERSION = 1
 
@@ -56,7 +59,7 @@ _SCHEMA_KEYS = {
     "social_security", "glidepath", "withdrawal_strategy", "withdrawal_rate",
     "guardrail_floor_pct", "guardrail_ceiling_pct", "legacy_goal", "state",
     "family_size", "savings_order", "monetary_convention", "stress_level",
-    "survivor_expense_ratio", "_comment",
+    "survivor_expense_ratio", "_comment", "start_year", "balance_date", "tax_inputs", "withdrawal_access_policy",
 }
 
 
@@ -67,6 +70,9 @@ def _issue(result, path, message, severity="error", code="invalid"):
 def _number(result, value, path, low=None, high=None):
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         _issue(result, path, "must be a number", code="type")
+        return
+    if not math.isfinite(value):
+        _issue(result, path, "must be finite", code="range")
         return
     if low is not None and value < low:
         _issue(result, path, f"must be >= {low}", code="range")
@@ -124,6 +130,9 @@ def validate_config(config: dict, strict: bool = False) -> ValidationResult:
         if "longevity_age" in person:
             _number(result, person["longevity_age"], f"$.{key}.longevity_age", 0, 130)
 
+    if config.get("withdrawal_access_policy", "penalty_free") not in {"penalty_free", "unrestricted"}:
+        _issue(result, "$.withdrawal_access_policy", "must be penalty_free or unrestricted")
+
     accounts = config.get("accounts", [])
     if not isinstance(accounts, list):
         _issue(result, "$.accounts", "must be an array", code="type")
@@ -145,6 +154,10 @@ def validate_config(config: dict, strict: bool = False) -> ValidationResult:
         for field_name in ("name", "type", "balance"):
             if field_name not in account:
                 _issue(result, f"{path}.{field_name}", "required field", code="required")
+        expected = ACCOUNT_TAX_DEFAULTS.get(account.get("type"))
+        declared = account.get("tax_treatment", expected)
+        if expected and declared != expected and not (account.get("type") == "401k" and declared == "roth"):
+            _issue(result, f"{path}.tax_treatment", "conflicts with retirement account type")
         if "balance" in account:
             _number(result, account["balance"], f"{path}.balance", 0)
         if "owner" in account and account["owner"] not in valid_owners:
@@ -154,6 +167,36 @@ def validate_config(config: dict, strict: bool = False) -> ValidationResult:
                 _number(result, account[field_name], f"{path}.{field_name}", -1, 10)
         if "equity_pct" in account:
             _number(result, account["equity_pct"], f"{path}.equity_pct", 0, 1)
+
+    opening_year = config.get("start_year", date.today().year)
+    if not isinstance(opening_year, int):
+        opening_year = date.today().year
+    for index, account in enumerate(accounts):
+        if not isinstance(account, dict):
+            continue
+        path = f"$.accounts[{index}]"
+        if "roth_contribution_basis" in account:
+            _number(result, account["roth_contribution_basis"], path + ".roth_contribution_basis", 0)
+        first_year = account.get("roth_first_contribution_year")
+        if first_year is not None and (not isinstance(first_year, int) or isinstance(first_year, bool) or not 1900 <= first_year <= opening_year):
+            _issue(result, path + ".roth_first_contribution_year", "must be an integer no later than the opening year")
+        cohorts = account.get("roth_conversion_basis", [])
+        if not isinstance(cohorts, list):
+            _issue(result, path + ".roth_conversion_basis", "must be an array")
+            continue
+        for j, cohort in enumerate(cohorts):
+            cp = path + f".roth_conversion_basis[{j}]"
+            if not isinstance(cohort, dict):
+                _issue(result, cp, "must be an object")
+                continue
+            y = cohort.get("year")
+            if not isinstance(y, int) or isinstance(y, bool) or not 1900 <= y <= opening_year:
+                _issue(result, cp + ".year", "must be an integer no later than the opening year")
+            elif isinstance(first_year, int) and first_year > y:
+                _issue(result, cp + ".year", "precedes declared first Roth contribution year")
+            _number(result, cohort.get("amount"), cp + ".amount", 0)
+        if (account.get("roth_contribution_basis", 0) or cohorts) and account.get("type") != "roth_ira":
+            _issue(result, path, "declared Roth IRA principal requires type roth_ira")
 
     for index, account_id in enumerate(config.get("savings_order", [])):
         if account_id not in ids:
@@ -194,6 +237,27 @@ def validate_config(config: dict, strict: bool = False) -> ValidationResult:
                        f"unknown account '{ev.get('target_account')}'", code="reference")
             if key == "rollover_events":
                 _date(result, ev.get("event_date"), f"{path}.event_date")
+
+    account_map = {a.get("id"): {**a, "tax_treatment": a.get("tax_treatment", ACCOUNT_TAX_DEFAULTS.get(a.get("type"), "taxable"))} for a in accounts if isinstance(a, dict)}
+    for index, expense in enumerate(config.get("expenses", [])):
+        if not isinstance(expense, dict):
+            continue
+        path = f"$.expenses[{index}]"
+        if "hsa_qualified" in expense and not isinstance(expense["hsa_qualified"], bool):
+            _issue(result, path + ".hsa_qualified", "must be a boolean")
+        funding = account_map.get(expense.get("funding_account"), {})
+        if funding.get("type") == "hsa" and not expense.get("hsa_qualified", False):
+            _issue(result, path + ".hsa_qualified", "HSA funding requires an explicit qualified-expense assertion")
+        if funding.get("tax_treatment") in {"pre_tax", "roth"}:
+            _issue(result, path + ".funding_account", "retirement distributions must use the withdrawal/access engine")
+    for key in ("windfalls", "housing_events"):
+        for index, event in enumerate(config.get(key, [])):
+            if not isinstance(event, dict):
+                continue
+            field = "source_account" if key == "windfalls" else "funding_account"
+            funding = account_map.get(event.get(field), {})
+            if funding.get("tax_treatment") in {"pre_tax", "roth"} or funding.get("type") in {"hsa", "529"}:
+                _issue(result, f"$.{key}[{index}].{field}", "restricted-account access cannot be bypassed by this event")
 
     glidepath = config.get("glidepath")
     if glidepath is not None:
@@ -247,6 +311,115 @@ def validate_config(config: dict, strict: bool = False) -> ValidationResult:
                 code="unused_field",
             )
 
+    if "start_year" in config:
+        value = config["start_year"]
+        if not isinstance(value, int) or isinstance(value, bool) or not 2024 <= value <= 2200:
+            _issue(result, "$.start_year", "must be an integer year from 2024 to 2200")
+    if config.get("balance_date") is not None:
+        _date(result, config["balance_date"], "$.balance_date")
+    economic = config.get("economic", {})
+    if isinstance(economic, dict):
+        if "bond_return_volatility" in economic:
+            _number(result, economic["bond_return_volatility"], "$.economic.bond_return_volatility", 0, 1)
+        if "equity_bond_correlation" in economic:
+            _number(result, economic["equity_bond_correlation"], "$.economic.equity_bond_correlation", -1, 1)
+    account_map = {a.get("id"): a for a in accounts if isinstance(a, dict)}
+    for i, a in enumerate(accounts):
+        if not isinstance(a, dict):
+            continue
+        path = f"$.accounts[{i}]"
+        if a.get("asset_class") not in (None, "cash", "equity", "bond", "mixed"):
+            _issue(result, path + ".asset_class", "must be cash, equity, bond or mixed")
+        for key in ("cost_basis", "return_volatility", "annual_contribution_cap"):
+            if a.get(key) is not None:
+                _number(result, a[key], path + "." + key, 0)
+        if a.get("contribution_end_date"):
+            _date(result, a["contribution_end_date"], path + ".contribution_end_date")
+        caps = a.get("contribution_caps_by_year", {})
+        if not isinstance(caps, dict):
+            _issue(result, path + ".contribution_caps_by_year", "must be an object")
+        else:
+            for year, cap in caps.items():
+                if not str(year).isdigit():
+                    _issue(result, path + ".contribution_caps_by_year", "keys must be calendar years")
+                _number(result, cap, path + f".contribution_caps_by_year.{year}", 0)
+    for key in ("roth_conversions", "rollover_events"):
+        for i, ev in enumerate(config.get(key, [])):
+            if not isinstance(ev, dict):
+                continue
+            source = account_map.get(ev.get("source_account"), {})
+            target = account_map.get(ev.get("target_account"), {})
+            if source and target:
+                if ev.get("source_account") == ev.get("target_account"):
+                    _issue(result, f"$.{key}[{i}]", "source and target must differ")
+                if source.get("owner", "primary") != target.get("owner", "primary"):
+                    _issue(result, f"$.{key}[{i}]", "retirement transfers must stay with the same owner")
+                if source.get("tax_treatment", "taxable") != "pre_tax":
+                    _issue(result, f"$.{key}[{i}]", "source must be pre-tax")
+                expected = "roth" if key == "roth_conversions" else "pre_tax"
+                if target.get("tax_treatment", "taxable") != expected:
+                    _issue(result, f"$.{key}[{i}]", f"target must be {expected}")
+    allowed_tax = {"salt_paid", "charitable_deductions", "mortgage_interest", "ca_mortgage_interest", "ca_property_tax", "ca_income_adjustment", "charitable_limit_pct", "qcd_amount"}
+    tax_inputs = config.get("tax_inputs", {})
+    if not isinstance(tax_inputs, dict):
+        _issue(result, "$.tax_inputs", "must be an object keyed by calendar year")
+    else:
+        for year, fields in tax_inputs.items():
+            if not str(year).isdigit() or not isinstance(fields, dict):
+                _issue(result, "$.tax_inputs", "each calendar year must contain an object")
+                continue
+            for key, value in fields.items():
+                if key not in allowed_tax:
+                    _issue(result, f"$.tax_inputs.{year}.{key}", "unsupported tax input")
+                else:
+                    _number(result, value, f"$.tax_inputs.{year}.{key}", None if key == "ca_income_adjustment" else 0, 1 if key == "charitable_limit_pct" else None)
+    for key in ("expenses", "mortgages", "windfalls", "housing_events"):
+        for i, item in enumerate(config.get(key, [])):
+            if not isinstance(item, dict):
+                continue
+            path = f"$.{key}[{i}]"
+            for field in ("funding_account",):
+                if item.get(field) and item[field] not in ids:
+                    _issue(result, path + "." + field, "unknown funding account")
+            if key == "expenses":
+                if item.get("payment_kind", "cash") not in {"cash", "in_kind"}:
+                    _issue(result, path + ".payment_kind", "must be cash or in_kind")
+                if item.get("payment_kind") == "in_kind" and not item.get("funding_account"):
+                    _issue(result, path, "in-kind gifts need a funding account")
+            if key == "windfalls":
+                if item.get("wage_owner") not in (None, "primary", "spouse"):
+                    _issue(result, path + ".wage_owner", "must be primary or spouse")
+                if item.get("taxable_kind", "ordinary") not in {"ordinary", "capital_gains"}:
+                    _issue(result, path + ".taxable_kind", "must be ordinary or capital_gains")
+                if item.get("taxable_amount") is not None:
+                    _number(result, item["taxable_amount"], path + ".taxable_amount", 0)
+            if key in {"mortgages", "housing_events"}:
+                for field in ("deductible_debt_limit", "ca_deductible_debt_limit"):
+                    if field in item:
+                        _number(result, item[field], path + "." + field, 0)
+            if key == "mortgages":
+                if item.get("deduction_kind", "none") not in {"none", "itemized", "rental"}:
+                    _issue(result, path + ".deduction_kind", "must be none, itemized or rental")
+                changes = item.get("rate_changes", [])
+                if not isinstance(changes, list):
+                    _issue(result, path + ".rate_changes", "must be an array")
+                else:
+                    for j, change in enumerate(changes):
+                        if not isinstance(change, dict):
+                            _issue(result, path + ".rate_changes", "each change must be an object")
+                            continue
+                        _date(result, change.get("date"), path + f".rate_changes[{j}].date")
+                        for field in ("interest_rate", "monthly_payment"):
+                            if field in change:
+                                _number(result, change[field], path + f".rate_changes[{j}].{field}", 0, 1 if field == "interest_rate" else None)
+            if key == "housing_events":
+                if item.get("mortgage_deduction_kind", "none") not in {"none", "itemized", "rental"}:
+                    _issue(result, path + ".mortgage_deduction_kind", "must be none, itemized or rental")
+                for field in ("selling_costs", "purchase_costs"):
+                    if field in item:
+                        _number(result, item[field], path + "." + field, 0)
+                if item.get("mortgage_amount", 0) > item.get("purchase_price", 0):
+                    _issue(result, path, "mortgage cannot exceed purchase price")
     return result
 
 
@@ -265,10 +438,23 @@ def schema_dict() -> dict:
             "spouse": {"anyOf": [{"$ref": "#/$defs/person"}, {"type": "null"}]},
             "accounts": {"type": "array", "items": {"$ref": "#/$defs/account"}},
             "monetary_convention": {"enum": ["real", "nominal"]},
+            "withdrawal_access_policy": {"enum": ["penalty_free", "unrestricted"]},
+            "start_year": {"type": "integer", "minimum":2024, "maximum":2200},
+            "balance_date": {"type":"string", "format":"date"},
+            "tax_inputs": {"type":"object"},
         },
         "required": ["primary"],
         "$defs": {
             "person": {"type": "object", "required": ["name", "birth_date", "retirement_date"]},
-            "account": {"type": "object", "required": ["id", "name", "type", "balance"]},
+            "account": {"type": "object", "required": ["id", "name", "type", "balance"],
+                        "properties": {
+                            "roth_contribution_basis": {"type": "number", "minimum": 0},
+                            "roth_first_contribution_year": {"type": ["integer", "null"]},
+                            "roth_conversion_basis": {"type": "array", "items": {"type": "object", "required": ["year", "amount"], "properties": {"year": {"type": "integer"}, "amount": {"type": "number", "minimum": 0}}}},
+                            "asset_class": {"enum":["cash", "equity", "bond", "mixed", None]},
+                            "cost_basis": {"type":["number", "null"], "minimum":0},
+                            "contribution_caps_by_year": {"type":"object", "additionalProperties":{"type":"number", "minimum":0}},
+                            "contribution_end_date": {"type":["string", "null"], "format":"date"},
+                            "return_volatility": {"type":["number", "null"], "minimum":0}}},
         },
     }

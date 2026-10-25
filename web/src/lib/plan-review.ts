@@ -47,6 +47,7 @@ const KNOWN_TOP_LEVEL = new Set([
   "social_security",
   "glidepath",
   "withdrawal_strategy",
+  "withdrawal_access_policy",
   "withdrawal_rate",
   "guardrail_floor_pct",
   "guardrail_ceiling_pct",
@@ -58,6 +59,30 @@ const KNOWN_TOP_LEVEL = new Set([
   "stress_level",
   "survivor_expense_ratio",
 ]);
+
+/**
+ * Allocation colors are semantic: segments are tinted by tax
+ * treatment (pre-tax / Roth / taxable / HSA-exempt / other) instead
+ * of an nth-child rainbow, which encoded nothing.
+ */
+export type TreatmentKey = "pre-tax" | "roth" | "taxable" | "exempt" | "other";
+
+export const TREATMENT_LABELS: Record<TreatmentKey, string> = {
+  "pre-tax": "Pre-tax",
+  roth: "Roth",
+  taxable: "Taxable",
+  exempt: "Tax-exempt",
+  other: "Other",
+};
+
+export function treatmentKey(raw: string): TreatmentKey {
+  const t = raw.toLowerCase();
+  if (t.includes("roth") || t.includes("tax_free") || t.includes("tax-free")) return "roth";
+  if (t.includes("exempt") || t.includes("hsa")) return "exempt";
+  if (t.includes("taxable") || t.includes("capital")) return "taxable";
+  if (t.includes("pre") || t.includes("deferred") || t.includes("ordinary")) return "pre-tax";
+  return "other";
+}
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -125,6 +150,7 @@ export function summarizePlan(config: unknown): PlanReviewSummary {
     ["Withdrawal rate", root.withdrawal_rate],
     ["Monetary convention", root.monetary_convention],
     ["Legacy goal", root.legacy_goal],
+    ["Withdrawal access policy", root.withdrawal_access_policy ?? "penalty_free"],
     ["Economic assumptions", root.economic],
     ["Social Security", root.social_security],
     ["Glidepath", root.glidepath],

@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- Default withdrawal feasibility to conservative penalty-free access, with declared Roth IRA principal and conversion clocks; expose access failures separately from portfolio depletion.
+- Keep nominal tax basis and mortgage contracts consistent across real/nominal output, including housing transactions, RMD references and healthcare tax units.
+- Align the first nominal projection row with the base-year price index used for its cash flows.
+
+### Added
+- Anonymous access/accounting regressions and a privacy content guard in CI.
+
 ## [0.2.0] - 2026-07-22
 
 ### Added

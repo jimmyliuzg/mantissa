@@ -197,9 +197,17 @@ _LIMITS_2025 = ContributionLimits(
     roth_ira_income_limit_mfj=240_000,
 )
 
+_LIMITS_2026 = ContributionLimits(
+    year=2026, elec_deferral_limit=24_500, catch_up_50_plus=8_000,
+    super_catch_up_60_63=11_250, ira_limit=7_500, ira_catch_up_50_plus=1_100,
+    hsa_individual=4_400, hsa_family=8_750, hsa_catch_up_55_plus=1_000,
+    roth_ira_income_limit_mfj=252_000,
+)
+
 _LIMITS_BY_YEAR = {
     2024: _LIMITS_2024,
     2025: _LIMITS_2025,
+    2026: _LIMITS_2026,
 }
 
 

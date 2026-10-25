@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { summarizePlan } from "../src/lib/plan-review";
+import { summarizePlan, treatmentKey } from "../src/lib/plan-review";
 
 describe("summarizePlan", () => {
   it("creates an account snapshot with allocation and debt", () => {
@@ -8,7 +8,13 @@ describe("summarizePlan", () => {
       primary: { name: "Alex", birth_date: "1980-01-01", retirement_date: "2045-01-01" },
       spouse: null,
       accounts: [
-        { id: "brokerage", name: "Brokerage", type: "brokerage", tax_treatment: "taxable", balance: 120_000 },
+        {
+          id: "brokerage",
+          name: "Brokerage",
+          type: "brokerage",
+          tax_treatment: "taxable",
+          balance: 120_000,
+        },
         { id: "ira", name: "IRA", type: "trad_ira", tax_treatment: "pre_tax", balance: 80_000 },
       ],
       mortgages: [{ name: "Home", balance: 50_000, monthly_payment: 2_000 }],
@@ -31,6 +37,23 @@ describe("summarizePlan", () => {
 
     expect(review.totalAssets).toBe(0);
     expect(review.accounts).toEqual([]);
-    expect(review.unknownEntries).toEqual([["custom_goal", { label: "Fund cabin", target: 500_000 }]]);
+    expect(review.unknownEntries).toEqual([
+      ["custom_goal", { label: "Fund cabin", target: 500_000 }],
+    ]);
+  });
+});
+
+describe("treatmentKey", () => {
+  it("maps engine tax_treatment values onto allocation tints", () => {
+    expect(treatmentKey("pre_tax")).toBe("pre-tax");
+    expect(treatmentKey("tax-deferred")).toBe("pre-tax");
+    expect(treatmentKey("roth")).toBe("roth");
+    expect(treatmentKey("tax_free")).toBe("roth");
+    expect(treatmentKey("taxable")).toBe("taxable");
+    expect(treatmentKey("capital_gains")).toBe("taxable");
+    expect(treatmentKey("tax_exempt")).toBe("exempt");
+    expect(treatmentKey("hsa")).toBe("exempt");
+    expect(treatmentKey("mystery")).toBe("other");
+    expect(treatmentKey("Not specified")).toBe("other");
   });
 });

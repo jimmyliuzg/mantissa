@@ -332,7 +332,7 @@ class TestHousingTradeUpMC:
         assert "Mortgage - m_new" in exp["by_category"]
         # 5 payments (Aug-Dec, month after the July event): ~5 × 7,381
         assert exp["by_category"]["Mortgage - m_new"] == pytest.approx(
-            5 * 7_381.0, rel=0.05)
+            5 * 7_381.0 / (1 + planner.scenario.economic.general_inflation) ** (2029 - planner.start_year), rel=0.001)
         # balance reduced by principal portion
         assert mortgage_balances["m_new"] < 1_200_000
 
@@ -432,6 +432,8 @@ class TestRolloverEvent:
 
     def test_engine_processes_rollover_in_mc(self):
         planner = self._planner()
+        # Isolate rollover/tax wiring; access feasibility is tested separately.
+        planner.scenario.withdrawal_access_policy = "unrestricted"
         run = planner.run_single_simulation(return_volatility=0.0)
         assert run["out_of_savings_year"] is None
         # Ladder + rollover means conversions ran for a decade from the IRA
@@ -645,12 +647,15 @@ class TestNominalNoDoubleConversion:
             income_streams=[], expenses=[], mortgages=[],
             monetary_convention=MonetaryConvention.NOMINAL,
         )
+        scenario.social_security.primary_benefit_at_67 = 0
+        scenario.social_security.spouse_benefit_at_67 = 0
         planner = RetirementPlanner(scenario)
         run = planner.run_single_simulation(return_volatility=0.0)
         # 7% real + scenario inflation = nominal — once, not twice.
         # Spouse (1982+95) dies 2077; loop runs 2026..2077 = 52 years.
         inf = scenario.economic.get_rate("mean")["general_inflation"]
-        expected = 100_000 * (1.07 * (1 + inf)) ** 52
+        # Base-row price index is 1; subsequent 51 rows advance inflation.
+        expected = 100_000 * 1.07 ** 52 * (1 + inf) ** 51
         assert run["final_net_worth"] == pytest.approx(expected, rel=1e-6)
 
 
@@ -674,9 +679,10 @@ class TestAcaParity:
         proj = planner.project_cash_flow()
         r = [row for row in proj if row["year"] == 2028][0]
         law = TaxLawRegistry().law_for_year(2028)
-        expected = calculate_aca_subsidy(r["income"], 2, law, "CA")
-        assert r["aca_subsidy"] == pytest.approx(expected, rel=1e-6)
-        assert r["aca_subsidy"] > 0
+        factor = (1 + scenario.economic.general_inflation) ** (2028 - planner.start_year)
+        expected = calculate_aca_subsidy(r["income"] * factor, 2, law, "CA") / factor
+        assert r["aca_subsidy_estimate"] == pytest.approx(expected, rel=1e-6)
+        assert r["aca_subsidy"] == 0  # no eligible premium expense to offset
 
 
 class TestChildTaxCreditWired:

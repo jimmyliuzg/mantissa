@@ -230,13 +230,13 @@ class TestRefresherPolicy:
                 growth_rate=0.0,
             ),
         )
-        # 2026: refresher granted Oct → 1 quarter (62.5 shares)
+        # 2026: October grant first vests after its 3-month delay in January 2027.
         inc_2026 = planner.calculate_annual_rsu_income(2026, equity)
-        assert inc_2026 == pytest.approx(62.5 * 50.0, rel=1e-3)
+        assert inc_2026 == 0.0
 
-        # 2027: Grant 2026 full year (250) + Grant 2027 partial (62.5) = 312.5
+        # 2027: 2026 grant vests 250; the new October grant waits until January 2028.
         inc_2027 = planner.calculate_annual_rsu_income(2027, equity)
-        assert inc_2027 == pytest.approx(312.5 * 50.0, rel=1e-3)
+        assert inc_2027 == pytest.approx(250 * 50.0, rel=1e-3)
 
     def test_compounding_refreshers(self, planner):
         """Multiple years of refreshers compound."""
@@ -252,9 +252,9 @@ class TestRefresherPolicy:
                 growth_rate=0.0,
             ),
         )
-        # 2028: Grant 2026 (250) + Grant 2027 (250) + Grant 2028 (62.5) = 562.5
+        # 2028: two prior grants vest 250 each; the current October grant has no vest.
         inc_2028 = planner.calculate_annual_rsu_income(2028, equity)
-        assert inc_2028 == pytest.approx(562.5 * 50.0, rel=1e-3)
+        assert inc_2028 == pytest.approx(500 * 50.0, rel=1e-3)
 
     def test_refresher_with_growth(self, planner):
         """Refresher with 5% annual growth in grant size."""
@@ -270,9 +270,9 @@ class TestRefresherPolicy:
                 growth_rate=0.05,
             ),
         )
-        # 2027: Grant 2026 (250) + Grant 2027 (250×1.05=262.5, 1 quarter=65.625)
+        # 2027: prior grant vests 250; grant growth affects its first vest in 2028.
         inc_2027 = planner.calculate_annual_rsu_income(2027, equity)
-        expected_shares = 250 + 262.5 / 4  # 250 + 65.625
+        expected_shares = 250
         assert inc_2027 == pytest.approx(expected_shares * 50.0, rel=1e-3)
 
 

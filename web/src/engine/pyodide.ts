@@ -71,11 +71,11 @@ export const pyodideEngine: Engine = {
     bootstrapPromise = (async () => {
       await loadPyodideScript();
       if (!window.loadPyodide) throw new Error("loadPyodide not on window after script load");
-      pyodide = await window.loadPyodide({ indexURL: PYODIDE_CDN });
+      const runtime = await window.loadPyodide({ indexURL: PYODIDE_CDN });
 
       // numpy ships with Pyodide; the rest comes from micropip.
-      await pyodide.loadPackage(["numpy", "micropip"]);
-      const micropip = pyodide.pyimport("micropip");
+      await runtime.loadPackage(["numpy", "micropip"]);
+      const micropip = runtime.pyimport("micropip");
       for (const pkg of ["click", "tabulate"]) {
         await micropip.install(pkg);
       }
@@ -84,10 +84,14 @@ export const pyodideEngine: Engine = {
       await micropip.install(wheelUrl());
 
       // Smoke test — surface import errors early with a useful message.
-      await pyodide.runPythonAsync(
+      await runtime.runPythonAsync(
         "import retirement_planner; from retirement_planner import RetirementPlanner, MonteCarloEngine",
       );
-    })();
+      pyodide = runtime;
+    })().catch((error: unknown) => {
+      bootstrapPromise = null;
+      throw error;
+    });
     return bootstrapPromise;
   },
 
@@ -123,6 +127,9 @@ def _norm_pctile(mc, p):
 result = {
     "kpis": {
         "successRate": mc.get("success_rate", 0.0),
+        **({"accessFailureRate": mc["access_failure_rate"],
+            "portfolioDepletionRate": mc["portfolio_depletion_rate"]}
+           if "access_failure_rate" in mc and mc.get("withdrawal_access_policy") != "unrestricted" else {}),
         "medianFinalNetWorth": mc.get("median_final_nw", 0.0),
         "p10FinalNetWorth": mc.get("p10_final_nw", 0.0),
         "p90FinalNetWorth": mc.get("p90_final_nw", 0.0),
@@ -140,6 +147,8 @@ result = {
             "taxes": r.get("taxes", 0.0),
             "netWorth": r.get("net_worth", 0.0),
             "netCashFlow": r.get("net_cash_flow", 0.0),
+            "accessibleSpendingBalance": r.get("accessible_spending_balance", 0.0),
+            "accessShortfall": r.get("access_shortfall", 0.0),
         }
         for r in project
     ],
@@ -158,7 +167,10 @@ result = {
             )
         ],
     },
-    "warnings": [],  # engine does not surface structured warnings; fill later
+    "warnings": [
+        {"year": None, "category": "model", "message": message, "severity": "warning"}
+        for message in dict.fromkeys(planner.model_warnings)
+    ],
 }
 json.dumps(result)
 `;
