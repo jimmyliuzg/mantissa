@@ -36,6 +36,8 @@ from .fixes import process_housing_event, process_roth_conversions, apply_medica
 from .tax_lots import calculate_121_exclusion
 from .projection.services import make_year_context, make_state
 from .sim_integration import calculate_401k_limit, compute_survivor_ss_benefit
+from .rules import RuleRegistry
+from .contributions import ContributionPolicy, validate_contribution_policy
 from .household import (
     survivor_snapshot,
     normalize_filing_status,
@@ -183,7 +185,7 @@ class WithdrawalEngine:
 
     def __init__(self, accounts: Dict[str, Account],
                  cost_basis: CostBasisTracker, access_policy="unrestricted",
-                 birth_dates=None, start_year=None):
+                 birth_dates=None, start_year=None, contribution_policy=None, rule_registry=None):
         self.accounts = accounts
         self.cost_basis = cost_basis
         self.access_policy = access_policy
@@ -197,6 +199,13 @@ class WithdrawalEngine:
         self._withdrawals: List[WithdrawalResult] = []
         self.rmd_reference_balances = None
         self.rmd_year = None
+        self.rules = rule_registry or RuleRegistry()
+        self.contribution_policy = contribution_policy or {}
+        self.contribution_filing_status = "single"
+        self.contribution_inflation = 0.025
+        self.employer_hsa_contributions = {}
+        self.last_contribution_deductions = {}
+        self.last_contribution_warnings = []
 
     @property
     def withdrawals(self) -> List[WithdrawalResult]:
@@ -477,82 +486,90 @@ class WithdrawalEngine:
         return remaining
 
     def contribute(
-        self,
-        balances: Dict[str, float],
-        available_savings: float,
-        year: Optional[int] = None,
-        active_owners: Optional[set] = None,
-        ages: Optional[dict] = None,
-        wages_by_owner: Optional[dict] = None,
-        monetary_factor: float = 1.0,
+        self, balances: Dict[str, float], available_savings: float,
+        year: Optional[int] = None, active_owners: Optional[set] = None,
+        ages: Optional[dict] = None, wages_by_owner: Optional[dict] = None,
+        monetary_factor: float = 1.0, magi_nominal: Optional[float] = None,
     ) -> Dict[str, float]:
-        """Distribute surplus savings into accounts by contribution priority.
+        """Allocate employee cash under user caps and owner/year legal limits.
 
-        Accounts are funded in ascending ``contribution_priority`` order
-        (accounts with priority 0 are skipped).  Each account receives
-        ``min(remaining_savings, annual_contribution_cap - already_contributed)``
-        where a cap of 0 means unlimited.  Employer match is computed
-        separately and added on top of the employee contribution — it is
-        not deducted from available savings.
-
-        Returns dict of {account_id: total_contribution} for logging.
+        All rule ceilings and consumption pools are nominal. Balance changes,
+        deductions and return values follow the active projection convention.
+        Consumption is local to this call: tax previews cannot spend a later
+        preview's allowance or leak principal into another Monte Carlo path.
         """
-        contributions: Dict[str, float] = {}
+        contributions = {}
+        self.last_contribution_deductions = {}
+        self.last_contribution_warnings = []
         if available_savings <= 0:
             return contributions
-
-        eligible = sorted(
-            (a for a in self.accounts.values() if a.contribution_priority > 0),
-            key=lambda a: a.contribution_priority,
-        )
-
+        if monetary_factor <= 0:
+            raise ValueError("monetary_factor must be positive")
+        policy_year = year if year is not None else self.access_start_year
+        service = ContributionPolicy(self.contribution_policy,
+                                     self.contribution_filing_status,
+                                     self.rules, self.contribution_inflation)
+        compensation = {owner: max(0.0, value * monetary_factor)
+                        for owner, value in (wages_by_owner or {}).items()}
         remaining = available_savings
-        owner_deferrals = {}
+        owner_deferrals, ira_consumed, ira_consumed_by_type, hsa_consumed = {}, {}, {}, {}
+        eligible = sorted((a for a in self.accounts.values() if a.contribution_priority > 0),
+                          key=lambda a: a.contribution_priority)
         for account in eligible:
             if remaining <= 0:
                 break
-
             if year is not None and account.contribution_end_date and date(year, 1, 1) >= account.contribution_end_date:
                 continue
-            workplace = account.account_type in {"401k", "trad_401k", "roth_401k"}
-            if workplace and active_owners is not None and account.owner not in active_owners:
+            kind, owner = account.account_type, (account.owner or "primary").lower()
+            workplace = kind in {"401k", "trad_401k", "roth_401k"}
+            if workplace and active_owners is not None and owner not in active_owners:
                 continue
             cap = account.contribution_caps_by_year.get(year, account.annual_contribution_cap)
-            # An explicit scheduled zero means no contribution, unlike legacy cap=0 (unlimited).
             if year in account.contribution_caps_by_year and cap == 0:
                 continue
             employee = min(remaining, cap / monetary_factor) if cap > 0 else remaining
             if workplace and year is not None:
-                legal = calculate_401k_limit((ages or {}).get(account.owner, 0), year)
+                limits = self.rules.contributions_for_year(policy_year, self.contribution_inflation)
+                age = (ages or {}).get(owner, 0)
+                legal = limits.elec_deferral_limit + (limits.super_catch_up_60_63 if 60 <= age <= 63 else limits.catch_up_50_plus if age >= 50 else 0)
                 owner_limit = legal / monetary_factor
                 if wages_by_owner is not None:
-                    owner_limit = min(owner_limit, wages_by_owner.get(account.owner, 0.0))
-                employee = min(employee, max(0.0, owner_limit - owner_deferrals.get(account.owner, 0.0)))
-                owner_deferrals[account.owner] = owner_deferrals.get(account.owner, 0.0) + employee
+                    owner_limit = min(owner_limit, wages_by_owner.get(owner, 0.0))
+                employee = min(employee, max(0.0, owner_limit - owner_deferrals.get(owner, 0.0)))
+                owner_deferrals[owner] = owner_deferrals.get(owner, 0.0) + employee
+            decision = service.limit_for(kind, owner, policy_year, (ages or {}).get(owner, 0),
+                magi_nominal=magi_nominal, compensation_by_owner_nominal=compensation,
+                ira_contributed_by_owner_nominal=ira_consumed,
+                ira_contributed_by_type_nominal=ira_consumed_by_type,
+                hsa_contributed_by_owner_nominal=hsa_consumed,
+                employer_hsa_contributions_nominal_by_owner=self.employer_hsa_contributions,
+                ages_by_owner=ages or {})
+            if decision is not None:
+                self.last_contribution_warnings.extend(decision.warnings)
+                employee = min(employee, decision.allowed_additional_nominal / monetary_factor)
             if employee <= 0:
                 continue
+            if kind in {"trad_ira", "traditional_ira", "roth_ira"}:
+                ira_consumed[owner] = ira_consumed.get(owner, 0.0) + employee * monetary_factor
+                category = "roth_ira" if kind == "roth_ira" else "traditional_ira"
+                owner_type_usage = ira_consumed_by_type.setdefault(category, {})
+                owner_type_usage[owner] = owner_type_usage.get(owner, 0.0) + employee * monetary_factor
+            if kind == "hsa":
+                hsa_consumed[owner] = hsa_consumed.get(owner, 0.0) + employee * monetary_factor
+            if decision is not None and decision.deductible_additional_nominal:
+                self.last_contribution_deductions[account.id] = min(employee, decision.deductible_additional_nominal / monetary_factor)
             remaining -= employee
-
-            # Employer match: separate calc on top of employee contribution
             match = 0.0
-            if account.employer_match > 0 and account.employer_match_limit > 0:
-                matchable = min(employee, account.employer_match_limit)
+            if account.employer_match > 0:
+                matchable = min(employee, account.employer_match_limit) if account.employer_match_limit > 0 else employee
                 match = matchable * account.employer_match
-            elif account.employer_match > 0:
-                match = employee * account.employer_match
-
             total = employee + match
-            account_id = account.id
-            balances[account_id] = balances.get(account_id, 0.0) + total
-            contributions[account_id] = total
-            if account.tax_treatment == "roth" and account.account_type == "roth_ira":
-                self.access.add_contribution((account.owner or "primary").lower(), employee * self.nominal_factor, year)
-            # Increase cost basis for taxable accounts (contributions are basis)
+            balances[account.id] = balances.get(account.id, 0.0) + total
+            contributions[account.id] = total
+            if account.tax_treatment == "roth" and kind == "roth_ira":
+                self.access.add_contribution(owner, employee * self.nominal_factor, policy_year)
             if account.tax_treatment == "taxable":
-                current_basis = self.cost_basis.get_basis(account_id, 0.0)
-                self.cost_basis.set_basis(account_id, current_basis + total)
-
-
+                self.cost_basis.set_basis(account.id, self.cost_basis.get_basis(account.id, 0.0) + total)
         return contributions
 
 
@@ -709,10 +726,16 @@ class RetirementPlanner:
 
     def __init__(self, scenario: Scenario):
         self.scenario = scenario
+        self.rules = RuleRegistry(scenario.policy)
+        self.contribution_policy = validate_contribution_policy(scenario.contribution_policy)
         if scenario.withdrawal_access_policy not in {"penalty_free", "unrestricted"}:
             raise ValueError("Unknown withdrawal_access_policy")
         self.accounts = {a.id: a for a in scenario.accounts}
         for a in scenario.accounts:
+            if a.employer_match > 0 and a.account_type not in {"401k", "trad_401k", "roth_401k"}:
+                raise ValueError(
+                    f"Account {a.id}: employer_match requires a workplace retirement account"
+                )
             expected = ACCOUNT_TAX_DEFAULTS.get(a.account_type)
             if expected and a.tax_treatment != expected and not (a.account_type == "401k" and a.tax_treatment == "roth"):
                 raise ValueError(f"Account {a.id}: tax_treatment conflicts with retirement account type")
@@ -749,6 +772,40 @@ class RetirementPlanner:
         # stress).  CLI --stress and the `stress` command set it.
         self.input_readiness = {"provisional": False, "access_assessed": True, "items": []}
         self.stress_level = 0.0
+        self._contribution_readiness()
+
+    def _contribution_readiness(self):
+        items = self.input_readiness["items"]
+        known = {item["path"] for item in items}
+        owners = self.contribution_policy.get("owners", {})
+        for account in self.accounts.values():
+            if account.contribution_priority <= 0:
+                continue
+            owner = (account.owner or "primary").lower()
+            assumptions = owners.get(owner, {})
+            path = None
+            if account.account_type in {"trad_ira", "traditional_ira"} and assumptions.get("ira_deduction", "unknown") != "deductible":
+                path = f"contribution_policy.owners.{owner}.ira_deduction"
+                message = "Automatic traditional IRA contributions require confirmed deductible treatment; unknown/nondeductible funding is skipped because IRA basis is not modeled."
+            elif account.account_type == "hsa" and (not assumptions.get("hsa_eligible") or assumptions.get("hsa_coverage", "none") == "none"):
+                path = f"contribution_policy.owners.{owner}.hsa_eligible"
+                message = "Automatic HSA contributions require declared eligibility and individual/family coverage; unconfirmed funding is skipped."
+            if path:
+                if path not in known:
+                    items.append({"path": path, "status": "missing", "detail": message})
+                    known.add(path)
+                if message not in self.model_warnings:
+                    self.model_warnings.append(message)
+                self.input_readiness["provisional"] = True
+        if self.rules.policy.get("changes"):
+            message = "User rule forecasts are scenario assumptions, not published law. Effective-year rule metadata identifies overrides and projections."
+            if message not in self.model_warnings:
+                self.model_warnings.append(message)
+
+    def config_fingerprint(self):
+        from .provenance import scenario_fingerprint
+        return scenario_fingerprint(self.scenario)
+
     @classmethod
     def from_config(cls, config_path: str) -> 'RetirementPlanner':
         """Load planner from JSON config file."""
@@ -1185,10 +1242,13 @@ class RetirementPlanner:
             balance_date=date.fromisoformat(config["balance_date"]) if config.get("balance_date") else None,
             tax_inputs={int(k): v for k, v in config.get("tax_inputs", {}).items()},
             withdrawal_access_policy=config.get("withdrawal_access_policy", "penalty_free"),
+            policy=config.get("policy"),
+            contribution_policy=config.get("contribution_policy", {}),
         )
 
         planner = cls(scenario)
         planner.input_readiness = readiness
+        planner._contribution_readiness()
         if not readiness["access_assessed"]:
             planner.model_warnings.append("Account access unassessed: total-only savings use an aggregate taxable proxy. Separate account types before relying on early-retirement funding.")
         if readiness["provisional"]:
@@ -2014,7 +2074,7 @@ class RetirementPlanner:
 
         # Get versioned tax law for this year
         if not hasattr(self, '_tax_registry'):
-            self._tax_registry = TaxLawRegistry()
+            self._tax_registry = self.rules
         law = self._tax_registry.law_for_year(
             year,
             fallback_inflation=inflation_rate if inflation_rate > 0 else 0.025,
@@ -2611,6 +2671,7 @@ class RetirementPlanner:
         portfolio_depletion_year = None
         net_worth_by_year: Dict[int, float] = {}
         projections = [] if collect_projections else None
+        run_warnings = list(self.model_warnings)
         # Stress level: 0 = normal, 1 = max discretionary cuts
         # (None → planner-level default set via CLI --stress).
         if stress_level is None:
@@ -2660,8 +2721,8 @@ class RetirementPlanner:
             birth_dates["spouse"] = self.scenario.spouse.birth_date
         withdrawal_engine = WithdrawalEngine(
             run_accounts, cost_basis, self.scenario.withdrawal_access_policy,
-            birth_dates, self.start_year)
-        tax_law_registry = TaxLawRegistry()
+            birth_dates, self.start_year, self.contribution_policy, self.rules)
+        tax_law_registry = self.rules
 
         # Monetary policy for convention-aware conversion
         monetary_policy = MonetaryPolicy(
@@ -2779,7 +2840,7 @@ class RetirementPlanner:
                     rollover_done = True
 
             # Get tax law for this year
-            law = tax_law_registry.law_for_year(year)
+            law = tax_law_registry.law_for_year(year, fallback_inflation=inflation_rate)
 
             if stochastic:
                 if primary_age > stochastic_death_age:
@@ -3163,11 +3224,42 @@ class RetirementPlanner:
             tax_options.setdefault("mortgage_interest", monetary_policy.to_nominal_for_tax(monetary_policy.adjust_for_inflation(expense_data.get("mortgage_interest", 0.0), year), year))
             tax_options.setdefault("ca_mortgage_interest", monetary_policy.to_nominal_for_tax(monetary_policy.adjust_for_inflation(expense_data.get("ca_mortgage_interest", 0.0), year), year))
             subsidy_used = 0.0
+            pretax_deduction = hsa_deduction = ira_deduction = 0.0
+            withdrawal_engine.contribution_filing_status = filing_status.value
+            withdrawal_engine.contribution_inflation = inflation_rate
+            # Employer HSA deposits are asset funding, not employee spending or
+            # a second federal deduction. Credit them once, before tax previews.
+            employer_hsa = {"primary": 0.0, "spouse": 0.0}
+            employer_hsa_by_account = {}
+            hsa_service = ContributionPolicy(self.contribution_policy, filing_status.value,
+                                             self.rules, inflation_rate)
+            for owner, facts in self.contribution_policy.get("owners", {}).items():
+                nominal_amount = facts.get("hsa_employer_contribution_by_year", {}).get(year, 0.0)
+                if nominal_amount <= 0:
+                    continue
+                destinations = [a for a in self.accounts.values() if a.account_type == "hsa" and (a.owner or "primary").lower() == owner]
+                if not destinations:
+                    raise ValueError(f"contribution_policy.owners.{owner}: employer HSA deposits require an owned HSA account")
+                decision = hsa_service.limit_for("hsa", owner, year, ages.get(owner, 0),
+                    employer_hsa_contributions_nominal_by_owner=employer_hsa,
+                    ages_by_owner=ages)
+                run_warnings.extend(decision.warnings)
+                if decision.warnings:
+                    continue
+                if nominal_amount > decision.allowed_additional_nominal + 0.01:
+                    raise ValueError(f"contribution_policy.owners.{owner}: employer HSA deposit exceeds eligible annual limit for {year}")
+                destination = sorted(destinations, key=lambda a: (a.contribution_priority or 999999, a.id))[0]
+                employer_hsa[owner] = nominal_amount
+                active_amount = monetary_policy.from_nominal_after_tax(nominal_amount, year)
+                balances[destination.id] += active_amount
+                employer_hsa_by_account[destination.id] = active_amount
+            withdrawal_engine.employer_hsa_contributions = employer_hsa
+            employer_hsa_ca = monetary_policy.from_nominal_after_tax(sum(employer_hsa.values()), year)
             for _ in range(40):
                 old_tax = taxes
                 contribution_basis = dict(cost_basis.basis_by_account)
                 contribution_access = withdrawal_engine.access.snapshot()
-                preview = withdrawal_engine.contribute(dict(balances), max(0.0, annual_income - annual_expenses + subsidy_used - taxes), year, active_owners, ages, wages_active, cap_factor) if active_owners else {}
+                preview = withdrawal_engine.contribute(dict(balances), max(0.0, annual_income - annual_expenses + subsidy_used - taxes), year, active_owners, ages, wages_active, cap_factor, monetary_policy.to_nominal_for_tax(trial_magi + ira_deduction, year))
                 cost_basis.basis_by_account.clear()
                 cost_basis.basis_by_account.update(contribution_basis)
                 withdrawal_engine.access.restore(contribution_access)
@@ -3177,7 +3269,8 @@ class RetirementPlanner:
                         return total
                     uncapped = total / (1 + a.employer_match)
                     return max(uncapped, total - a.employer_match * a.employer_match_limit) if a.employer_match_limit > 0 else uncapped
-                pretax_deduction = sum(employee_amount(aid, total) for aid, total in preview.items() if self.accounts[aid].tax_treatment == "pre_tax" and self.accounts[aid].account_type in {"401k", "trad_401k"})
+                ira_deduction = sum(withdrawal_engine.last_contribution_deductions.values())
+                pretax_deduction = sum(employee_amount(aid, total) for aid, total in preview.items() if self.accounts[aid].tax_treatment == "pre_tax" and self.accounts[aid].account_type in {"401k", "trad_401k"}) + ira_deduction
                 hsa_deduction = sum(employee_amount(aid, total) for aid, total in preview.items() if self.accounts[aid].account_type == "hsa")
                 trial_balances = dict(balances)
                 basis_snapshot = dict(cost_basis.basis_by_account)
@@ -3298,7 +3391,7 @@ class RetirementPlanner:
                     years_from_base=years_from_base,
                     num_children=num_children,
                     wages_by_owner=wages_for_tax,
-                    **{**tax_options, "ca_income_adjustment": tax_options.get("ca_income_adjustment", 0.0) + monetary_policy.to_nominal_for_tax(hsa_deduction - taxable_ss, year)})
+                    **{**tax_options, "ca_income_adjustment": tax_options.get("ca_income_adjustment", 0.0) + monetary_policy.to_nominal_for_tax(hsa_deduction + employer_hsa_ca - taxable_ss, year)})
                 # Convert tax back to the active convention (NIIT is already
                 # included in calculate_taxes() via tax_law)
                 taxes = monetary_policy.from_nominal_after_tax(
@@ -3316,6 +3409,7 @@ class RetirementPlanner:
                     break
                 trial_needed = new_needed
 
+            run_warnings.extend(withdrawal_engine.last_contribution_warnings)
             if not converged:
                 # Safety net (marginal rates < 100% make this rare):
                 # damped average of the last two iterates.
@@ -3383,9 +3477,9 @@ class RetirementPlanner:
             contribs = {}
             available_savings = max(0.0, annual_income - expenses_after_subsidy - taxes)
             if available_savings > 0:
-                if active_owners:
-                    contribs = withdrawal_engine.contribute(balances, available_savings, year, active_owners, ages, wages_active, cap_factor)
-                    total_contributions += sum(contribs.values())
+                contribs = withdrawal_engine.contribute(balances, available_savings, year, active_owners, ages, wages_active, cap_factor, monetary_policy.to_nominal_for_tax(trial_magi + ira_deduction, year))
+                total_contributions += sum(contribs.values())
+                run_warnings.extend(withdrawal_engine.last_contribution_warnings)
                 employee_spent = sum(employee_amount(aid, total) for aid, total in contribs.items())
                 leftover = max(0.0, available_savings - employee_spent)
                 if leftover:
@@ -3454,6 +3548,9 @@ class RetirementPlanner:
                     "capital_gain_distributions_nominal": monetary_policy.to_nominal_for_tax(investment_capital_gains, year),
                     "magi_nominal": magi,
                     "input_readiness": self.input_readiness,
+                    "rule_assumptions": self.rules.describe_year(year, fallback_inflation=inflation_rate),
+                    "contribution_deductions": dict(withdrawal_engine.last_contribution_deductions),
+                    "employer_hsa_contributions": dict(employer_hsa_by_account),
                     "net_cash_flow": annual_income - annual_expenses - taxes + subsidy_used,
                     "account_balances": dict(balances),
                     "taxable_cash_opening": taxable_cash_opening,
@@ -3470,7 +3567,7 @@ class RetirementPlanner:
                     "estate_value_before_tax": net_worth if snap.estate_event else None,
                     "net_worth_after_estate": net_worth - year_estate_tax if snap.estate_event else None,
                     "approximations": [],
-                    "model_warnings": list(self.model_warnings),
+                    "model_warnings": list(dict.fromkeys(run_warnings)),
                     "expenses": annual_expenses + funded_expenses,
                     "cash_expenses": annual_expenses,
                     "funded_expenses": funded_expenses,
@@ -3533,7 +3630,7 @@ class RetirementPlanner:
         return {
             "success": success,
             "outcomes": goal_outcomes,
-            "model_warnings": list(self.model_warnings),
+            "model_warnings": list(dict.fromkeys(run_warnings)),
             "input_readiness": self.input_readiness,
             "years_with_spending_cuts": years_with_spending_cuts,
             "maximum_spending_cut_fraction": maximum_spending_cut_fraction,

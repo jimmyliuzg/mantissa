@@ -262,6 +262,16 @@ function normalizeResult(value: unknown): RunResult {
 				throw new Error(`result.inputReadiness.items[${i}] is invalid.`);
 		});
 	}
+	if (result.runMetadata !== undefined && result.runMetadata !== null) {
+		const metadata = record(result.runMetadata, "result.runMetadata");
+		if (
+			metadata.schema_version !== 1 ||
+			typeof metadata.model_version !== "string" ||
+			!Number.isSafeInteger(metadata.effective_seed) ||
+			Number(metadata.effective_seed) < 0
+		)
+			throw new Error("Snapshot model metadata or replay seed is invalid.");
+	}
 	finiteNumber(result.runtimeMs, "result.runtimeMs");
 	finiteNumber(result.generatedAt, "result.generatedAt");
 	return {

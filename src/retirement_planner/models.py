@@ -509,6 +509,8 @@ class Scenario:
     balance_date: Optional[date] = None
     tax_inputs: Dict[int, dict] = field(default_factory=dict)
     withdrawal_access_policy: str = "penalty_free"
+    policy: Optional[dict] = None  # Versioned rules forecasts, independent of published catalog.
+    contribution_policy: dict = field(default_factory=dict)  # Explicit owner eligibility/deduction facts.
 
     def to_dict(self) -> dict:
         """Convert to JSON-serializable dict."""
@@ -536,6 +538,8 @@ class Scenario:
             "state": self.state,
             "surplus_account_id": self.surplus_account_id,
             "survivor_expense_ratio": self.survivor_expense_ratio,
+            "policy": self.policy,
+            "contribution_policy": self.contribution_policy,
         }
     
     def to_json(self) -> str:

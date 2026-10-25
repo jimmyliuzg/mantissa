@@ -58,7 +58,7 @@ _SCHEMA_KEYS = {
     "age_events", "dependents",
     "social_security", "glidepath", "withdrawal_strategy", "withdrawal_rate",
     "guardrail_floor_pct", "guardrail_ceiling_pct", "legacy_goal", "state",
-    "family_size", "savings_order", "surplus_account_id", "monetary_convention", "stress_level",
+    "family_size", "policy", "contribution_policy", "savings_order", "surplus_account_id", "monetary_convention", "stress_level",
     "input_metadata", "survivor_expense_ratio", "_comment", "start_year", "balance_date", "tax_inputs", "withdrawal_access_policy",
 }
 
@@ -96,6 +96,15 @@ def validate_config(config: dict, strict: bool = False) -> ValidationResult:
     if not isinstance(config, dict):
         _issue(result, "$", "configuration must be an object", code="type")
         return result
+
+    from ..rules import validate_policy
+    from ..contributions import validate_contribution_policy
+    for policy_key, validator in (("policy", validate_policy), ("contribution_policy", validate_contribution_policy)):
+        if policy_key in config:
+            try:
+                validator(config[policy_key])
+            except (ValueError, TypeError) as exc:
+                _issue(result, "$." + policy_key, str(exc), code="policy")
 
     version = config.get("schema_version", CURRENT_SCHEMA_VERSION)
     if not isinstance(version, int):
@@ -218,6 +227,10 @@ def validate_config(config: dict, strict: bool = False) -> ValidationResult:
             _number(result, cohort.get("amount"), cp + ".amount", 0)
         if (account.get("roth_contribution_basis", 0) or cohorts) and account.get("type") != "roth_ira":
             _issue(result, path, "declared Roth IRA principal requires type roth_ira")
+
+    for index, account in enumerate(config.get("accounts", [])):
+        if isinstance(account, dict) and account.get("employer_match", 0) and account.get("type") not in {"401k", "trad_401k", "roth_401k"}:
+            _issue(result, f"$.accounts[{index}].employer_match", "requires a workplace retirement account; declare HSA employer deposits in contribution_policy")
 
     destination_id = config.get("surplus_account_id")
     if destination_id is not None:
@@ -472,6 +485,8 @@ def schema_dict() -> dict:
             "balance_date": {"type":"string", "format":"date"},
             "tax_inputs": {"type":"object"},
             "input_metadata": {"type":"object"},
+            "policy": {"type":"object", "description":"Versioned future rule forecasts; never changes published packs."},
+            "contribution_policy": {"type":"object", "description":"Declared contribution eligibility and IRA deduction treatment by owner."},
             "surplus_account_id": {"type":["string", "null"], "description":"Liquid unrestricted taxable account receiving post-contribution cash surplus."},
         },
         "required": ["primary"],

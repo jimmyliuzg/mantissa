@@ -303,9 +303,9 @@ Key modules include:
 ## Current Development Priorities
 
 1. Unify annual and monthly simulation components into one authoritative event loop.
-2. Enforce deterministic random-number handling across Monte Carlo paths.
+2. Preserve reproducibility contracts as simulation components evolve.
 3. Strengthen tax-lot, RMD, guardrail, household coverage, and survivor-status correctness.
-4. Centralize tax-law, benefits, and assumption versioning by plan year.
+4. Extend the versioned rules catalog to remaining benefits and assumptions.
 5. Improve historical return data provenance and asset-class coverage.
 6. Expand integration tests, audit ledgers, and report-level assumption disclosures.
 
@@ -361,3 +361,21 @@ The browser keeps a total-savings shortcut, with optional account breakdown, tax
 ### Separate goal outcomes
 
 Results now distinguish planned spending without cuts, funded adjusted budgets, account-access gaps and after-estate legacy attainment. The historical combined success metric remains available with an explicit compatibility label. See [goal outcome definitions](docs/goal-outcomes.md) for reporting thresholds, terminal estate estimates and old-snapshot behavior.
+
+### Contribution correctness and future rules
+
+Automatic IRA and HSA funding now checks annual limits, owner eligibility and
+shared contribution pools. Traditional IRA funding requires supported deductible
+treatment; nondeductible IRA basis is not modeled. Unknown eligibility produces
+warnings and optional refinement prompts.
+
+Annual tax and contribution inputs live in versioned JSON packs. Scenarios can
+forecast indexed limits or apply dated tax and contribution overrides, including
+temporary changes that revert after an end year. Results distinguish catalog
+baselines, published fields, projections and user assumptions. See
+[rules and policy forecasts](docs/rules-and-policy.md) and the
+[example scenario](examples/policy_forecast.json).
+
+Gaussian and historical Monte Carlo runs retain a replay seed, resolved-input
+fingerprint, model version and rule provenance in exports and browser snapshots.
+See [reproducibility](docs/reproducibility.md) for the replay contract.

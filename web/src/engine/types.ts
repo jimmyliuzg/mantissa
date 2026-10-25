@@ -101,7 +101,35 @@ export interface GoalOutcomes {
   first_funding_shortfall_cause_counts: Record<string, number>;
 }
 
+export interface RunMetadata {
+	schema_version: 1;
+	model_version: string;
+	effective_seed: number;
+	method: string;
+	scenario: string;
+	simulations: number;
+	mortality_mode: string;
+	config_fingerprint?: string;
+	fingerprint_kind?: string;
+	rules_provenance?: {
+		catalog_version?: string;
+		packs?: Record<string, unknown>;
+		effective_years?: Record<
+			string,
+			{
+				tax?: { status?: string; base_year?: number; source_status?: string };
+				contributions?: {
+					status?: string;
+					fields?: Record<string, { status?: string; base_year?: number }>;
+				};
+				fallback_inflation?: number;
+			}
+		>;
+	};
+}
+
 export interface RunResult {
+  runMetadata?: RunMetadata;
   kpis: Kpis;
   outcomes?: GoalOutcomes;
   cashFlow: CashFlowRow[];

@@ -10,6 +10,7 @@ import { decodeSnapshot, encodeSnapshot } from "../src/lib/share-codec";
 
 const config = { name: "Synthetic lifecycle plan", primary: { name: "Example", birth_date: "1980-01-01", retirement_date: "2045-01-01", longevity_age: 95 }, spouse: null, economic: {}, accounts: [{id: "cash", name: "Cash", type: "checking", tax_treatment: "taxable", balance: 250001}], income_streams: [], expenses: [] };
 const result: RunResult = {
+  runMetadata: {schema_version: 1, model_version: "0.2.0", effective_seed: 314159, method: "gaussian", scenario: "mean", simulations: 1000, mortality_mode: "deterministic", rules_provenance: {catalog_version: "1", effective_years: {"2030": {tax: {status: "user"}, contributions: {status: "partial_published"}}}}},
   kpis: { successRate: .95, medianFinalNetWorth: 500000, p10FinalNetWorth: 100000, p90FinalNetWorth: 1000000, medianLifetimeTaxes: 50000, outOfSavingsRate: .05, numSimulations: 1000 },
   cashFlow: [{year: 2026, primaryAge: 46, spouseAge: null, income: 100000, expenses: 60000, taxes: 10000, netWorth: 280001, netCashFlow: 30000}],
   mc: {percentiles: [{percentile: 50, value: 500000}], yearlyPercentiles: [], method: "gaussian"},
@@ -59,6 +60,9 @@ describe("mounted viewer lifecycle", () => {
     expect(mocks.bootstrap).not.toHaveBeenCalled(); expect(mocks.run).not.toHaveBeenCalled();
     expect(root.textContent).toContain("Synthetic coverage warning");
     expect(root.textContent).toContain("Planned spending met without cuts");
+    expect(root.textContent).toContain("seed 314159");
+    expect(root.textContent).toContain("User forecast");
+    expect(root.textContent).toContain("Published + projected");
     await editName("Updated synthetic plan"); await settle();
     expect(mocks.bootstrap).toHaveBeenCalledTimes(1); expect(mocks.run).toHaveBeenCalledTimes(1);
     expect(mocks.run).toHaveBeenLastCalledWith(expect.objectContaining({name: "Updated synthetic plan"}), {simulations: 1000, method: "gaussian", seed: 314159});

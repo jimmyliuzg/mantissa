@@ -53,6 +53,22 @@ const SAMPLE_CONFIG: ShareableConfig = {
 };
 
 const SAMPLE_RESULT: RunResult = {
+  runMetadata: {
+    schema_version: 1,
+    model_version: "0.1.0",
+    effective_seed: 42,
+    method: "gaussian",
+    scenario: "baseline",
+    simulations: 1000,
+    mortality_mode: "fixed",
+    config_fingerprint: "a".repeat(64),
+    rules_provenance: {
+      catalog_version: "1",
+      effective_years: {
+        "2030": { tax: { status: "user" }, contributions: { status: "projected" } },
+      },
+    },
+  },
 	kpis: {
 		successRate: 0.965,
 		medianFinalNetWorth: 11_600_000,
@@ -156,6 +172,7 @@ describe("encodeSnapshot / decodeSnapshot", () => {
 		expect(back.result.outcomes).toEqual(SAMPLE_RESULT.outcomes);
 		expect(back.result.warnings).toEqual(SAMPLE_RESULT.warnings);
 		expect(back.result.inputReadiness).toEqual(SAMPLE_RESULT.inputReadiness);
+		expect(back.result.runMetadata).toEqual(SAMPLE_RESULT.runMetadata);
 	});
 
 	it("snapshot is larger than config-only for the same config", () => {
@@ -255,7 +272,7 @@ describe("untrusted sharing boundary", () => {
 		);
 	});
 	it("normalizes original s1 links missing later result fields", () => {
-		const { warnings, inputReadiness, outcomes, ...oldResult } = SAMPLE_RESULT;
+		const { warnings, inputReadiness, outcomes, runMetadata, ...oldResult } = SAMPLE_RESULT;
 		const { yearlyPercentiles, ...oldMc } = oldResult.mc;
 		const back = decodeSnapshot(
 			uncheckedHash(
@@ -266,9 +283,31 @@ describe("untrusted sharing boundary", () => {
 		expect(back.result.warnings).toEqual([]);
 		expect(back.result.mc.yearlyPercentiles).toEqual([]);
 		expect(back.result.outcomes).toBeUndefined();
+		expect(back.result.runMetadata).toBeUndefined();
 		expect(back.schemaVersion).toBe(1);
 		expect(decodeSnapshot(encodeSnapshot(back)).schemaVersion).toBe(2);
 	});
+  it("rejects replay metadata with a seed that cannot round-trip exactly", () => {
+    for (const effective_seed of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(() =>
+        decodeSnapshot(
+          uncheckedHash(
+            {
+              ...SAMPLE_CONFIG,
+              result: {
+                ...SAMPLE_RESULT,
+                runMetadata: {
+                  ...SAMPLE_RESULT.runMetadata,
+                  effective_seed,
+                },
+              },
+            },
+            "s2-",
+          ),
+        ),
+      ).toThrow(/metadata or replay seed/);
+    }
+  });
 	it("rejects a malformed snapshot result and incompatible schema", () => {
 		expect(() =>
 			decodeSnapshot(

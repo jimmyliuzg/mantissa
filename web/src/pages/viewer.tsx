@@ -501,6 +501,46 @@ function Ready({
 					</details>
 				</section>
 			)}
+      {result.runMetadata && (
+        <section class="panel">
+          <h2>Model rules and replay</h2>
+          <p class="muted small">
+            Model {result.runMetadata.model_version} · seed {result.runMetadata.effective_seed}.
+            Published values, projected future values and user forecasts are tracked separately. A
+            catalog baseline also includes the model’s documented approximations.
+          </p>
+          <details>
+            <summary>Effective rules by year</summary>
+            <p class="muted small">
+              Catalog {result.runMetadata.rules_provenance?.catalog_version ?? "unavailable"}.
+              Custom forecasts are assumptions, not enacted law. Full rule values remain in the
+              native projection/export.
+            </p>
+            <div class="table-wrap">
+              <table class="review-data-table">
+                <thead>
+                  <tr>
+                    <th>Year</th>
+                    <th>Tax rules</th>
+                    <th>Contribution rules</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(result.runMetadata.rules_provenance?.effective_years ?? {}).map(
+                    ([year, rules]) => (
+                      <tr key={year}>
+                        <th>{year}</th>
+                        <td>{ruleStatusLabel(rules.tax?.status)}</td>
+                        <td>{ruleStatusLabel(rules.contributions?.status)}</td>
+                      </tr>
+                    ),
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        </section>
+      )}
 			<OutcomeSummary result={result} />
 			<SpendingDetail rows={result.cashFlow} outcomes={result.outcomes} />
 			<section class="panel">
@@ -547,6 +587,20 @@ function Ready({
 		</>
 	);
 }
+function ruleStatusLabel(status?: string) {
+  return (
+    (
+      {
+        catalog_baseline: "Catalog baseline",
+        published: "Published",
+        partial_published: "Published + projected",
+        projected: "Projected",
+        user: "User forecast",
+      } as Record<string, string>
+    )[status ?? ""] ?? "Unavailable"
+  );
+}
+
 function humanPath(path: string) {
 	return path
 		.replace(

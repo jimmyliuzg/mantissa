@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "year": 2028,
+  "tax_fields": {
+    "federal_bracket_rates": {
+      "value": [
+        0.1,
+        0.12,
+        0.22,
+        0.24,
+        0.32,
+        0.35,
+        0.37
+      ],
+      "status": "published",
+      "source": "Public Law 119-21, section 70101: https://www.congress.gov/119/plaws/publ21/PLAW-119publ21.pdf",
+      "base_year": 2028
+    }
+  },
+  "contributions": {
+    "hsa_catch_up_55_plus": {
+      "value": 1000,
+      "status": "published",
+      "source": "IRS Publication 969 (2025), https://www.irs.gov/publications/p969; IRC \u00a7223(b)(3)",
+      "base_year": 2028,
+      "index": false
+    }
+  }
+}

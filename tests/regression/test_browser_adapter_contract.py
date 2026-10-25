@@ -6,7 +6,7 @@ from pathlib import Path
 
 def test_browser_result_preserves_model_warnings():
     source = (Path(__file__).resolve().parents[2] / "web/src/engine/pyodide.ts").read_text()
-    code = source.split("    const code = `", 1)[1].split("\n`;", 1)[0]
+    code = source.split("const code = `", 1)[1].split("\n`;", 1)[0]
     config = {
         "start_year": 2026, "balance_date": "2026-10-01",
         "primary": {"name": "A", "birth_date": "1990-01-01",
@@ -35,7 +35,7 @@ def test_browser_result_preserves_model_warnings():
 
 def test_total_only_browser_result_does_not_imply_account_access_validation():
     source = (Path(__file__).resolve().parents[2] / "web/src/engine/pyodide.ts").read_text()
-    code = source.split("    const code = `", 1)[1].split("\n`;", 1)[0]
+    code = source.split("const code = `", 1)[1].split("\n`;", 1)[0]
     config = json.loads((Path(__file__).parents[1] / "fixtures/wizard-contract.json").read_text())[0]['config']
     namespace = {"MANTISSA_CONFIG": config, "MANTISSA_SIMS": 1,
                  "MANTISSA_METHOD": "gaussian", "MANTISSA_SEED": 42}
@@ -55,7 +55,7 @@ def test_browser_outcomes_match_native_engine_and_keep_unassessed_access_null():
     from retirement_planner import RetirementPlanner, MonteCarloEngine
     from tempfile import NamedTemporaryFile
     source = (Path(__file__).resolve().parents[2] / "web/src/engine/pyodide.ts").read_text()
-    code = source.split("    const code = `", 1)[1].split("\n`;", 1)[0]
+    code = source.split("const code = `", 1)[1].split("\n`;", 1)[0]
     config={"start_year":2030,"primary":{"name":"Example","birth_date":"1990-01-01","retirement_date":"2030-01-01","longevity_age":40},
             "accounts":[{"id":"cash","name":"Cash","type":"checking","balance":100_000,"growth_rate":0}],
             "withdrawal_access_policy":"unrestricted","legacy_goal":200_000}
@@ -67,6 +67,9 @@ def test_browser_outcomes_match_native_engine_and_keep_unassessed_access_null():
         json.dump(config,f);f.flush()
         planner=RetirementPlanner.from_config(f.name)
     native=MonteCarloEngine(planner).run(num_simulations=1,seed=42)
+    assert browser['runMetadata'] == native['run_metadata']
+    assert browser['runMetadata']['effective_seed'] == 42
+    assert browser['runMetadata']['config_fingerprint'] == planner.config_fingerprint()
     assert browser['outcomes'] == native['outcomes']
     assert browser['outcomes']['planned_spending_met_rate'] == 1
     assert browser['outcomes']['legacy_target_met_rate'] == 0

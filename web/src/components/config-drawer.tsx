@@ -13,6 +13,7 @@ import {
 	type ConfigObject,
 } from "../lib/guided-editor";
 import type { PlanStore } from "../state/plan-store";
+import { RuleControls } from "./rule-controls";
 
 interface FieldDef {
 	path: string;
@@ -172,6 +173,7 @@ export function ConfigDrawer({ store }: { store: PlanStore }) {
 			</details>
 			<Accounts store={store} />
 			<Savings store={store} />
+			<RuleControls store={store} />
 			<CashFlows store={store} kind="income_streams" />
 			<CashFlows store={store} kind="expenses" />
 			<details>

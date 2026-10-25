@@ -168,74 +168,28 @@ class ContributionLimits:
     # Backdoor Roth (no income limit for conversions, but pro-rata applies)
     roth_ira_income_limit_mfj: int = 240_000  # 2025
 
-
-# 2024 limits
-_LIMITS_2024 = ContributionLimits(
-    year=2024,
-    elec_deferral_limit=23_000,
-    catch_up_50_plus=7_500,
-    super_catch_up_60_63=0,  # Not yet in effect
-    ira_limit=7_000,
-    ira_catch_up_50_plus=1_000,
-    hsa_individual=4_150,
-    hsa_family=8_300,
-    hsa_catch_up_55_plus=1_000,
-    roth_ira_income_limit_mfj=230_000,
-)
-
-# 2025 limits
-_LIMITS_2025 = ContributionLimits(
-    year=2025,
-    elec_deferral_limit=23_500,
-    catch_up_50_plus=7_500,
-    super_catch_up_60_63=11_250,
-    ira_limit=7_000,
-    ira_catch_up_50_plus=1_000,
-    hsa_individual=4_300,
-    hsa_family=8_550,
-    hsa_catch_up_55_plus=1_000,
-    roth_ira_income_limit_mfj=240_000,
-)
-
-_LIMITS_2026 = ContributionLimits(
-    year=2026, elec_deferral_limit=24_500, catch_up_50_plus=8_000,
-    super_catch_up_60_63=11_250, ira_limit=7_500, ira_catch_up_50_plus=1_100,
-    hsa_individual=4_400, hsa_family=8_750, hsa_catch_up_55_plus=1_000,
-    roth_ira_income_limit_mfj=252_000,
-)
-
-_LIMITS_BY_YEAR = {
-    2024: _LIMITS_2024,
-    2025: _LIMITS_2025,
-    2026: _LIMITS_2026,
-}
+    # IRA deduction and Roth contribution MAGI phase-out ranges. The ranges
+    # are separate because the deduction rules depend on plan coverage.
+    ira_deduction_mfj_start: int = 129_000
+    ira_deduction_mfj_end: int = 149_000
+    ira_deduction_single_start: int = 81_000
+    ira_deduction_single_end: int = 91_000
+    ira_deduction_mfs_start: int = 0
+    ira_deduction_mfs_end: int = 10_000
+    ira_deduction_spousal_mfj_start: int = 242_000
+    ira_deduction_spousal_mfj_end: int = 252_000
+    roth_ira_mfj_start: int = 242_000
+    roth_ira_mfj_end: int = 252_000
+    roth_ira_single_start: int = 153_000
+    roth_ira_single_end: int = 168_000
+    roth_ira_mfs_start: int = 0
+    roth_ira_mfs_end: int = 10_000
 
 
 def get_contribution_limits(year: int, fallback_inflation: float = 0.025) -> ContributionLimits:
-    """Get IRS contribution limits for a given year.
-
-    Uses known limits if available, otherwise inflates from nearest year.
-    """
-    if year in _LIMITS_BY_YEAR:
-        return _LIMITS_BY_YEAR[year]
-
-    # Inflate from nearest known year
-    base_year = max(y for y in _LIMITS_BY_YEAR if y <= year)
-    base = _LIMITS_BY_YEAR[base_year]
-    factor = (1 + fallback_inflation) ** (year - base_year)
-
-    return ContributionLimits(
-        year=year,
-        elec_deferral_limit=int(base.elec_deferral_limit * factor),
-        catch_up_50_plus=int(base.catch_up_50_plus * factor),
-        super_catch_up_60_63=int(base.super_catch_up_60_63 * factor),
-        ira_limit=int(base.ira_limit * factor),
-        ira_catch_up_50_plus=int(base.ira_catch_up_50_plus * factor),
-        hsa_individual=int(base.hsa_individual * factor),
-        hsa_family=int(base.hsa_family * factor),
-        hsa_catch_up_55_plus=int(base.hsa_catch_up_55_plus * factor),
-        roth_ira_income_limit_mfj=int(base.roth_ira_income_limit_mfj * factor),
-    )
+    """Return published or projected contribution limits for a tax year."""
+    from .rules import RuleRegistry
+    return RuleRegistry().contributions_for_year(year, fallback_inflation)
 
 
 def calculate_401k_limit(
@@ -263,6 +217,7 @@ def calculate_ira_limit(
     magi: float,
     filing_status: str = "MFJ",
     has_workplace_plan: bool = False,
+    spouse_has_workplace_plan: bool = False,
 ) -> int:
     """Calculate deductible IRA contribution limit.
 
@@ -275,21 +230,49 @@ def calculate_ira_limit(
     if age >= 50:
         base += limits.ira_catch_up_50_plus
 
-    # Phase-out for high earners (simplified)
+    # Deduction phase-out follows published ranges. A working spouse's plan
+    # only affects the deduction when the contributing spouse is not covered.
     if has_workplace_plan:
-        if filing_status == "MFJ":
-            phase_out_start = 126_000
-            phase_out_end = 146_000
+        key = filing_status.upper()
+        if key in {"MFJ", "QSS"}:
+            prefix = "ira_deduction_mfj"
+        elif key == "MFS":
+            prefix = "ira_deduction_mfs"
         else:
-            phase_out_start = 79_000
-            phase_out_end = 94_000
+            prefix = "ira_deduction_single"
+    elif spouse_has_workplace_plan and filing_status.upper() in {"MFJ", "QSS"}:
+        prefix = "ira_deduction_spousal_mfj"
+    else:
+        return base
 
-        if magi > phase_out_end:
-            return 0
-        elif magi > phase_out_start:
-            fraction = (phase_out_end - magi) / (phase_out_end - phase_out_start)
-            return int(base * max(0, fraction))
+    phase_out_start = getattr(limits, f"{prefix}_start")
+    phase_out_end = getattr(limits, f"{prefix}_end")
+    if magi >= phase_out_end:
+        return 0
+    if magi > phase_out_start:
+        fraction = (phase_out_end - magi) / (phase_out_end - phase_out_start)
+        return int(base * max(0, fraction))
 
+    return base
+
+
+def calculate_roth_ira_limit(
+    age: int,
+    year: int,
+    magi: float,
+    filing_status: str = "MFJ",
+) -> int:
+    """Calculate the annual Roth IRA limit after the published MAGI phase-out."""
+    limits = get_contribution_limits(year)
+    base = limits.ira_limit + (limits.ira_catch_up_50_plus if age >= 50 else 0)
+    status = filing_status.upper()
+    prefix = "roth_ira_mfj" if status in {"MFJ", "QSS"} else "roth_ira_mfs" if status == "MFS" else "roth_ira_single"
+    start = getattr(limits, f"{prefix}_start")
+    end = getattr(limits, f"{prefix}_end")
+    if magi >= end:
+        return 0
+    if magi > start:
+        return int(base * max(0.0, (end - magi) / (end - start)))
     return base
 
 

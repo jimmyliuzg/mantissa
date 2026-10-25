@@ -4,7 +4,7 @@ from retirement_planner.sim_integration import (
     determine_annual_filing_status, compute_survivor_ss_benefit,
     GBMParams, simulate_gbm_path, simulate_rsu_value,
     get_contribution_limits,
-    calculate_401k_limit, calculate_ira_limit, calculate_hsa_limit,
+    calculate_401k_limit, calculate_ira_limit, calculate_roth_ira_limit, calculate_hsa_limit,
 )
 
 
@@ -154,6 +154,15 @@ class TestContributionLimits:
         limit = calculate_ira_limit(40, 2025, magi=150_000,
                                      filing_status="MFJ", has_workplace_plan=True)
         assert limit == 0  # fully phased out
+
+    def test_ira_deduction_uses_year_and_plan_coverage(self):
+        assert calculate_ira_limit(40, 2026, 80_000, "SINGLE", True) == 7_500
+        assert calculate_ira_limit(40, 2026, 86_000, "SINGLE", True) == 3_750
+        assert calculate_ira_limit(40, 2026, 247_000, "MFJ", False, True) == 3_750
+
+    def test_roth_phaseout_uses_year_and_status(self):
+        assert calculate_roth_ira_limit(40, 2026, 160_000, "SINGLE") == 4_000
+        assert calculate_roth_ira_limit(40, 2026, 170_000, "SINGLE") == 0
 
     def test_hsa_family(self):
         assert calculate_hsa_limit(40, 2025, "family") == 8_550

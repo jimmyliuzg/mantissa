@@ -1,0 +1,807 @@
+{
+  "contributions": {
+    "catch_up_50_plus": {
+      "base_year": 2025,
+      "index": true,
+      "source": "IRS Notice 2024-80, https://www.irs.gov/pub/irs-drop/n-24-80.pdf",
+      "status": "published",
+      "value": 7500
+    },
+    "elec_deferral_limit": {
+      "base_year": 2025,
+      "index": true,
+      "source": "IRS Notice 2024-80, https://www.irs.gov/pub/irs-drop/n-24-80.pdf",
+      "status": "published",
+      "value": 23500
+    },
+    "hsa_catch_up_55_plus": {
+      "base_year": 2025,
+      "index": false,
+      "source": "IRS Notice 2024-80, https://www.irs.gov/pub/irs-drop/n-24-80.pdf",
+      "status": "published",
+      "value": 1000
+    },
+    "hsa_family": {
+      "base_year": 2025,
+      "index": true,
+      "source": "IRS Notice 2024-80, https://www.irs.gov/pub/irs-drop/n-24-80.pdf",
+      "status": "published",
+      "value": 8550
+    },
+    "hsa_individual": {
+      "base_year": 2025,
+      "index": true,
+      "source": "IRS Notice 2024-80, https://www.irs.gov/pub/irs-drop/n-24-80.pdf",
+      "status": "published",
+      "value": 4300
+    },
+    "ira_catch_up_50_plus": {
+      "base_year": 2025,
+      "index": true,
+      "source": "IRS Notice 2024-80, https://www.irs.gov/pub/irs-drop/n-24-80.pdf",
+      "status": "published",
+      "value": 1000
+    },
+    "ira_deduction_mfj_end": {
+      "base_year": 2025,
+      "index": true,
+      "source": "IRS Publication 590-A (2025) and IRS annual inflation-adjustment guidance, https://www.irs.gov/publications/p590a; https://www.irs.gov/newsroom/inflation-adjusted-tax-items-by-tax-year",
+      "status": "published",
+      "value": 146000
+    },
+    "ira_deduction_mfj_start": {
+      "base_year": 2025,
+      "index": true,
+      "source": "IRS Publication 590-A (2025) and IRS annual inflation-adjustment guidance, https://www.irs.gov/publications/p590a; https://www.irs.gov/newsroom/inflation-adjusted-tax-items-by-tax-year",
+      "status": "published",
+      "value": 126000
+    },
+    "ira_deduction_mfs_end": {
+      "base_year": 2025,
+      "index": false,
+      "source": "IRS Publication 590-A (2025) and IRS annual inflation-adjustment guidance, https://www.irs.gov/publications/p590a; https://www.irs.gov/newsroom/inflation-adjusted-tax-items-by-tax-year",
+      "status": "published",
+      "value": 10000
+    },
+    "ira_deduction_mfs_start": {
+      "base_year": 2025,
+      "index": false,
+      "source": "IRS Publication 590-A (2025) and IRS annual inflation-adjustment guidance, https://www.irs.gov/publications/p590a; https://www.irs.gov/newsroom/inflation-adjusted-tax-items-by-tax-year",
+      "status": "published",
+      "value": 0
+    },
+    "ira_deduction_single_end": {
+      "base_year": 2025,
+      "index": true,
+      "source": "IRS Publication 590-A (2025) and IRS annual inflation-adjustment guidance, https://www.irs.gov/publications/p590a; https://www.irs.gov/newsroom/inflation-adjusted-tax-items-by-tax-year",
+      "status": "published",
+      "value": 89000
+    },
+    "ira_deduction_single_start": {
+      "base_year": 2025,
+      "index": true,
+      "source": "IRS Publication 590-A (2025) and IRS annual inflation-adjustment guidance, https://www.irs.gov/publications/p590a; https://www.irs.gov/newsroom/inflation-adjusted-tax-items-by-tax-year",
+      "status": "published",
+      "value": 79000
+    },
+    "ira_deduction_spousal_mfj_end": {
+      "base_year": 2025,
+      "index": true,
+      "source": "IRS Publication 590-A (2025) and IRS annual inflation-adjustment guidance, https://www.irs.gov/publications/p590a; https://www.irs.gov/newsroom/inflation-adjusted-tax-items-by-tax-year",
+      "status": "published",
+      "value": 246000
+    },
+    "ira_deduction_spousal_mfj_start": {
+      "base_year": 2025,
+      "index": true,
+      "source": "IRS Publication 590-A (2025) and IRS annual inflation-adjustment guidance, https://www.irs.gov/publications/p590a; https://www.irs.gov/newsroom/inflation-adjusted-tax-items-by-tax-year",
+      "status": "published",
+      "value": 236000
+    },
+    "ira_limit": {
+      "base_year": 2025,
+      "index": true,
+      "source": "IRS Notice 2024-80, https://www.irs.gov/pub/irs-drop/n-24-80.pdf",
+      "status": "published",
+      "value": 7000
+    },
+    "roth_ira_income_limit_mfj": {
+      "base_year": 2025,
+      "index": true,
+      "source": "IRS Notice 2024-80, https://www.irs.gov/pub/irs-drop/n-24-80.pdf",
+      "status": "published",
+      "value": 240000
+    },
+    "roth_ira_mfj_end": {
+      "base_year": 2025,
+      "index": true,
+      "source": "IRS Publication 590-A (2025) and IRS annual inflation-adjustment guidance, https://www.irs.gov/publications/p590a; https://www.irs.gov/newsroom/inflation-adjusted-tax-items-by-tax-year",
+      "status": "published",
+      "value": 246000
+    },
+    "roth_ira_mfj_start": {
+      "base_year": 2025,
+      "index": true,
+      "source": "IRS Publication 590-A (2025) and IRS annual inflation-adjustment guidance, https://www.irs.gov/publications/p590a; https://www.irs.gov/newsroom/inflation-adjusted-tax-items-by-tax-year",
+      "status": "published",
+      "value": 236000
+    },
+    "roth_ira_mfs_end": {
+      "base_year": 2025,
+      "index": false,
+      "source": "IRS Publication 590-A (2025) and IRS annual inflation-adjustment guidance, https://www.irs.gov/publications/p590a; https://www.irs.gov/newsroom/inflation-adjusted-tax-items-by-tax-year",
+      "status": "published",
+      "value": 10000
+    },
+    "roth_ira_mfs_start": {
+      "base_year": 2025,
+      "index": false,
+      "source": "IRS Publication 590-A (2025) and IRS annual inflation-adjustment guidance, https://www.irs.gov/publications/p590a; https://www.irs.gov/newsroom/inflation-adjusted-tax-items-by-tax-year",
+      "status": "published",
+      "value": 0
+    },
+    "roth_ira_single_end": {
+      "base_year": 2025,
+      "index": true,
+      "source": "IRS Publication 590-A (2025) and IRS annual inflation-adjustment guidance, https://www.irs.gov/publications/p590a; https://www.irs.gov/newsroom/inflation-adjusted-tax-items-by-tax-year",
+      "status": "published",
+      "value": 165000
+    },
+    "roth_ira_single_start": {
+      "base_year": 2025,
+      "index": true,
+      "source": "IRS Publication 590-A (2025) and IRS annual inflation-adjustment guidance, https://www.irs.gov/publications/p590a; https://www.irs.gov/newsroom/inflation-adjusted-tax-items-by-tax-year",
+      "status": "published",
+      "value": 150000
+    },
+    "super_catch_up_60_63": {
+      "base_year": 2025,
+      "index": true,
+      "source": "IRS Notice 2024-80, https://www.irs.gov/pub/irs-drop/n-24-80.pdf",
+      "status": "published",
+      "value": 11250
+    }
+  },
+  "schema_version": 1,
+  "tax": {
+    "aca_fpl_cliff_ratio": 4.0,
+    "aca_silver_premiums": {
+      "CA": {
+        "1": 830,
+        "2": 1660,
+        "3": 1870,
+        "4": 2080,
+        "5": 2290
+      },
+      "_default": {
+        "1": 830,
+        "2": 1660,
+        "3": 1870,
+        "4": 2080,
+        "5": 2290
+      }
+    },
+    "aca_tiers": [
+      {
+        "applicable_pct": 0.021,
+        "fpl_ratio": 1.33
+      },
+      {
+        "applicable_pct": 0.03,
+        "fpl_ratio": 1.5
+      },
+      {
+        "applicable_pct": 0.04,
+        "fpl_ratio": 2.0
+      },
+      {
+        "applicable_pct": 0.063,
+        "fpl_ratio": 2.5
+      },
+      {
+        "applicable_pct": 0.081,
+        "fpl_ratio": 3.0
+      },
+      {
+        "applicable_pct": 0.097,
+        "fpl_ratio": 4.0
+      }
+    ],
+    "amt_26_limit": 239100,
+    "amt_exemption": {
+      "hoh": 88100,
+      "mfj": 137000,
+      "mfs": 68500,
+      "qss": 137000,
+      "single": 88100
+    },
+    "amt_phaseout_rate": 0.25,
+    "amt_phaseout_start": {
+      "hoh": 626350,
+      "mfj": 1252700,
+      "mfs": 626350,
+      "qss": 1252700,
+      "single": 626350
+    },
+    "amt_rate": 0.26,
+    "ca_brackets": [
+      {
+        "rate": 0.01,
+        "upper": 22158
+      },
+      {
+        "rate": 0.02,
+        "upper": 52528
+      },
+      {
+        "rate": 0.04,
+        "upper": 82904
+      },
+      {
+        "rate": 0.06,
+        "upper": 115084
+      },
+      {
+        "rate": 0.08,
+        "upper": 145448
+      },
+      {
+        "rate": 0.093,
+        "upper": 742958
+      },
+      {
+        "rate": 0.103,
+        "upper": 891542
+      },
+      {
+        "rate": 0.113,
+        "upper": 1485906
+      },
+      {
+        "rate": 0.123,
+        "upper": "Infinity"
+      }
+    ],
+    "ca_brackets_by_status": {
+      "hoh": [
+        {
+          "rate": 0.01,
+          "upper": 22173
+        },
+        {
+          "rate": 0.02,
+          "upper": 52530
+        },
+        {
+          "rate": 0.04,
+          "upper": 67716
+        },
+        {
+          "rate": 0.06,
+          "upper": 83805
+        },
+        {
+          "rate": 0.08,
+          "upper": 98990
+        },
+        {
+          "rate": 0.093,
+          "upper": 505208
+        },
+        {
+          "rate": 0.103,
+          "upper": 606251
+        },
+        {
+          "rate": 0.113,
+          "upper": 1010417
+        },
+        {
+          "rate": 0.123,
+          "upper": "Infinity"
+        }
+      ],
+      "mfj": [
+        {
+          "rate": 0.01,
+          "upper": 22158
+        },
+        {
+          "rate": 0.02,
+          "upper": 52528
+        },
+        {
+          "rate": 0.04,
+          "upper": 82904
+        },
+        {
+          "rate": 0.06,
+          "upper": 115084
+        },
+        {
+          "rate": 0.08,
+          "upper": 145448
+        },
+        {
+          "rate": 0.093,
+          "upper": 742958
+        },
+        {
+          "rate": 0.103,
+          "upper": 891542
+        },
+        {
+          "rate": 0.113,
+          "upper": 1485906
+        },
+        {
+          "rate": 0.123,
+          "upper": "Infinity"
+        }
+      ],
+      "mfs": [
+        {
+          "rate": 0.01,
+          "upper": 11079
+        },
+        {
+          "rate": 0.02,
+          "upper": 26264
+        },
+        {
+          "rate": 0.04,
+          "upper": 41452
+        },
+        {
+          "rate": 0.06,
+          "upper": 57542
+        },
+        {
+          "rate": 0.08,
+          "upper": 72724
+        },
+        {
+          "rate": 0.093,
+          "upper": 371479
+        },
+        {
+          "rate": 0.103,
+          "upper": 445771
+        },
+        {
+          "rate": 0.113,
+          "upper": 742953
+        },
+        {
+          "rate": 0.123,
+          "upper": "Infinity"
+        }
+      ],
+      "qss": [
+        {
+          "rate": 0.01,
+          "upper": 22158
+        },
+        {
+          "rate": 0.02,
+          "upper": 52528
+        },
+        {
+          "rate": 0.04,
+          "upper": 82904
+        },
+        {
+          "rate": 0.06,
+          "upper": 115084
+        },
+        {
+          "rate": 0.08,
+          "upper": 145448
+        },
+        {
+          "rate": 0.093,
+          "upper": 742958
+        },
+        {
+          "rate": 0.103,
+          "upper": 891542
+        },
+        {
+          "rate": 0.113,
+          "upper": 1485906
+        },
+        {
+          "rate": 0.123,
+          "upper": "Infinity"
+        }
+      ],
+      "single": [
+        {
+          "rate": 0.01,
+          "upper": 11079
+        },
+        {
+          "rate": 0.02,
+          "upper": 26264
+        },
+        {
+          "rate": 0.04,
+          "upper": 41452
+        },
+        {
+          "rate": 0.06,
+          "upper": 57542
+        },
+        {
+          "rate": 0.08,
+          "upper": 72724
+        },
+        {
+          "rate": 0.093,
+          "upper": 371479
+        },
+        {
+          "rate": 0.103,
+          "upper": 445771
+        },
+        {
+          "rate": 0.113,
+          "upper": 742953
+        },
+        {
+          "rate": 0.123,
+          "upper": "Infinity"
+        }
+      ]
+    },
+    "ca_itemized_phaseout_start": {
+      "hoh": 378310,
+      "mfj": 504411.0,
+      "mfs": 252203,
+      "qss": 504411.0,
+      "single": 252203
+    },
+    "ca_standard_deduction": {
+      "hoh": 11412,
+      "mfj": 11412,
+      "mfs": 5706,
+      "qss": 11412,
+      "single": 5706
+    },
+    "charitable_deduction_floor_pct": 0.0,
+    "child_tax_credit": 2200,
+    "child_tax_credit_phaseout_mfj": 400000,
+    "child_tax_credit_phaseout_single": 200000,
+    "citations": [
+      "IRS Rev. Proc. 2024-40 (2025 inflation adjustments)",
+      "OBBBA (One Big Beautiful Bill Act) \u2014 TCJA rates made permanent",
+      "https://www.ftb.ca.gov/forms/2025/2025-540-tax-rate-schedules.pdf"
+    ],
+    "estate_exemption_mfj": 27980000,
+    "estate_exemption_single": 13990000,
+    "estate_tax_rate": 0.4,
+    "federal_brackets": {
+      "hoh": [
+        {
+          "rate": 0.1,
+          "upper": 17000
+        },
+        {
+          "rate": 0.12,
+          "upper": 64850
+        },
+        {
+          "rate": 0.22,
+          "upper": 103350
+        },
+        {
+          "rate": 0.24,
+          "upper": 197300
+        },
+        {
+          "rate": 0.32,
+          "upper": 250500
+        },
+        {
+          "rate": 0.35,
+          "upper": 626350
+        },
+        {
+          "rate": 0.37,
+          "upper": "Infinity"
+        }
+      ],
+      "mfj": [
+        {
+          "rate": 0.1,
+          "upper": 23850
+        },
+        {
+          "rate": 0.12,
+          "upper": 96950
+        },
+        {
+          "rate": 0.22,
+          "upper": 206700
+        },
+        {
+          "rate": 0.24,
+          "upper": 394600
+        },
+        {
+          "rate": 0.32,
+          "upper": 501050
+        },
+        {
+          "rate": 0.35,
+          "upper": 751600
+        },
+        {
+          "rate": 0.37,
+          "upper": "Infinity"
+        }
+      ],
+      "mfs": [
+        {
+          "rate": 0.1,
+          "upper": 11925
+        },
+        {
+          "rate": 0.12,
+          "upper": 48475
+        },
+        {
+          "rate": 0.22,
+          "upper": 103350
+        },
+        {
+          "rate": 0.24,
+          "upper": 197300
+        },
+        {
+          "rate": 0.32,
+          "upper": 250525
+        },
+        {
+          "rate": 0.35,
+          "upper": 375800
+        },
+        {
+          "rate": 0.37,
+          "upper": "Infinity"
+        }
+      ],
+      "qss": [
+        {
+          "rate": 0.1,
+          "upper": 23850
+        },
+        {
+          "rate": 0.12,
+          "upper": 96950
+        },
+        {
+          "rate": 0.22,
+          "upper": 206700
+        },
+        {
+          "rate": 0.24,
+          "upper": 394600
+        },
+        {
+          "rate": 0.32,
+          "upper": 501050
+        },
+        {
+          "rate": 0.35,
+          "upper": 751600
+        },
+        {
+          "rate": 0.37,
+          "upper": "Infinity"
+        }
+      ],
+      "single": [
+        {
+          "rate": 0.1,
+          "upper": 11925
+        },
+        {
+          "rate": 0.12,
+          "upper": 48475
+        },
+        {
+          "rate": 0.22,
+          "upper": 103350
+        },
+        {
+          "rate": 0.24,
+          "upper": 197300
+        },
+        {
+          "rate": 0.32,
+          "upper": 250525
+        },
+        {
+          "rate": 0.35,
+          "upper": 626350
+        },
+        {
+          "rate": 0.37,
+          "upper": "Infinity"
+        }
+      ]
+    },
+    "fpl_base": 32500,
+    "fpl_per_additional_person": 5600,
+    "inflation_factor": 1.0,
+    "irmaa_lookback_years": 2,
+    "irmaa_part_b": [
+      {
+        "magi_threshold": 212000,
+        "part_b_surcharge": 0.0,
+        "part_d_surcharge": 0.0
+      },
+      {
+        "magi_threshold": 266000,
+        "part_b_surcharge": 72.0,
+        "part_d_surcharge": 0.0
+      },
+      {
+        "magi_threshold": 332000,
+        "part_b_surcharge": 180.0,
+        "part_d_surcharge": 0.0
+      },
+      {
+        "magi_threshold": 400000,
+        "part_b_surcharge": 392.0,
+        "part_d_surcharge": 0.0
+      },
+      {
+        "magi_threshold": 750000,
+        "part_b_surcharge": 499.0,
+        "part_d_surcharge": 0.0
+      },
+      {
+        "magi_threshold": "Infinity",
+        "part_b_surcharge": 604.0,
+        "part_d_surcharge": 0.0
+      }
+    ],
+    "irmaa_part_d": [
+      {
+        "magi_threshold": 212000,
+        "part_b_surcharge": 0.0,
+        "part_d_surcharge": 0.0
+      },
+      {
+        "magi_threshold": 266000,
+        "part_b_surcharge": 0.0,
+        "part_d_surcharge": 10.5
+      },
+      {
+        "magi_threshold": 332000,
+        "part_b_surcharge": 0.0,
+        "part_d_surcharge": 27.0
+      },
+      {
+        "magi_threshold": 400000,
+        "part_b_surcharge": 0.0,
+        "part_d_surcharge": 44.5
+      },
+      {
+        "magi_threshold": 750000,
+        "part_b_surcharge": 0.0,
+        "part_d_surcharge": 62.0
+      },
+      {
+        "magi_threshold": "Infinity",
+        "part_b_surcharge": 0.0,
+        "part_d_surcharge": 80.0
+      }
+    ],
+    "itemized_reduction_rate": 0.0,
+    "ltcg_brackets": {
+      "hoh": [
+        {
+          "rate": 0.0,
+          "upper": 61250
+        },
+        {
+          "rate": 0.15,
+          "upper": 570050
+        },
+        {
+          "rate": 0.2,
+          "upper": "Infinity"
+        }
+      ],
+      "mfj": [
+        {
+          "rate": 0.0,
+          "upper": 96700
+        },
+        {
+          "rate": 0.15,
+          "upper": 600050
+        },
+        {
+          "rate": 0.2,
+          "upper": "Infinity"
+        }
+      ],
+      "mfs": [
+        {
+          "rate": 0.0,
+          "upper": 48350
+        },
+        {
+          "rate": 0.15,
+          "upper": 300000
+        },
+        {
+          "rate": 0.2,
+          "upper": "Infinity"
+        }
+      ],
+      "qss": [
+        {
+          "rate": 0.0,
+          "upper": 96700
+        },
+        {
+          "rate": 0.15,
+          "upper": 600050
+        },
+        {
+          "rate": 0.2,
+          "upper": "Infinity"
+        }
+      ],
+      "single": [
+        {
+          "rate": 0.0,
+          "upper": 48350
+        },
+        {
+          "rate": 0.15,
+          "upper": 533400
+        },
+        {
+          "rate": 0.2,
+          "upper": "Infinity"
+        }
+      ]
+    },
+    "model_assumptions": [
+      "IRMAA and ACA premiums are illustrative approximations",
+      "Several state/federal fields are simplified model parameters"
+    ],
+    "name": "2025 Enacted (OBBBA permanent rates)",
+    "niit_rate": 0.038,
+    "niit_thresholds": {
+      "hoh": 200000,
+      "mfj": 250000,
+      "mfs": 125000,
+      "qss": 250000,
+      "single": 200000
+    },
+    "qcd_age": 70.5,
+    "salt_cap": 40000,
+    "salt_floor": 10000,
+    "salt_phaseout_start": 500000,
+    "social_security_wage_base": 176100,
+    "source": "existing Mantissa law pack; citations preserved",
+    "source_status": "mixed: cited statutory values and illustrative/model assumptions",
+    "standard_deduction": {
+      "hoh": 23625,
+      "mfj": 31500,
+      "mfs": 15750,
+      "qss": 31500,
+      "single": 15750
+    },
+    "status": "catalog_baseline",
+    "year": 2025
+  },
+  "year": 2025
+}

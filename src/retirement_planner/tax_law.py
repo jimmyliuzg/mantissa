@@ -124,471 +124,16 @@ class TaxLawVersion:
 
 
 # ---------------------------------------------------------------------------
-# Bracket construction helpers
-# ---------------------------------------------------------------------------
-def _b(upper: float, rate: float) -> Bracket:
-    return Bracket(upper=upper, rate=rate)
-
-
-# ---------------------------------------------------------------------------
-# 2024 Tax Law (enacted, OBBBA permanent for 2026+)
-# ---------------------------------------------------------------------------
-def _tax_law_2024() -> TaxLawVersion:
-    return TaxLawVersion(
-        year=2024,
-        name="2024 Enacted (TCJA/OBBBA)",
-
-        federal_brackets={
-            FilingStatus.MFJ: [
-                _b(23_200, 0.10), _b(94_300, 0.12), _b(201_050, 0.22),
-                _b(383_900, 0.24), _b(487_450, 0.32), _b(731_200, 0.35),
-                _b(float('inf'), 0.37),
-            ],
-            FilingStatus.SINGLE: [
-                _b(11_600, 0.10), _b(47_150, 0.12), _b(100_525, 0.22),
-                _b(191_950, 0.24), _b(243_725, 0.32), _b(609_350, 0.35),
-                _b(float('inf'), 0.37),
-            ],
-            FilingStatus.HOH: [
-                _b(16_550, 0.10), _b(63_100, 0.12), _b(100_500, 0.22),
-                _b(191_950, 0.24), _b(243_700, 0.32), _b(609_350, 0.35),
-                _b(float('inf'), 0.37),
-            ],
-            FilingStatus.MFS: [
-                _b(11_600, 0.10), _b(47_150, 0.12), _b(100_525, 0.22),
-                _b(191_950, 0.24), _b(243_725, 0.32), _b(365_600, 0.35),
-                _b(float('inf'), 0.37),
-            ],
-            FilingStatus.QSS: [
-                # Same as MFJ
-                _b(23_200, 0.10), _b(94_300, 0.12), _b(201_050, 0.22),
-                _b(383_900, 0.24), _b(487_450, 0.32), _b(731_200, 0.35),
-                _b(float('inf'), 0.37),
-            ],
-        },
-
-        standard_deduction={
-            FilingStatus.MFJ: 29_200,
-            FilingStatus.SINGLE: 14_600,
-            FilingStatus.HOH: 21_900,
-            FilingStatus.MFS: 14_600,
-            FilingStatus.QSS: 29_200,
-        },
-
-        ltcg_brackets={
-            FilingStatus.MFJ: [
-                _b(94_050, 0.00), _b(583_750, 0.15), _b(float('inf'), 0.20),
-            ],
-            FilingStatus.SINGLE: [
-                _b(47_025, 0.00), _b(518_900, 0.15), _b(float('inf'), 0.20),
-            ],
-            FilingStatus.HOH: [
-                _b(59_750, 0.00), _b(553_850, 0.15), _b(float('inf'), 0.20),
-            ],
-            FilingStatus.MFS: [
-                _b(47_025, 0.00), _b(291_850, 0.15), _b(float('inf'), 0.20),
-            ],
-            FilingStatus.QSS: [
-                _b(94_050, 0.00), _b(583_750, 0.15), _b(float('inf'), 0.20),
-            ],
-        },
-
-        niit_thresholds={
-            FilingStatus.MFJ: 250_000,
-            FilingStatus.SINGLE: 200_000,
-            FilingStatus.HOH: 200_000,
-            FilingStatus.MFS: 125_000,
-            FilingStatus.QSS: 250_000,
-        },
-
-        amt_exemption={
-            FilingStatus.MFJ: 133_300,
-            FilingStatus.SINGLE: 85_700,
-            FilingStatus.HOH: 85_700,
-            FilingStatus.MFS: 66_650,
-            FilingStatus.QSS: 133_300,
-        },
-        amt_phaseout_start={
-            FilingStatus.MFJ: 1_218_700,
-            FilingStatus.SINGLE: 609_350,
-            FilingStatus.HOH: 609_350,
-            FilingStatus.MFS: 609_350,
-            FilingStatus.QSS: 1_218_700,
-        },
-        amt_26_limit=232_600,
-
-        irmaa_part_b=[
-            IrmaaTier(206_000, 0.0, 0.0),
-            IrmaaTier(258_000, 70.0, 0.0),
-            IrmaaTier(322_000, 175.0, 0.0),
-            IrmaaTier(386_000, 380.0, 0.0),
-            IrmaaTier(750_000, 484.0, 0.0),
-            IrmaaTier(float('inf'), 587.0, 0.0),
-        ],
-        irmaa_part_d=[
-            IrmaaTier(206_000, 0.0, 0.0),
-            IrmaaTier(258_000, 0.0, 10.0),
-            IrmaaTier(322_000, 0.0, 26.0),
-            IrmaaTier(386_000, 0.0, 43.0),
-            IrmaaTier(750_000, 0.0, 60.0),
-            IrmaaTier(float('inf'), 0.0, 77.0),
-        ],
-
-        fpl_base=31_200,
-        fpl_per_additional_person=5_380,
-        aca_tiers=[
-            AcaTier(1.33, 0.021), AcaTier(1.50, 0.030), AcaTier(2.00, 0.040),
-            AcaTier(2.50, 0.063), AcaTier(3.00, 0.081), AcaTier(4.00, 0.097),
-        ],
-        aca_fpl_cliff_ratio=4.0,
-        aca_silver_premiums={
-            "CA": {1: 800, 2: 1600, 3: 1800, 4: 2000, 5: 2200},
-            "_default": {1: 800, 2: 1600, 3: 1800, 4: 2000, 5: 2200},
-        },
-
-        estate_exemption_single=13_610_000,
-        estate_exemption_mfj=27_220_000,
-        estate_tax_rate=0.40,
-
-        salt_cap=10_000,
-        qcd_age=70.5,
-
-        child_tax_credit=2_000,
-        child_tax_credit_phaseout_mfj=400_000,
-        child_tax_credit_phaseout_single=200_000,
-
-        ca_brackets=[
-            _b(20_824, 0.01), _b(49_368, 0.02), _b(77_918, 0.04),
-            _b(108_152, 0.06), _b(136_700, 0.08), _b(698_274, 0.093),
-            _b(837_922, 0.103), _b(1_396_546, 0.113), _b(1_666_074, 0.123),
-            _b(2_732_666, 0.133), _b(float('inf'), 0.143),
-        ],
-
-        citations=[
-            "IRS Rev. Proc. 2023-34 (2024 inflation adjustments)",
-            "CA FTB 2024 tax rate schedule",
-        ],
-    )
-
-
-def _tax_law_2025() -> TaxLawVersion:
-    """2025 enacted law — OBBBA made TCJA rates permanent."""
-    base = _tax_law_2024()
-    # 2025 inflation-adjusted values (approximate from IRS Rev. Proc. 2024-40)
-    return TaxLawVersion(
-        year=2025,
-        social_security_wage_base=176_100,
-        name="2025 Enacted (OBBBA permanent rates)",
-
-        federal_brackets={
-            FilingStatus.MFJ: [
-                _b(23_850, 0.10), _b(96_950, 0.12), _b(206_700, 0.22),
-                _b(394_600, 0.24), _b(501_050, 0.32), _b(751_600, 0.35),
-                _b(float('inf'), 0.37),
-            ],
-            FilingStatus.SINGLE: [
-                _b(11_925, 0.10), _b(48_475, 0.12), _b(103_350, 0.22),
-                _b(197_300, 0.24), _b(250_525, 0.32), _b(626_350, 0.35),
-                _b(float('inf'), 0.37),
-            ],
-            FilingStatus.HOH: [
-                _b(17_000, 0.10), _b(64_850, 0.12), _b(103_350, 0.22),
-                _b(197_300, 0.24), _b(250_500, 0.32), _b(626_350, 0.35),
-                _b(float('inf'), 0.37),
-            ],
-            FilingStatus.MFS: [
-                _b(11_925, 0.10), _b(48_475, 0.12), _b(103_350, 0.22),
-                _b(197_300, 0.24), _b(250_525, 0.32), _b(375_800, 0.35),
-                _b(float('inf'), 0.37),
-            ],
-            FilingStatus.QSS: [
-                _b(23_850, 0.10), _b(96_950, 0.12), _b(206_700, 0.22),
-                _b(394_600, 0.24), _b(501_050, 0.32), _b(751_600, 0.35),
-                _b(float('inf'), 0.37),
-            ],
-        },
-
-        standard_deduction={
-            FilingStatus.MFJ: 31_500,
-            FilingStatus.SINGLE: 15_750,
-            FilingStatus.HOH: 23_625,
-            FilingStatus.MFS: 15_750,
-            FilingStatus.QSS: 31_500,
-        },
-
-        ltcg_brackets={
-            FilingStatus.MFJ: [
-                _b(96_700, 0.00), _b(600_050, 0.15), _b(float('inf'), 0.20),
-            ],
-            FilingStatus.SINGLE: [
-                _b(48_350, 0.00), _b(533_400, 0.15), _b(float('inf'), 0.20),
-            ],
-            FilingStatus.HOH: [
-                _b(61_250, 0.00), _b(570_050, 0.15), _b(float('inf'), 0.20),
-            ],
-            FilingStatus.MFS: [
-                _b(48_350, 0.00), _b(300_000, 0.15), _b(float('inf'), 0.20),
-            ],
-            FilingStatus.QSS: [
-                _b(96_700, 0.00), _b(600_050, 0.15), _b(float('inf'), 0.20),
-            ],
-        },
-
-        niit_thresholds={
-            FilingStatus.MFJ: 250_000,
-            FilingStatus.SINGLE: 200_000,
-            FilingStatus.HOH: 200_000,
-            FilingStatus.MFS: 125_000,
-            FilingStatus.QSS: 250_000,
-        },
-
-        amt_exemption={
-            FilingStatus.MFJ: 137_000,
-            FilingStatus.SINGLE: 88_100,
-            FilingStatus.HOH: 88_100,
-            FilingStatus.MFS: 68_500,
-            FilingStatus.QSS: 137_000,
-        },
-        amt_phaseout_start={
-            FilingStatus.MFJ: 1_252_700,
-            FilingStatus.SINGLE: 626_350,
-            FilingStatus.HOH: 626_350,
-            FilingStatus.MFS: 626_350,
-            FilingStatus.QSS: 1_252_700,
-        },
-        amt_26_limit=239_100,
-
-        irmaa_part_b=[
-            IrmaaTier(212_000, 0.0, 0.0),
-            IrmaaTier(266_000, 72.0, 0.0),
-            IrmaaTier(332_000, 180.0, 0.0),
-            IrmaaTier(400_000, 392.0, 0.0),
-            IrmaaTier(750_000, 499.0, 0.0),
-            IrmaaTier(float('inf'), 604.0, 0.0),
-        ],
-        irmaa_part_d=[
-            IrmaaTier(212_000, 0.0, 0.0),
-            IrmaaTier(266_000, 0.0, 10.50),
-            IrmaaTier(332_000, 0.0, 27.0),
-            IrmaaTier(400_000, 0.0, 44.50),
-            IrmaaTier(750_000, 0.0, 62.0),
-            IrmaaTier(float('inf'), 0.0, 80.0),
-        ],
-
-        fpl_base=32_500,
-        fpl_per_additional_person=5_600,
-        aca_tiers=[
-            AcaTier(1.33, 0.021), AcaTier(1.50, 0.030), AcaTier(2.00, 0.040),
-            AcaTier(2.50, 0.063), AcaTier(3.00, 0.081), AcaTier(4.00, 0.097),
-        ],
-        aca_fpl_cliff_ratio=4.0,
-        aca_silver_premiums={
-            "CA": {1: 830, 2: 1660, 3: 1870, 4: 2080, 5: 2290},
-            "_default": {1: 830, 2: 1660, 3: 1870, 4: 2080, 5: 2290},
-        },
-
-        estate_exemption_single=13_990_000,
-        estate_exemption_mfj=27_980_000,
-        estate_tax_rate=0.40,
-
-        salt_cap=40_000,
-        salt_phaseout_start=500_000,
-
-        child_tax_credit=2_200,
-        child_tax_credit_phaseout_mfj=400_000,
-        child_tax_credit_phaseout_single=200_000,
-
-        ca_brackets=[
-            _b(21_428, 0.01), _b(50_798, 0.02), _b(80_190, 0.04),
-            _b(111_106, 0.06), _b(140_626, 0.08), _b(718_554, 0.093),
-            _b(862_118, 0.103), _b(1_437_862, 0.113), _b(1_715_430, 0.123),
-            _b(2_817_262, 0.133), _b(float('inf'), 0.143),
-        ],
-
-        citations=[
-            "IRS Rev. Proc. 2024-40 (2025 inflation adjustments)",
-            "OBBBA (One Big Beautiful Bill Act) — TCJA rates made permanent",
-        ],
-    )
-
-
-def _tax_law_2026() -> TaxLawVersion:
-    """2026 enacted law — OBBBA permanent, slight inflation adjustments."""
-    base = _tax_law_2025()
-    return TaxLawVersion(
-        year=2026,
-        social_security_wage_base=184_500,
-        name="2026 Enacted (OBBBA permanent)",
-
-        federal_brackets={
-            FilingStatus.MFJ: [
-                _b(24_800, 0.10), _b(100_800, 0.12), _b(211_400, 0.22),
-                _b(403_550, 0.24), _b(512_450, 0.32), _b(768_700, 0.35),
-                _b(float('inf'), 0.37),
-            ],
-            FilingStatus.SINGLE: [
-                _b(12_400, 0.10), _b(50_400, 0.12), _b(105_700, 0.22),
-                _b(201_775, 0.24), _b(256_225, 0.32), _b(640_600, 0.35),
-                _b(float('inf'), 0.37),
-            ],
-            FilingStatus.HOH: [
-                _b(17_700, 0.10), _b(67_450, 0.12), _b(105_700, 0.22),
-                _b(201_750, 0.24), _b(256_200, 0.32), _b(640_600, 0.35),
-                _b(float('inf'), 0.37),
-            ],
-            FilingStatus.MFS: [
-                _b(12_400, 0.10), _b(50_400, 0.12), _b(105_700, 0.22),
-                _b(201_775, 0.24), _b(256_225, 0.32), _b(384_350, 0.35),
-                _b(float('inf'), 0.37),
-            ],
-            FilingStatus.QSS: [
-                _b(24_800, 0.10), _b(100_800, 0.12), _b(211_400, 0.22),
-                _b(403_550, 0.24), _b(512_450, 0.32), _b(768_700, 0.35),
-                _b(float('inf'), 0.37),
-            ],
-        },
-
-        standard_deduction={
-            FilingStatus.MFJ: 32_200,
-            FilingStatus.SINGLE: 16_100,
-            FilingStatus.HOH: 24_150,
-            FilingStatus.MFS: 16_100,
-            FilingStatus.QSS: 32_200,
-        },
-
-        ltcg_brackets={
-            FilingStatus.MFJ: [
-                _b(98_900, 0.00), _b(613_700, 0.15), _b(float('inf'), 0.20),
-            ],
-            FilingStatus.SINGLE: [
-                _b(49_450, 0.00), _b(545_500, 0.15), _b(float('inf'), 0.20),
-            ],
-            FilingStatus.HOH: [
-                _b(66_200, 0.00), _b(579_600, 0.15), _b(float('inf'), 0.20),
-            ],
-            FilingStatus.MFS: [
-                _b(49_450, 0.00), _b(306_850, 0.15), _b(float('inf'), 0.20),
-            ],
-            FilingStatus.QSS: [
-                _b(98_900, 0.00), _b(613_700, 0.15), _b(float('inf'), 0.20),
-            ],
-        },
-
-        niit_thresholds={
-            FilingStatus.MFJ: 250_000,
-            FilingStatus.SINGLE: 200_000,
-            FilingStatus.HOH: 200_000,
-            FilingStatus.MFS: 125_000,
-            FilingStatus.QSS: 250_000,
-        },
-
-        amt_exemption={
-            FilingStatus.MFJ: 140_200,
-            FilingStatus.SINGLE: 90_100,
-            FilingStatus.HOH: 90_100,
-            FilingStatus.MFS: 70_100,
-            FilingStatus.QSS: 140_200,
-        },
-        amt_phaseout_start={
-            FilingStatus.MFJ: 1_000_000,
-            FilingStatus.SINGLE: 500_000,
-            FilingStatus.HOH: 500_000,
-            FilingStatus.MFS: 500_000,
-            FilingStatus.QSS: 1_000_000,
-        },
-        amt_phaseout_rate=0.5,
-        amt_26_limit=244_500,
-
-        irmaa_part_b=[
-            IrmaaTier(218_000, 0.0, 0.0),
-            IrmaaTier(274_000, 74.0, 0.0),
-            IrmaaTier(342_000, 185.0, 0.0),
-            IrmaaTier(413_000, 403.0, 0.0),
-            IrmaaTier(750_000, 514.0, 0.0),
-            IrmaaTier(float('inf'), 622.0, 0.0),
-        ],
-        irmaa_part_d=[
-            IrmaaTier(218_000, 0.0, 0.0),
-            IrmaaTier(274_000, 0.0, 11.0),
-            IrmaaTier(342_000, 0.0, 28.0),
-            IrmaaTier(413_000, 0.0, 46.0),
-            IrmaaTier(750_000, 0.0, 64.0),
-            IrmaaTier(float('inf'), 0.0, 83.0),
-        ],
-
-        fpl_base=33_500,
-        fpl_per_additional_person=5_800,
-        aca_tiers=[
-            AcaTier(1.33, 0.021), AcaTier(1.50, 0.030), AcaTier(2.00, 0.040),
-            AcaTier(2.50, 0.063), AcaTier(3.00, 0.081), AcaTier(4.00, 0.097),
-        ],
-        aca_fpl_cliff_ratio=4.0,
-        aca_silver_premiums={
-            "CA": {1: 860, 2: 1720, 3: 1940, 4: 2160, 5: 2380},
-            "_default": {1: 860, 2: 1720, 3: 1940, 4: 2160, 5: 2380},
-        },
-
-        estate_exemption_single=15_000_000,
-        estate_exemption_mfj=30_000_000,
-        estate_tax_rate=0.40,
-
-        salt_cap=40_400,
-        salt_phaseout_start=505_000,
-        charitable_deduction_floor_pct=0.005,
-        itemized_reduction_rate=0.054,
-
-        child_tax_credit=2_200,
-        child_tax_credit_phaseout_mfj=400_000,
-        child_tax_credit_phaseout_single=200_000,
-
-        ca_brackets=[
-            _b(22_050, 0.01), _b(52_268, 0.02), _b(82_260, 0.04),
-            _b(114_068, 0.06), _b(144_372, 0.08), _b(736_380, 0.093),
-            _b(883_862, 0.103), _b(1_474_480, 0.113), _b(1_759_712, 0.123),
-            _b(2_890_200, 0.133), _b(float('inf'), 0.143),
-        ],
-
-        citations=[
-            "OBBBA (One Big Beautiful Bill Act) — permanent 7-bracket structure",
-            "https://www.irs.gov/irb/2025-45_IRB",
-        ],
-    )
-
-
-# ---------------------------------------------------------------------------
-# Registry
-# ---------------------------------------------------------------------------
-def _set_ca(law, single, joint, hoh, standard, phaseout):
-    rates = [.01, .02, .04, .06, .08, .093, .103, .113, .123]
-    def brackets(values):
-        return [_b(u, r) for u, r in zip(values + [float("inf")], rates)]
-    by_status = {
-        FilingStatus.SINGLE: brackets(single), FilingStatus.MFS: brackets(single),
-        FilingStatus.MFJ: brackets(joint), FilingStatus.QSS: brackets(joint),
-        FilingStatus.HOH: brackets(hoh)}
-    joint_brackets = by_status[FilingStatus.MFJ]
-    state_standard = {f: standard * (1 if f in (FilingStatus.SINGLE, FilingStatus.MFS) else 2) for f in FilingStatus}
-    state_phaseout = {f: phaseout * (2 if f in (FilingStatus.MFJ, FilingStatus.QSS) else 1.5 if f == FilingStatus.HOH else 1) for f in FilingStatus}
-    law.citations.append("https://www.ftb.ca.gov/forms/%s/%s-540-tax-rate-schedules.pdf" % (law.year, law.year))
-    return replace(law, ca_brackets_by_status=by_status, ca_brackets=joint_brackets, ca_standard_deduction=state_standard, ca_itemized_phaseout_start=state_phaseout)
-
-
-_TAX_LAW_BY_YEAR: Dict[int, TaxLawVersion] = {
-    2024: _set_ca(_tax_law_2024(), [10756,25499,40245,55866,70606,360659,432787,721314], [21512,50998,80490,111732,141212,721318,865574,1442628], [21527,51000,65744,81364,96107,490493,588593,980987], 5540,244857),
-    2025: _set_ca(_tax_law_2025(), [11079,26264,41452,57542,72724,371479,445771,742953], [22158,52528,82904,115084,145448,742958,891542,1485906], [22173,52530,67716,83805,98990,505208,606251,1010417], 5706,252205.5),
-    2026: _set_ca(_tax_law_2026(), [11456,27157,42861,59498,75197,384109,460927,768213], [22912,54314,85722,118996,150394,768218,921854,1536426], [22927,54316,70018,86654,102356,522385,626864,1044771], 5900,round(252203*1.034)),
-}
-
-_TAX_LAW_BY_YEAR[2025].ca_itemized_phaseout_start.update({FilingStatus.SINGLE:252203, FilingStatus.MFS:252203, FilingStatus.HOH:378310})
-_TAX_LAW_BY_YEAR[2026].ca_itemized_phaseout_start.update({f: round(v * 1.034) for f, v in _TAX_LAW_BY_YEAR[2025].ca_itemized_phaseout_start.items()})
-_TAX_LAW_BY_YEAR[2026].citations[-1] = "https://www.ftb.ca.gov/about-ftb/newsroom/tax-news/"
-
-
+# Pack-backed registry
 class TaxLawRegistry:
     """Select enacted or alternative tax law by year."""
 
-    def __init__(self):
-        self._laws = dict(_TAX_LAW_BY_YEAR)
+    def __init__(self, policy: Optional[dict] = None):
+        # Packs are loaded from immutable, versioned package data. Keep custom
+        # registrations local to this instance so scenarios cannot leak state.
+        from .rules import RuleRegistry
+        self._rules = RuleRegistry(policy)
+        self._laws = {}
         self._inflated = {}
 
     def register(self, law: TaxLawVersion):
@@ -618,24 +163,53 @@ class TaxLawRegistry:
                 f"Alternative policy scenarios not yet implemented: {policy_scenario}"
             )
 
-        # Exact match first
+        # Explicit registrations remain supported and are instance-local.
         if year in self._laws:
             return self._laws[year]
-
-        # Inflate from nearest known year
-        known_years = sorted(self._laws.keys())
-        base_year = max(y for y in known_years if y <= year)
-        base_law = self._laws[base_year]
-        years_out = year - base_year
-        factor = (1.0 + fallback_inflation) ** years_out
-
-        key = (base_year, year, fallback_inflation)
-        if key not in self._inflated:
-            self._inflated[key] = _inflate_law(base_law, year, factor)
-        return self._inflated[key]
+        custom_years = [known for known in self._laws if known <= year]
+        if custom_years:
+            base = self._laws[max(custom_years)]
+            return _inflate_law(base, year, (1.0 + fallback_inflation) ** (year - base.year))
+        return self._rules.law_for_year(year, policy_scenario, fallback_inflation)
 
     def available_years(self) -> List[int]:
-        return sorted(self._laws.keys())
+        from .rule_data import available_pack_years
+        return sorted(set(available_pack_years("tax")) | set(self._laws))
+
+
+def _tax_from_pack(data: dict) -> TaxLawVersion:
+    """Build the public tax-law value object from one packaged JSON year pack."""
+    status = {s.value: s for s in FilingStatus}
+
+    def status_map(mapping):
+        return {status[k]: v for k, v in mapping.items()}
+
+    def brackets(rows):
+        return [Bracket(float("inf") if row["upper"] == "Infinity" else row["upper"], row["rate"]) for row in rows]
+
+    def bracket_map(mapping):
+        return {status[k]: brackets(v) for k, v in mapping.items()}
+
+    values = {k: v for k, v in data.items() if k in TaxLawVersion.__dataclass_fields__}
+    for key in ("federal_brackets", "ltcg_brackets"):
+        values[key] = bracket_map(values[key])
+    for key in ("standard_deduction", "niit_thresholds", "amt_exemption", "amt_phaseout_start", "ca_standard_deduction", "ca_itemized_phaseout_start"):
+        values[key] = status_map(values.get(key, {}))
+    values["ca_brackets"] = brackets(values.get("ca_brackets", []))
+    values["ca_brackets_by_status"] = bracket_map(values.get("ca_brackets_by_status", {}))
+    def irmaa_tier(row):
+        row = dict(row)
+        if row["magi_threshold"] == "Infinity":
+            row["magi_threshold"] = float("inf")
+        return IrmaaTier(**row)
+    values["irmaa_part_b"] = [irmaa_tier(row) for row in values.get("irmaa_part_b", [])]
+    values["irmaa_part_d"] = [irmaa_tier(row) for row in values.get("irmaa_part_d", [])]
+    values["aca_tiers"] = [AcaTier(**row) for row in values.get("aca_tiers", [])]
+    values["aca_silver_premiums"] = {
+        region: {int(size) if str(size).isdigit() else size: amount for size, amount in premiums.items()}
+        for region, premiums in values.get("aca_silver_premiums", {}).items()
+    }
+    return TaxLawVersion(**values)
 
 
 def _inflate_law(base: TaxLawVersion, year: int, factor: float) -> TaxLawVersion:

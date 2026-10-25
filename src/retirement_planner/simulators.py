@@ -8,11 +8,15 @@ Supports two return-generation methods:
 """
 from typing import Dict, List, Optional
 from itertools import islice, cycle
+import math
 import random
+import secrets
 import numpy as np
 
 from .engine import RetirementPlanner
 from .historical_data import HISTORICAL_YEARS, _HISTORICAL_SNP500_VALUES
+
+MAX_SAFE_SEED = 2**53 - 1
 
 
 class MonteCarloEngine:
@@ -47,7 +51,7 @@ class MonteCarloEngine:
             # via a thin wrapper that overrides the volatility-based return.
             return self._run_historical_simulation(
                 historical_returns, scenario, stress_level=stress_level,
-                stochastic=stochastic)
+                stochastic=stochastic, rng=rng)
 
         return self.planner.run_single_simulation(
             scenario, return_volatility, rng=rng, stress_level=stress_level,
@@ -59,6 +63,7 @@ class MonteCarloEngine:
         scenario: str = "mean",
         stress_level: float = 0.0,
         stochastic: bool = False,
+        rng=None,
     ) -> Dict:
         """Run a simulation using pre-computed sequential historical returns.
 
@@ -67,13 +72,18 @@ class MonteCarloEngine:
         into the planner.  We achieve this by patching the planner's
         ``_historical_return_override`` attribute.
         """
+        had_override = hasattr(self.planner, "_historical_return_override")
+        prior_override = getattr(self.planner, "_historical_return_override", None)
         self.planner._historical_return_override = historical_returns
         try:
             return self.planner.run_single_simulation(
                 scenario, return_volatility=0.0, stress_level=stress_level,
-                stochastic=stochastic)
+                stochastic=stochastic, rng=rng)
         finally:
-            self.planner._historical_return_override = None
+            if had_override:
+                self.planner._historical_return_override = prior_override
+            else:
+                del self.planner._historical_return_override
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -106,15 +116,38 @@ class MonteCarloEngine:
         """
         if not isinstance(num_simulations, int) or isinstance(num_simulations, bool) or num_simulations < 1:
             raise ValueError("num_simulations must be a positive integer")
+        if not isinstance(method, str) or method not in {"gaussian", "historical"}:
+            raise ValueError("method must be 'gaussian' or 'historical'")
+        if not isinstance(scenario, str) or scenario not in {"mean", "optimistic", "pessimistic"}:
+            raise ValueError("scenario must be 'mean', 'optimistic', or 'pessimistic'")
+        if isinstance(return_volatility, bool) or not isinstance(return_volatility, (int, float)) or not math.isfinite(return_volatility) or return_volatility < 0:
+            raise ValueError("return_volatility must be a finite non-negative number")
+        if isinstance(stress_level, bool) or not isinstance(stress_level, (int, float)) or not math.isfinite(stress_level) or not 0 <= stress_level <= 1:
+            raise ValueError("stress_level must be a finite number between 0 and 1")
+        if not isinstance(stochastic, bool):
+            raise ValueError("stochastic must be a boolean")
+        if seed is not None and (
+            not isinstance(seed, int) or isinstance(seed, bool)
+            or seed < 0 or seed > MAX_SAFE_SEED
+        ):
+            raise ValueError(
+                f"seed must be an integer between 0 and {MAX_SAFE_SEED}, or None"
+            )
+
+        # Resolve entropy once so a run with seed=None can be replayed by
+        # passing the returned effective_seed back into run().
+        effective_seed = seed if seed is not None else secrets.randbits(53)
         results = []
-        rng = np.random.default_rng(seed)
-        historical_rng = random.Random(seed)
+        historical_start_indices = []
+        rng = np.random.default_rng(effective_seed)
+        historical_rng = random.Random(effective_seed)
 
         if method == "historical":
             num_data_points = len(HISTORICAL_YEARS)
             for _ in range(num_simulations):
                 # Pick a random starting year index into the historical data
                 start_idx = historical_rng.randint(0, num_data_points - 1)
+                historical_start_indices.append(start_idx)
                 # Need enough returns to cover the full simulation horizon
                 # (typically ~60 years from now to longevity age)
                 seq = self._get_return_sequence(start_idx, num_years=100)
@@ -213,7 +246,7 @@ class MonteCarloEngine:
         outcomes = aggregate_outcomes(results, self.planner.start_year,
                                       self.planner.scenario.monetary_convention.value,
                                       self.planner.scenario.legacy_goal)
-        return {
+        result = {
             "success_rate": success_rate,
             "outcomes": outcomes,
             "input_readiness": self.planner.input_readiness,
@@ -236,7 +269,106 @@ class MonteCarloEngine:
             "out_of_savings_rate": sum(1 for r in results if r["out_of_savings_year"]) / num_simulations,
             "mortality_distribution": mortality_distribution,
             "yearly_percentiles": yearly_percentiles,
+            "model_warnings": list(dict.fromkeys(
+                warning
+                for run_result in results
+                for warning in run_result.get("model_warnings", [])
+            )),
         }
+        result["run_metadata"] = self._build_run_metadata(
+            effective_seed=effective_seed,
+            method=method,
+            scenario=scenario,
+            num_simulations=num_simulations,
+            stochastic=stochastic,
+            return_volatility=return_volatility,
+            stress_level=stress_level,
+            historical_start_indices=historical_start_indices,
+            effective_years=sorted({
+                self.planner.scenario.primary.birth_date.year + age
+                for run_result in results
+                for age in run_result.get("net_worth_by_year", {})
+            }),
+        )
+        return result
+
+    def _build_run_metadata(
+        self,
+        *,
+        effective_seed: int,
+        method: str,
+        scenario: str,
+        num_simulations: int,
+        stochastic: bool,
+        return_volatility: float,
+        stress_level: float,
+        historical_start_indices: List[int],
+        effective_years: List[int],
+    ) -> Dict:
+        """Describe the inputs needed to identify and replay this run."""
+        try:
+            from . import __version__ as model_version
+        except ImportError:  # pragma: no cover - package is normally importable
+            model_version = "unknown"
+        metadata = {
+            "schema_version": 1,
+            "model_version": model_version,
+            "effective_seed": int(effective_seed),
+            "method": method,
+            "scenario": scenario,
+            "simulations": num_simulations,
+            "mortality_mode": "stochastic" if stochastic else "deterministic",
+            "return_volatility": float(return_volatility),
+            "stress_level": float(stress_level),
+        }
+        fallback_inflation = self.planner.scenario.economic.get_rate(
+            scenario)["general_inflation"]
+
+        config_fingerprint = getattr(self.planner, "config_fingerprint", None)
+        if callable(config_fingerprint):
+            fingerprint = config_fingerprint()
+            # The method contract is a fingerprint, not a config serializer.
+            # Only accept a scalar value here so accidental mappings cannot
+            # leak raw scenario content into result metadata.
+            if isinstance(fingerprint, str):
+                metadata["config_fingerprint"] = fingerprint
+                metadata["fingerprint_kind"] = "resolved_scenario"
+
+        # Rule registries are optional and may be injected by callers. Only
+        # report non-sensitive provenance when the registry can describe it.
+        rules = getattr(self.planner, "rules", None)
+        provenance = getattr(rules, "provenance", None)
+        if callable(provenance):
+            provenance = provenance()
+        if isinstance(provenance, dict):
+            # Rule registries can carry caller policy data. Keep catalog
+            # identity and published pack hashes, but never copy the policy.
+            metadata["rules_provenance"] = _json_safe({
+                key: value for key, value in provenance.items()
+                if key in {"catalog_version", "packs"}
+            })
+        describe_year = getattr(rules, "describe_year", None)
+        if callable(describe_year) and effective_years:
+            metadata.setdefault("rules_provenance", {})["effective_years"] = {
+                str(year): _summarize_rules_year(
+                    describe_year(year, fallback_inflation=fallback_inflation),
+                    fallback_inflation=fallback_inflation,
+                )
+                for year in effective_years
+            }
+
+        if method == "historical":
+            metadata["historical_data"] = {
+                "dataset_id": "sp500_annual_total_return",
+                "vintage": {
+                    "start_year": int(HISTORICAL_YEARS[0]),
+                    "end_year": int(HISTORICAL_YEARS[-1]),
+                },
+                "distinct_start_count": len(HISTORICAL_YEARS),
+                "sampled_start_indices": historical_start_indices,
+                "wrapping": "cyclic; sequences continue from the first year after the final year",
+            }
+        return metadata
 
     @staticmethod
     def _get_return_sequence(start_year_index: int, num_years: int) -> List[float]:
@@ -247,6 +379,48 @@ class MonteCarloEngine:
             next(cycled)
         return list(islice(cycled, num_years))
 
+
+def _json_safe(value):
+    """Convert optional provenance values to deterministic JSON data."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {
+            str(key): _json_safe(item)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        }
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if hasattr(value, "value"):
+        return _json_safe(value.value)
+    return str(value)
+
+
+def _summarize_rules_year(
+    description: Dict, *, fallback_inflation: float,
+) -> Dict:
+    """Keep year-level rule lineage while omitting user policy payloads."""
+    tax = description.get("tax", {}) if isinstance(description, dict) else {}
+    contributions = (
+        description.get("contributions", {})
+        if isinstance(description, dict) else {}
+    )
+    summary = {
+        "year": description.get("year"),
+        "fallback_inflation": float(fallback_inflation),
+        "policy_scenario": description.get("policy"),
+        "tax": {
+            key: tax[key] for key in ("status", "base_year", "source", "name")
+            if key in tax
+        },
+        "contributions": {
+            key: contributions[key]
+            for key in ("status", "base_year") if key in contributions
+        },
+    }
+    if "applied_change_ids" in description:
+        summary["applied_change_count"] = len(description["applied_change_ids"])
+    return _json_safe(summary)
 
 class ScenarioComparator:
     """Compare multiple retirement scenarios."""

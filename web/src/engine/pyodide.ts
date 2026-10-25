@@ -135,6 +135,7 @@ def _norm_pctile(mc, p):
     return {"percentile": p, "value": mc.get(f"p{p}_final_nw", 0.0)}
 
 result = {
+    "runMetadata": mc.get("run_metadata"),
     "outcomes": mc["outcomes"],
     "kpis": {
         "successRate": mc.get("success_rate", 0.0),
@@ -194,7 +195,7 @@ result = {
     "inputReadiness": planner.input_readiness,
     "warnings": [
         {"year": None, "category": "model", "message": message, "severity": "warning"}
-        for message in dict.fromkeys(planner.model_warnings)
+        for message in dict.fromkeys(planner.model_warnings + mc.get("model_warnings", []) + [message for row in project for message in row.get("model_warnings", [])])
     ],
 }
 json.dumps(result)
